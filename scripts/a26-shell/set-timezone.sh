@@ -14,7 +14,8 @@ source "$PROJECT_ROOT/scripts/a26-shell/common.sh"
 SERIAL="$(a26_resolve_serial)"
 CONFIG=/data/local/a26-linux/etc/a26-shell/config.json
 ZONE="${1:?usage: $0 TZ-RULE|--clear}"
-[[ "$ZONE" == --clear || "$ZONE" =~ ^[A-Za-z0-9_/,.:+<>-]{1,64}$ ]] || {
+ZONE_PATTERN='^[A-Za-z0-9_/,.:+<>-]{1,64}$'
+[[ "$ZONE" == --clear || "$ZONE" =~ $ZONE_PATTERN ]] || {
     echo "unsupported time zone value: $ZONE" >&2
     exit 2
 }
