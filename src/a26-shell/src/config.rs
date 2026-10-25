@@ -12,6 +12,7 @@ pub struct Config {
     pub initial_volume: u8,
     pub keyboard_repeat_delay_ms: u64,
     pub keyboard_repeat_rate_hz: u32,
+    pub deep_suspend: bool,
     pub socket_path: PathBuf,
 }
 
@@ -29,6 +30,10 @@ struct ConfigFile {
     keyboard_repeat_delay_ms: u64,
     #[serde(default = "default_keyboard_repeat_rate_hz")]
     keyboard_repeat_rate_hz: u32,
+    /// Deep suspend currently resumes through a warm reboot, so screen-off
+    /// keeps the session resident unless this is explicitly enabled.
+    #[serde(default)]
+    deep_suspend: bool,
     #[serde(default = "default_socket")]
     socket_path: PathBuf,
 }
@@ -81,6 +86,7 @@ impl Config {
             initial_volume: file.initial_volume.min(100),
             keyboard_repeat_delay_ms: file.keyboard_repeat_delay_ms,
             keyboard_repeat_rate_hz: file.keyboard_repeat_rate_hz,
+            deep_suspend: file.deep_suspend,
             socket_path: file.socket_path,
         })
     }

@@ -82,8 +82,13 @@ frame while dark before restoring touch and brightness. Any preparation or
 hardware error rolls back to an awake locked state and is exposed as a fixed
 error code in `state.suspend`, never as a half-completed transition.
 
-After that transaction, and only when no media/transfer lease is active, Moon
-hands control to a detached Android-namespace supervisor. It terminates the old
+By default that transaction is the whole screen-off: Moon, Xorg and apps stay
+resident and the power key wakes the panel instantly. Deep suspend below is
+opt-in with `"deep_suspend": true` in `config.json`, because its wake path is a
+warm reboot.
+
+With deep suspend enabled, after that transaction, and only when no
+media/transfer lease is active, Moon hands control to a detached Android-namespace supervisor. It terminates the old
 app session, disables Xorg's DSI output, and proves both DECON and DSIM runtime
 suspended before selecting kernel `deep` mem sleep. This ordering is mandatory:
 a direct `mem` request with Xorg's CRTC active was captured as a Samsung watchdog

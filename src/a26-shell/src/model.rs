@@ -564,6 +564,7 @@ mod tests {
             initial_volume: 50,
             keyboard_repeat_delay_ms: 200,
             keyboard_repeat_rate_hz: 45,
+            deep_suspend: false,
             socket_path: "/tmp/a26-shell-test.sock".into(),
         }
     }

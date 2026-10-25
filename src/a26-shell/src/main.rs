@@ -280,6 +280,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     };
     let (platform_suspend, persisted_suspend) = match PlatformSuspend::open() {
+        Ok((_, persisted)) if !config.deep_suspend => {
+            eprintln!("deep suspend disabled by config; screen-off keeps Moon resident");
+            (None, persisted)
+        }
         Ok((port, persisted)) => {
             eprintln!("deep suspend handoff ready (DPU quiesce, mem/deep, power+RTC wake)");
             (Some(port), persisted)
