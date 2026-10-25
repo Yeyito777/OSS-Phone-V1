@@ -1,0 +1,15 @@
+# Optional on top of oss-phone.fragment: user namespaces (rootless containers).
+# Not needed for a privileged (root) LXC-style Android container; PID_NS is.
+#
+# USER_NS is tested in cred.h, uidgid.h, projid.h, seq_file.h and
+# user_namespace.h: prebuilt modules were compiled with current_user_ns() ==
+# &init_user_ns and identity make_kuid()/from_kuid(). No struct layout changes,
+# and no vendor module imports a user-namespace API, so they load and behave
+# exactly as before for every process in the initial user namespace; inside a
+# new user namespace they would see global (kernel) uids. KDP_CRED copies creds
+# into protected memory at commit_creds() and already refcounts cred->user_ns
+# (drivers/uh/kdp.c), so create_user_ns() on a prepared cred is supported.
+# Security cost: any process can create user namespaces (5.10 has no LSM hook
+# for it); cap it with sysctl user.max_user_namespaces=0 until needed.
+# kmi-reviewed: USER_NS
+CONFIG_USER_NS=y

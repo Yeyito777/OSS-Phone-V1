@@ -19,6 +19,7 @@
 !/scripts/a26-shell/
 !/scripts/device/
 !/scripts/direct-boot/
+!/scripts/kernel/
 /scripts/device/*
 !/scripts/device/90-moon-autostart.sh
 !/scripts/device/moon-boot-supervisor.sh
@@ -32,6 +33,7 @@
 !/scripts/device/a26-android-graphics-restore.sh
 !/scripts/device/a26-xorg-persistent-session.sh
 /scripts/a26-shell/__pycache__/
+/scripts/kernel/__pycache__/
 
 /notes/*
 !/notes/a26-shell/
