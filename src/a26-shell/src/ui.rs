@@ -238,17 +238,6 @@ fn wallpaper(width: i32, height: i32) -> Canvas {
     canvas
 }
 
-fn darken(source: &Canvas, amount: f32) -> Canvas {
-    let mut canvas = Canvas::new(source.width, source.height);
-    let keep = ((1.0 - amount) * 256.0) as u32;
-    for (out, pixel) in canvas.pixels.iter_mut().zip(&source.pixels) {
-        let rb = (((pixel & 0x00ff_00ff) * keep) >> 8) & 0x00ff_00ff;
-        let g = (((pixel & 0x0000_ff00) * keep) >> 8) & 0x0000_ff00;
-        *out = rb | g;
-    }
-    canvas
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HomeKey {
     status: StatusInfo,
@@ -326,7 +315,6 @@ pub struct Renderer {
     pub compositor: Compositor,
     wallpaper: Canvas,
     wall: SurfaceId,
-    dimmed: SurfaceId,
     home: Layer<HomeKey>,
     clock: Layer<ClockKey>,
     lock_status: Layer<StatusInfo>,
@@ -342,6 +330,8 @@ pub struct Renderer {
 }
 
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
+/// How much the passcode keypad darkens the wallpaper.
+const DIMMED: f32 = 0.42;
 const SPINNER_SIZE: i32 = 96;
 const LABEL_W: i32 = 640;
 const LABEL_H: i32 = 96;
@@ -359,8 +349,6 @@ impl Renderer {
         let wallpaper = wallpaper(w, h);
         let wall = compositor.create_layer(conn, width, height, false)?;
         compositor.upload(conn, wall, &wallpaper)?;
-        let dimmed = compositor.create_layer(conn, width, height, false)?;
-        compositor.upload(conn, dimmed, &darken(&wallpaper, 0.42))?;
         let icons = [AppIcon::new(AppId::System), AppIcon::new(AppId::Browser)];
         let mut icon_layers = [wall; 2];
         let mut labels = [wall; 2];
@@ -419,7 +407,6 @@ impl Renderer {
             compositor,
             wallpaper,
             wall,
-            dimmed,
             icons,
             icon_layers,
             labels,
@@ -810,7 +797,14 @@ impl Renderer {
     fn lock_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) {
         let p = state.lock_motion.progress(t);
         let shown = p.clamp(0.0, 1.0);
-        nodes.push(Self::full(self.dimmed, SCREEN_W, SCREEN_H, 0.0, 0.0, shown));
+        // The keypad's darker wallpaper (a solid fill is far cheaper than
+        // blending a pre-darkened layer).
+        nodes.push(Node::Fill {
+            dst: SCREEN,
+            color: BLACK,
+            alpha: DIMMED * shown,
+            radius: 0.0,
+        });
         // The clock rises with the finger and fades; the keypad rises into
         // place behind it.
         let clock_alpha = (1.0 - p * 1.7).clamp(0.0, 1.0);
@@ -865,14 +859,12 @@ impl Renderer {
                 t.saturating_duration_since(at).as_secs_f32() / UNLOCK_ANIMATION.as_secs_f32(),
             )
         });
-        nodes.push(Self::full(
-            self.dimmed,
-            SCREEN_W,
-            SCREEN_H,
-            0.0,
-            0.0,
-            unlock,
-        ));
+        nodes.push(Node::Fill {
+            dst: SCREEN,
+            color: BLACK,
+            alpha: DIMMED * unlock,
+            radius: 0.0,
+        });
         nodes.push(Self::full(
             self.passcode.id,
             SCREEN_W,

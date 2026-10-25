@@ -152,6 +152,9 @@ struct Surface {
     /// Edge pixels extend outward (RepeatPad), which keeps scaled draws on
     /// pixman's fast bilinear paths.
     padded: bool,
+    /// For transparent layers: the bands that hold any visible pixel, so a
+    /// mostly empty full-screen layer composites only its content.
+    content: Option<Vec<Damage>>,
 }
 
 struct Buffer {
@@ -362,6 +365,10 @@ impl Compositor {
         Ok(compositor)
     }
 
+    pub fn set_profile(&mut self, enabled: bool) {
+        self.profile = enabled;
+    }
+
     pub fn present_enabled(&self) -> bool {
         self.present.is_some()
     }
@@ -457,6 +464,7 @@ impl Compositor {
             bilinear: false,
             opaque: !transparent,
             padded: false,
+            content: None,
         }))
     }
 
@@ -473,7 +481,11 @@ impl Compositor {
         let Some(uploader) = surface.uploader.as_mut() else {
             return Err("surface is not an uploaded layer".into());
         };
-        for damage in uploader.upload(conn, canvas)? {
+        let damage = uploader.upload(conn, canvas)?;
+        if !surface.opaque && !damage.is_empty() {
+            surface.content = Some(content_bands(canvas));
+        }
+        for damage in damage {
             surface.pending = union(surface.pending, Some(damage));
         }
         Ok(())
@@ -499,6 +511,7 @@ impl Compositor {
             bilinear: false,
             opaque: true,
             padded: false,
+            content: None,
         }))
     }
 
@@ -643,7 +656,7 @@ impl Compositor {
                         }
                         let interval_ms = interval_us as f32 / 1000.0;
                         let latency_ms = in_flight.sent.elapsed().as_secs_f32() * 1000.0;
-                        if interval_ms < 100.0 {
+                        if interval_ms < 100.0 && self.stats.intervals_ms.len() < 4096 {
                             self.stats.frames += 1;
                             self.stats.missed_vblanks += delta - 1;
                             self.stats.intervals_ms.push(interval_ms);
@@ -900,6 +913,13 @@ impl Compositor {
         Ok(true)
     }
 
+    fn content(&self, id: SurfaceId) -> Option<&Vec<Damage>> {
+        self.surfaces
+            .get(id.0)
+            .and_then(Option::as_ref)
+            .and_then(|surface| surface.content.as_ref())
+    }
+
     fn pending(&self, id: SurfaceId) -> Option<Damage> {
         self.surfaces
             .get(id.0)
@@ -1071,20 +1091,47 @@ impl Compositor {
                 } else {
                     PictOp::OVER
                 };
-                conn.render_composite(
-                    op,
-                    picture,
-                    mask_picture,
-                    target,
-                    src_x as i16,
-                    src_y as i16,
-                    mx as i16,
-                    my as i16,
-                    area.x0 as i16,
-                    area.y0 as i16,
-                    w,
-                    h,
-                )?;
+                // An unscaled transparent layer only needs its content bands.
+                let bands: Vec<Damage> = match (integral, self.content(surface)) {
+                    (true, Some(bands)) => {
+                        let (dx, dy) = (
+                            (dst.x - src.x).round() as i32,
+                            (dst.y - src.y).round() as i32,
+                        );
+                        bands
+                            .iter()
+                            .filter_map(|b| {
+                                intersect(
+                                    Damage {
+                                        x0: b.x0 + dx,
+                                        y0: b.y0 + dy,
+                                        x1: b.x1 + dx,
+                                        y1: b.y1 + dy,
+                                    },
+                                    area,
+                                )
+                            })
+                            .collect()
+                    }
+                    _ => vec![area],
+                };
+                for part in bands {
+                    conn.render_composite(
+                        op,
+                        picture,
+                        mask_picture,
+                        target,
+                        (src_x + part.x0 - area.x0) as i16,
+                        (src_y + part.y0 - area.y0) as i16,
+                        (mx + part.x0 - area.x0) as i16,
+                        (my + part.y0 - area.y0) as i16,
+                        part.x0 as i16,
+                        part.y0 as i16,
+                        (part.x1 - part.x0) as u16,
+                        (part.y1 - part.y0) as u16,
+                    )?;
+                }
+                let _ = (w, h);
             }
             Node::Fill { color, .. } => match mask {
                 None => {
@@ -1213,6 +1260,35 @@ impl Compositor {
     }
 }
 
+/// Row bands of a premultiplied canvas that contain visible pixels, with the
+/// horizontal extent of each; nearby rows merge into one band.
+fn content_bands(canvas: &Canvas) -> Vec<Damage> {
+    const MERGE_GAP: i32 = 48;
+    let mut bands: Vec<Damage> = Vec::new();
+    for y in 0..canvas.height {
+        let row = &canvas.pixels[(y * canvas.width) as usize..((y + 1) * canvas.width) as usize];
+        let Some(first) = row.iter().position(|p| p >> 24 != 0) else {
+            continue;
+        };
+        let last = row.iter().rposition(|p| p >> 24 != 0).unwrap_or(first);
+        let (x0, x1) = (first as i32, last as i32 + 1);
+        match bands.last_mut() {
+            Some(band) if y - band.y1 <= MERGE_GAP => {
+                band.x0 = band.x0.min(x0);
+                band.x1 = band.x1.max(x1);
+                band.y1 = y + 1;
+            }
+            _ => bands.push(Damage {
+                x0,
+                y0: y,
+                x1,
+                y1: y + 1,
+            }),
+        }
+    }
+    bands
+}
+
 fn monotonic_micros() -> u64 {
     let mut ts = libc::timespec {
         tv_sec: 0,
@@ -1251,6 +1327,32 @@ mod tests {
             radius: 0.0,
         };
         assert_eq!(offscreen.bounds(100, 100), None);
+    }
+
+    #[test]
+    fn content_bands_skip_empty_rows_and_merge_near_ones() {
+        let mut canvas = Canvas::new(100, 400);
+        canvas.fill_rect(10, 10, 20, 10, 0xffffff, 1.0);
+        canvas.fill_rect(40, 40, 20, 10, 0xffffff, 1.0);
+        canvas.fill_rect(5, 300, 10, 10, 0xffffff, 0.5);
+        let bands = content_bands(&canvas);
+        assert_eq!(
+            bands,
+            vec![
+                Damage {
+                    x0: 10,
+                    y0: 10,
+                    x1: 60,
+                    y1: 50
+                },
+                Damage {
+                    x0: 5,
+                    y0: 300,
+                    x1: 15,
+                    y1: 310
+                },
+            ]
+        );
     }
 
     #[test]

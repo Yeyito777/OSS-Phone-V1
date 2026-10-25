@@ -341,7 +341,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         None
     };
     // MOON_PROFILE=1 logs every presented frame and a summary per animation.
-    let profile_frames = env::var_os("MOON_PROFILE").is_some();
+    let mut profile_frames = env::var_os("MOON_PROFILE").is_some();
+    let mut last_animation: Option<String> = None;
     let compositor = Compositor::new(
         &conn,
         shell_window,
@@ -574,6 +575,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                         ipc::respond::<model::PublicState>(stream, Err(error));
                         continue;
                     }
+                    if let Command::Profile(enabled) = command {
+                        renderer.compositor.set_profile(enabled);
+                        profile_frames = enabled;
+                        eprintln!("frame profiling {}", if enabled { "on" } else { "off" });
+                    }
                     apply_command(
                         &conn,
                         root,
@@ -587,8 +593,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                         audio_volume.as_ref(),
                         key_repeat_timing,
                     );
-                    let public =
+                    let mut public =
                         state.public(width, height, apps.public(), suspend_coordinator.public());
+                    public.animation = last_animation.clone();
                     ipc::respond(stream, Ok(&public));
                 }
                 Err(error) => ipc::respond::<model::PublicState>(stream, Err(&error)),
@@ -768,8 +775,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 frame_idle_until = display_time;
             }
         }
-        if profile_frames && was_animating && !animating {
-            eprintln!("animation summary: {}", renderer.compositor.stats.summary());
+        if was_animating && !animating && renderer.compositor.stats.frames > 0 {
+            let summary = renderer.compositor.stats.summary();
+            if profile_frames {
+                eprintln!("animation summary: {summary}");
+            }
+            last_animation = Some(summary);
             renderer.compositor.stats = Default::default();
         }
         was_animating = animating;
@@ -2189,7 +2200,7 @@ fn apply_command(
     key_repeat_timing: KeyRepeatTiming,
 ) {
     match command {
-        Command::Ping | Command::State => {}
+        Command::Ping | Command::State | Command::Profile(_) => {}
         Command::Digit(digit) => state.input_digit(digit, config),
         Command::Backspace => state.backspace_pin(),
         Command::Submit => {

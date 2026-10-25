@@ -231,6 +231,9 @@ pub struct PublicState {
     pub apps: Vec<PublicAppState>,
     pub keyboard: PublicKeyboardState,
     pub suspend: PublicSuspendState,
+    /// Frame timing of the last finished animation (see `profile on`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub animation: Option<String>,
 }
 
 impl ShellState {
@@ -317,6 +320,7 @@ impl ShellState {
             apps,
             keyboard: self.keyboard.public(),
             suspend,
+            animation: None,
         }
     }
 
