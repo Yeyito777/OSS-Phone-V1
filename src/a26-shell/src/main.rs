@@ -94,6 +94,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let config_path = parse_config_path()?;
     let config = Config::load(&config_path)?;
     let key_repeat_timing = KeyRepeatTiming::from_config(&config);
+    if let Some(zone) = &config.timezone {
+        // SAFETY: Moon is still single-threaded here; nothing reads the
+        // environment concurrently. Apps inherit the same local time.
+        unsafe { env::set_var("TZ", zone) };
+    }
     let (conn, screen_number) = RustConnection::connect(None)?;
     let screen = &conn.setup().roots[screen_number];
     let root = screen.root;

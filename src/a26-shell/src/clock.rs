@@ -44,6 +44,8 @@ const MONTHS: [&str; 12] = [
 
 impl LocalTime {
     pub fn now() -> Self {
+        // time_t is 64-bit on every Moon target (aarch64 musl, x86-64).
+        #[allow(deprecated)]
         let seconds = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())

@@ -15,6 +15,10 @@ pub struct Config {
     pub deep_suspend: bool,
     /// Show the clock as 21:41 rather than 9:41.
     pub clock_24h: bool,
+    /// `TZ` value for the clock when the chroot has no `/etc/localtime`:
+    /// a POSIX rule such as `EST5EDT,M3.2.0,M11.1.0`, or a zone name when
+    /// tzdata is installed.
+    pub timezone: Option<String>,
     pub socket_path: PathBuf,
 }
 
@@ -38,6 +42,8 @@ struct ConfigFile {
     deep_suspend: bool,
     #[serde(default)]
     clock_24h: bool,
+    #[serde(default)]
+    timezone: Option<String>,
     #[serde(default = "default_socket")]
     socket_path: PathBuf,
 }
@@ -92,6 +98,9 @@ impl Config {
             keyboard_repeat_rate_hz: file.keyboard_repeat_rate_hz,
             deep_suspend: file.deep_suspend,
             clock_24h: file.clock_24h,
+            timezone: file
+                .timezone
+                .filter(|zone| !zone.is_empty() && zone.len() <= 64 && zone.is_ascii()),
             socket_path: file.socket_path,
         })
     }

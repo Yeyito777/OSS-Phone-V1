@@ -753,6 +753,7 @@ mod tests {
             keyboard_repeat_rate_hz: 45,
             deep_suspend: false,
             clock_24h: false,
+            timezone: None,
             socket_path: "/tmp/a26-shell-test.sock".into(),
         }
     }
