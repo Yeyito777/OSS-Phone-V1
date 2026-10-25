@@ -1,5 +1,24 @@
 # Testing a built kernel on the phone
 
+## Results on the phone (2026-10-25, attended)
+
+Flashed in-OS with `flash-boot-inplace.sh --allow-kernel-change`, each image
+checked against the same list on three boots (Moon ready, 306 modules, no
+module/symbol/CRC/oops lines, root, display, touch device, audio, Wi-Fi +
+HTTPS, charging, DPMS screen off/on, clean reboot):
+
+| Image | Result |
+| --- | --- |
+| stock-mirror `28f31505…` | pass ×3: `/proc/version` identical to stock, taint 1024, Moon ready 21.3–21.6 s |
+| oss-mirror `8c0461ee…` | pass ×5 (3 + 2 after the stage-2 rescue): `oss-phone@oss-phone-v1` banner, taint 1024, PID_NS/DEVTMPFS on, DEFEX off, 1 MiB log (dmesg starts at 0.000000), KFENCE sample 0, Moon ready 20.5–25.1 s |
+| oss-userns | not run |
+
+PID namespaces: busybox `unshare -p -f` gives the shell PID 1 and a fresh
+proc mount shows only its own 4 processes (busybox's `--mount-proc` fails
+with EINVAL on the chroot's shared root; mount proc by hand). devtmpfs mounts
+with 430 nodes. **The OSS kernel image is the installed default**; stage 2
+on top of it failed (see `notes/direct-boot/RESCUE.md`).
+
 Images (unflashed) live in the Mac checkout's git-ignored `images/kernel/`
 (copies of whale's `$KROOT/out/boot/`); verify with `shasum -a 256 -c SHA256SUMS`.
 
@@ -66,8 +85,9 @@ Test 1's checks, plus:
 - It boots: flash `rollback/boot-moon-direct-A266MUBU1AYB8.img` the same way
   (read back and compare `3bf29162…`).
 - It does not boot (black screen, boot loop, reset before the boot animation):
-  RESCUE.md Level 3 (Power + Volume Down; then Volume Up + Volume Down with
-  USB; Volume Up), then `tools/samloader flash -p BOOT
+  RESCUE.md Level 3 (USB in; hold Volume Up + Volume Down + Power until
+  black; release only Power, keep both volume keys until the teal warning;
+  Volume Up), then `tools/samloader flash -p BOOT
   images/kernel/rollback/boot-moon-direct-A266MUBU1AYB8.img` and a manual
   restart. The direct-boot fallbacks are userspace and cannot catch a kernel
   that fails to boot; a kernel panic after boot does get one Android boot.
