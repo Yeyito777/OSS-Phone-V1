@@ -17,9 +17,22 @@
 # dd + fsync + sync, the partition is re-read with O_DIRECT and must match the
 # image's sha256; on a mismatch the backup is written back and verified.
 #
+# Images verified on the phone (KNOWN_GOOD below) may replace any installed
+# kernel without --allow-kernel-change, so a rollback never needs an override;
+# images known not to boot (KNOWN_BAD) are refused outright.
+#
 # A wrong-but-booting image is fixed by running this again with the backup. An
 # image that does not boot needs Download mode (notes/direct-boot/RESCUE.md).
 set -euo pipefail
+
+# sha256 -> description. Keep in step with notes/direct-boot/RESCUE.md.
+declare -A KNOWN_GOOD=(
+    [8c0461eef2ca07b3d35199149907b40ff5db07fc10b4b92567ef1e3443b15f73]='OSS kernel + direct boot (installed default since 2026-10-25)'
+    [3bf291627791e71ba00b4fcdde8b6bd92faa62d6fe2f14da9b906fd86619e9f6]='stock kernel + direct boot (stage-1 rollback)'
+)
+declare -A KNOWN_BAD=(
+    [4d27b69bed59fd075f00963d19b29d630307cf1a247d3193832cd381bcac62f3]='stage-2 oss-init: PID 1 panics after SwitchRoot fails (2026-10-25)'
+)
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$PROJECT_ROOT/scripts/a26-shell/common.sh"
@@ -60,6 +73,11 @@ header_version="$(od -A n -t u4 -j 40 -N 4 "$IMAGE" | tr -d ' ')"
 [[ "$(tail -c 64 "$IMAGE" | head -c 4)" == AVBf ]] || fail 'no AVB footer at the end of the image'
 image_sha="$(sha256 "$IMAGE")"
 echo "image $IMAGE sha256=$image_sha ($size bytes, boot v$header_version, AVB footer)"
+[[ -z "${KNOWN_BAD[$image_sha]:-}" ]] || fail "refusing a known non-booting image: ${KNOWN_BAD[$image_sha]}"
+if [[ -n "${KNOWN_GOOD[$image_sha]:-}" ]]; then
+    echo "known-good image: ${KNOWN_GOOD[$image_sha]}"
+    ALLOW_KERNEL=1
+fi
 
 PHONE_SCRIPT="$(mktemp)"
 trap 'rm -f "$PHONE_SCRIPT"' EXIT
