@@ -13,6 +13,8 @@ pub struct Config {
     pub keyboard_repeat_delay_ms: u64,
     pub keyboard_repeat_rate_hz: u32,
     pub deep_suspend: bool,
+    /// Show the clock as 21:41 rather than 9:41.
+    pub clock_24h: bool,
     pub socket_path: PathBuf,
 }
 
@@ -34,6 +36,8 @@ struct ConfigFile {
     /// keeps the session resident unless this is explicitly enabled.
     #[serde(default)]
     deep_suspend: bool,
+    #[serde(default)]
+    clock_24h: bool,
     #[serde(default = "default_socket")]
     socket_path: PathBuf,
 }
@@ -87,6 +91,7 @@ impl Config {
             keyboard_repeat_delay_ms: file.keyboard_repeat_delay_ms,
             keyboard_repeat_rate_hz: file.keyboard_repeat_rate_hz,
             deep_suspend: file.deep_suspend,
+            clock_24h: file.clock_24h,
             socket_path: file.socket_path,
         })
     }

@@ -2,23 +2,22 @@ use std::error::Error;
 
 use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::connection::Connection;
+use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
 use x11rb::protocol::xproto::{
-    ChangeGCAux, ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask,
-    Gcontext, Pixmap, Rectangle, StackMode, Window, WindowClass,
+    ClipOrdering, ConfigureWindowAux, ConnectionExt as _, CreateWindowAux, EventMask, Rectangle,
+    StackMode, Window, WindowClass,
 };
 
-use crate::font;
-use crate::ui::{ACCENT, BG_CARD, FG, MUTED};
+use crate::gfx::{Canvas, RectF};
+use crate::present::Presenter;
+use crate::ui::{self, BLACK, VOLUME_HUD};
 
-pub const WIDTH: u16 = 240;
-pub const HEIGHT: u16 = 720;
-pub const X: i16 = 790;
-pub const Y: i16 = 330;
-
+/// The volume HUD shown above apps. The window is shaped to the HUD's
+/// capsule so the app stays visible around it.
 pub struct VolumeSurface {
     pub window: Window,
-    pixmap: Pixmap,
-    gc: Gcontext,
+    canvas: Canvas,
+    presenter: Presenter,
     mapped: bool,
     redraw: bool,
     last_volume: Option<u8>,
@@ -29,32 +28,43 @@ impl VolumeSurface {
         conn: &C,
         root: Window,
         depth: u8,
+        shape_available: bool,
     ) -> Result<Self, Box<dyn Error>> {
+        let (width, height) = (VOLUME_HUD.w as u16, VOLUME_HUD.h as u16);
         let window = conn.generate_id()?;
         conn.create_window(
             COPY_DEPTH_FROM_PARENT,
             window,
             root,
-            X,
-            Y,
-            WIDTH,
-            HEIGHT,
+            VOLUME_HUD.x as i16,
+            VOLUME_HUD.y as i16,
+            width,
+            height,
             0,
             WindowClass::INPUT_OUTPUT,
             0,
             &CreateWindowAux::new()
-                .background_pixel(BG_CARD)
+                .background_pixel(BLACK)
                 .override_redirect(1)
                 .event_mask(EventMask::EXPOSURE),
         )?;
-        let pixmap = conn.generate_id()?;
-        conn.create_pixmap(depth, pixmap, window, WIDTH, HEIGHT)?;
-        let gc = conn.generate_id()?;
-        conn.create_gc(gc, pixmap, &CreateGCAux::new().graphics_exposures(0))?;
+        if shape_available {
+            let spans = capsule_spans(width, height);
+            conn.shape_rectangles(
+                SO::SET,
+                SK::BOUNDING,
+                ClipOrdering::Y_SORTED,
+                window,
+                0,
+                0,
+                &spans,
+            )?;
+        }
+        let presenter = Presenter::create(conn, window, depth, width, height)?;
         Ok(Self {
             window,
-            pixmap,
-            gc,
+            canvas: Canvas::new(i32::from(width), i32::from(height)),
+            presenter,
             mapped: false,
             redraw: true,
             last_volume: None,
@@ -93,134 +103,60 @@ impl VolumeSurface {
             )?;
         }
         if needs_present {
-            self.render(conn, volume)?;
+            self.canvas.clear(BLACK);
+            let rect = RectF::new(0.0, 0.0, VOLUME_HUD.w, VOLUME_HUD.h);
+            ui::draw_volume_hud(&mut self.canvas, rect, volume);
+            self.presenter.present(conn, &self.canvas, 0)?;
+            self.presenter.expose(conn, 0)?;
             self.redraw = false;
             self.last_volume = Some(volume);
         }
         Ok(())
     }
 
-    fn render<C: Connection>(&self, conn: &C, volume: u8) -> Result<(), Box<dyn Error>> {
-        self.fill(
-            conn,
-            BG_CARD,
-            Rectangle {
-                x: 0,
-                y: 0,
-                width: WIDTH,
-                height: HEIGHT,
-            },
-        )?;
-        self.center_text(conn, "VOL", 45, 5, FG)?;
-        self.outline(
-            conn,
-            MUTED,
-            Rectangle {
-                x: 85,
-                y: 145,
-                width: 70,
-                height: 470,
-            },
-            4,
-        )?;
-        let filled = u16::from(volume) * 454 / 100;
-        self.fill(
-            conn,
-            ACCENT,
-            Rectangle {
-                x: 93,
-                y: (607 - filled) as i16,
-                width: 54,
-                height: filled,
-            },
-        )?;
-        self.center_text(conn, &volume.to_string(), 640, 5, ACCENT)?;
-        conn.copy_area(self.pixmap, self.window, self.gc, 0, 0, 0, 0, WIDTH, HEIGHT)?;
-        Ok(())
-    }
-
-    fn center_text<C: Connection>(
-        &self,
-        conn: &C,
-        text: &str,
-        y: i16,
-        scale: u16,
-        color: u32,
-    ) -> Result<(), Box<dyn Error>> {
-        let width = font::text_width(text, scale);
-        let x = ((WIDTH.saturating_sub(width)) / 2) as i16;
-        conn.change_gc(self.gc, &ChangeGCAux::new().foreground(color))?;
-        let rectangles = font::rectangles(text, x, y, scale);
-        if !rectangles.is_empty() {
-            conn.poly_fill_rectangle(self.pixmap, self.gc, &rectangles)?;
-        }
-        Ok(())
-    }
-
-    fn fill<C: Connection>(
-        &self,
-        conn: &C,
-        color: u32,
-        rectangle: Rectangle,
-    ) -> Result<(), Box<dyn Error>> {
-        conn.change_gc(self.gc, &ChangeGCAux::new().foreground(color))?;
-        conn.poly_fill_rectangle(self.pixmap, self.gc, &[rectangle])?;
-        Ok(())
-    }
-
-    fn outline<C: Connection>(
-        &self,
-        conn: &C,
-        color: u32,
-        rectangle: Rectangle,
-        thickness: u16,
-    ) -> Result<(), Box<dyn Error>> {
-        self.fill(
-            conn,
-            color,
-            Rectangle {
-                x: rectangle.x,
-                y: rectangle.y,
-                width: rectangle.width,
-                height: thickness,
-            },
-        )?;
-        self.fill(
-            conn,
-            color,
-            Rectangle {
-                x: rectangle.x,
-                y: rectangle.y + rectangle.height as i16 - thickness as i16,
-                width: rectangle.width,
-                height: thickness,
-            },
-        )?;
-        self.fill(
-            conn,
-            color,
-            Rectangle {
-                x: rectangle.x,
-                y: rectangle.y,
-                width: thickness,
-                height: rectangle.height,
-            },
-        )?;
-        self.fill(
-            conn,
-            color,
-            Rectangle {
-                x: rectangle.x + rectangle.width as i16 - thickness as i16,
-                y: rectangle.y,
-                width: thickness,
-                height: rectangle.height,
-            },
-        )?;
-        Ok(())
-    }
-
     pub fn destroy<C: Connection>(&self, conn: &C) {
         let _ = conn.destroy_window(self.window);
-        let _ = conn.free_pixmap(self.pixmap);
-        let _ = conn.free_gc(self.gc);
+        self.presenter.destroy(conn);
+    }
+}
+
+/// Row spans covering a capsule of the given size (pixels whose centers lie
+/// inside it), for the window's bounding shape.
+fn capsule_spans(width: u16, height: u16) -> Vec<Rectangle> {
+    let radius = f32::from(width) / 2.0;
+    (0..height)
+        .filter_map(|y| {
+            let py = f32::from(y) + 0.5;
+            let dy = if py < radius {
+                radius - py
+            } else if py > f32::from(height) - radius {
+                py - (f32::from(height) - radius)
+            } else {
+                0.0
+            };
+            let half = (radius * radius - dy * dy).max(0.0).sqrt();
+            let x0 = (radius - half).round() as i16;
+            let x1 = (radius + half).round() as i16;
+            (x1 > x0).then_some(Rectangle {
+                x: x0,
+                y: y as i16,
+                width: (x1 - x0) as u16,
+                height: 1,
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capsule_shape_is_full_width_in_the_middle_and_narrow_at_the_ends() {
+        let spans = capsule_spans(112, 392);
+        assert_eq!(spans.len(), 392);
+        assert_eq!(spans[196].width, 112);
+        assert!(spans[0].width < 40);
+        assert_eq!(spans[0].x as u16 * 2 + spans[0].width, 112);
     }
 }

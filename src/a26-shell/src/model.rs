@@ -93,6 +93,51 @@ impl View {
     }
 }
 
+/// The two faces of the lock screen: the clock (shown on wake) and the
+/// passcode keypad (revealed by a tap, an upward swipe, or a typed digit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LockFace {
+    Clock,
+    Passcode,
+}
+
+/// A control currently held down, drawn highlighted until release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Press {
+    Keypad(crate::ui::KeypadAction),
+    App(AppId),
+}
+
+/// An app opening from (or closing into) its launcher icon.
+#[derive(Debug, Clone, Copy)]
+pub struct Launch {
+    pub app: AppId,
+    pub started: Instant,
+    /// A background app being brought back: its window already exists.
+    pub resumed: bool,
+    pub window_mapped_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Closing {
+    pub app: AppId,
+    pub started: Instant,
+}
+
+/// Duration of the icon-to-fullscreen zoom when an app opens.
+pub const OPEN_ANIMATION: Duration = Duration::from_millis(340);
+/// Duration of the fullscreen-to-icon zoom when an app goes home.
+pub const CLOSE_ANIMATION: Duration = Duration::from_millis(300);
+/// Wrong-passcode shake.
+pub const SHAKE_ANIMATION: Duration = Duration::from_millis(480);
+/// The passcode keypad returns to the clock after this much inactivity.
+pub const PASSCODE_IDLE_TIMEOUT: Duration = Duration::from_secs(12);
+/// Vimbrowser's first frames are painted by a software compositor; keep the
+/// launch screen up briefly after its window maps so no blank frame shows.
+const BROWSER_FIRST_PAINT_DELAY: Duration = Duration::from_millis(1500);
+const SYSTEM_FIRST_PAINT_DELAY: Duration = Duration::from_millis(80);
+
 #[derive(Debug, Clone, Copy)]
 pub struct PointerGesture {
     pub start_x: i16,
@@ -126,9 +171,15 @@ pub struct ShellState {
     pub should_exit: bool,
     pub managed_windows: Vec<u32>,
     pub keyboard: KeyboardState,
+    pub lock_face: LockFace,
+    pub last_lock_input: Instant,
+    pub pressed: Option<Press>,
+    pub pin_error_at: Option<Instant>,
+    pub closing: Option<Closing>,
+    /// The shell window was exposed and must be recopied from its pixmap.
+    pub shell_exposed: bool,
     active_app_focused: bool,
-    app_launch_started: Option<Instant>,
-    app_window_mapped_at: Option<Instant>,
+    launch: Option<Launch>,
 }
 
 #[derive(Debug, Serialize)]
@@ -146,6 +197,7 @@ pub struct PublicState {
     pub wifi_connected: bool,
     pub width: u16,
     pub height: u16,
+    pub lock_face: LockFace,
     pub last_action: String,
     pub pointer_active: bool,
     pub managed_windows: Vec<u32>,
@@ -179,9 +231,14 @@ impl ShellState {
             should_exit: false,
             managed_windows: Vec::new(),
             keyboard: KeyboardState::default(),
+            lock_face: LockFace::Clock,
+            last_lock_input: Instant::now(),
+            pressed: None,
+            pin_error_at: None,
+            closing: None,
+            shell_exposed: false,
             active_app_focused: false,
-            app_launch_started: None,
-            app_window_mapped_at: None,
+            launch: None,
         }
     }
 
@@ -214,6 +271,7 @@ impl ShellState {
             wifi_connected: self.wifi_connected,
             width,
             height,
+            lock_face: self.lock_face,
             last_action: self.last_action.clone(),
             pointer_active: self.pointer.is_some(),
             managed_windows: self.managed_windows.clone(),
@@ -228,8 +286,12 @@ impl ShellState {
     pub fn lock(&mut self) {
         self.keyboard.hide();
         self.view = View::Locked;
+        self.lock_face = LockFace::Clock;
         self.clear_pin();
         self.pointer = None;
+        self.pressed = None;
+        self.closing = None;
+        self.pin_error_at = None;
         self.active_app_focused = false;
         self.cancel_app_launch();
         self.last_action = "lock".into();
@@ -259,6 +321,13 @@ impl ShellState {
     pub fn home(&mut self) {
         if self.screen_awake && self.view != View::Locked {
             self.keyboard.hide();
+            if let Some(app) = AppId::from_view(self.view) {
+                self.closing = Some(Closing {
+                    app,
+                    started: Instant::now(),
+                });
+            }
+            self.pressed = None;
             self.view = View::Launcher;
             self.active_app_focused = false;
             self.cancel_app_launch();
@@ -284,7 +353,12 @@ impl ShellState {
     }
 
     pub fn note_app_resumed(&mut self, app: AppId) {
-        self.cancel_app_launch();
+        // A resumed app keeps its existing window; the opening zoom still
+        // plays and the window is revealed as soon as it finishes.
+        if let Some(launch) = self.launch.as_mut().filter(|launch| launch.app == app) {
+            launch.resumed = true;
+            launch.window_mapped_at.get_or_insert_with(Instant::now);
+        }
         self.last_action = match app {
             AppId::System => "system_resumed",
             AppId::Browser => "browser_resumed",
@@ -302,24 +376,57 @@ impl ShellState {
     }
 
     pub fn launch_system(&mut self) {
-        if self.screen_awake && self.view != View::Locked && self.view != View::System {
+        self.begin_launch(AppId::System);
+    }
+
+    pub fn launch_browser(&mut self) {
+        self.begin_launch(AppId::Browser);
+    }
+
+    fn begin_launch(&mut self, app: AppId) {
+        let view = match app {
+            AppId::System => View::System,
+            AppId::Browser => View::Browser,
+        };
+        if self.screen_awake && self.view != View::Locked && self.view != view {
             self.keyboard.hide();
-            self.view = View::System;
+            self.view = view;
             self.active_app_focused = false;
+            self.pressed = None;
+            self.closing = None;
             self.managed_windows.clear();
-            self.cancel_app_launch();
-            self.last_action = "launch_system".into();
+            self.launch = Some(Launch {
+                app,
+                started: Instant::now(),
+                resumed: false,
+                window_mapped_at: None,
+            });
+            self.last_action = match app {
+                AppId::System => "launch_system",
+                AppId::Browser => "launch_browser",
+            }
+            .into();
             self.redraw = true;
         }
     }
 
-    pub fn launch_browser(&mut self) {
-        if self.screen_awake && self.view != View::Locked && self.view != View::Browser {
-            self.keyboard.hide();
-            self.view = View::Browser;
-            self.active_app_focused = false;
-            self.begin_app_launch();
-            self.last_action = "launch_browser".into();
+    /// Reveals the passcode keypad over the lock-screen clock.
+    pub fn show_passcode(&mut self) {
+        if self.screen_awake && self.view == View::Locked && self.lock_face != LockFace::Passcode {
+            self.lock_face = LockFace::Passcode;
+            self.last_lock_input = Instant::now();
+            self.last_action = "passcode_shown".into();
+            self.redraw = true;
+        }
+    }
+
+    /// Returns from the passcode keypad to the lock-screen clock.
+    pub fn cancel_passcode(&mut self) {
+        if self.view == View::Locked && self.lock_face == LockFace::Passcode {
+            self.lock_face = LockFace::Clock;
+            self.clear_pin();
+            self.pin_error_at = None;
+            self.last_action = "passcode_cancel".into();
             self.redraw = true;
         }
     }
@@ -329,6 +436,8 @@ impl ShellState {
         {
             return;
         }
+        self.show_passcode();
+        self.last_lock_input = Instant::now();
         if self.pin_input.len() < config.pin_length {
             self.pin_input.push(b'0' + digit);
             self.last_action = "pin_digit".into();
@@ -341,6 +450,7 @@ impl ShellState {
 
     pub fn backspace_pin(&mut self) {
         if self.screen_awake && self.view == View::Locked && !self.is_lockout_active() {
+            self.last_lock_input = Instant::now();
             self.pin_input.pop();
             self.last_action = "pin_backspace".into();
             self.redraw = true;
@@ -353,13 +463,17 @@ impl ShellState {
         }
         let accepted = verify_pin(config, &self.pin_input);
         self.clear_pin();
+        self.last_lock_input = Instant::now();
         if accepted {
             self.view = View::Launcher;
+            self.lock_face = LockFace::Clock;
+            self.pin_error_at = None;
             self.failed_attempts = 0;
             self.lockout_until = None;
             self.last_action = "unlock".into();
         } else {
             self.failed_attempts = self.failed_attempts.saturating_add(1);
+            self.pin_error_at = Some(Instant::now());
             self.last_action = "unlock_failed".into();
             if self.failed_attempts % 5 == 0 {
                 self.lockout_until = Some(Instant::now() + Duration::from_secs(30));
@@ -455,61 +569,116 @@ impl ShellState {
     }
 
     pub fn app_launching(&self) -> bool {
-        self.view == View::Browser && self.app_launch_started.is_some()
+        self.launch
+            .is_some_and(|launch| AppId::from_view(self.view) == Some(launch.app))
+    }
+
+    pub fn launch(&self) -> Option<Launch> {
+        self.launch.filter(|_| self.app_launching())
     }
 
     pub fn app_launch_elapsed(&self) -> Duration {
-        self.app_launch_started
-            .map(|started| started.elapsed())
+        self.launch()
+            .map(|launch| launch.started.elapsed())
             .unwrap_or_default()
     }
 
     pub fn note_app_window_mapped(&mut self) {
-        if self.app_launching() && self.app_window_mapped_at.is_none() {
-            self.app_window_mapped_at = Some(Instant::now());
-            self.last_action = match self.view {
-                View::System => "system_window_warming",
-                View::Browser => "browser_window_warming",
-                View::Locked | View::Launcher => return,
+        let view = self.view;
+        if let Some(launch) = self.launch.as_mut()
+            && AppId::from_view(view) == Some(launch.app)
+            && launch.window_mapped_at.is_none()
+        {
+            launch.window_mapped_at = Some(Instant::now());
+            self.last_action = match launch.app {
+                AppId::System => "system_window_warming",
+                AppId::Browser => "browser_window_warming",
             }
             .into();
             self.redraw = true;
         }
     }
 
-    pub fn app_ready_to_reveal(&self) -> bool {
-        let Some(mapped_at) = self.app_window_mapped_at else {
-            return false;
+    fn reveal_at(&self) -> Option<Instant> {
+        let launch = self.launch()?;
+        let mapped_at = launch.window_mapped_at?;
+        let paint_delay = if launch.resumed {
+            Duration::ZERO
+        } else {
+            match launch.app {
+                AppId::System => SYSTEM_FIRST_PAINT_DELAY,
+                AppId::Browser => BROWSER_FIRST_PAINT_DELAY,
+            }
         };
-        self.view == View::Browser && mapped_at.elapsed() >= Duration::from_millis(1500)
+        Some((launch.started + OPEN_ANIMATION).max(mapped_at + paint_delay))
+    }
+
+    pub fn app_ready_to_reveal(&self) -> bool {
+        self.reveal_at()
+            .is_some_and(|reveal_at| Instant::now() >= reveal_at)
     }
 
     pub fn finish_app_launch(&mut self) {
-        if !self.app_launching() {
+        let Some(launch) = self.launch() else {
             return;
+        };
+        self.launch = None;
+        self.last_action = match launch.app {
+            AppId::System => "system_ready",
+            AppId::Browser => "browser_ready",
         }
-        self.app_launch_started = None;
-        self.app_window_mapped_at = None;
-        if self.view != View::Browser {
-            return;
-        }
-        self.last_action = "browser_ready".into();
+        .into();
         self.redraw = true;
     }
 
-    fn begin_app_launch(&mut self) {
-        self.managed_windows.clear();
-        self.app_launch_started = Some(Instant::now());
-        self.app_window_mapped_at = None;
+    fn cancel_app_launch(&mut self) {
+        self.launch = None;
     }
 
-    fn cancel_app_launch(&mut self) {
-        self.app_launch_started = None;
-        self.app_window_mapped_at = None;
+    /// True while a shell animation needs frames (zooms, shake).
+    pub fn animating(&self, now: Instant) -> bool {
+        if !self.screen_awake {
+            return false;
+        }
+        let opening = self
+            .launch()
+            .is_some_and(|launch| now < launch.started + OPEN_ANIMATION);
+        let closing = self.view == View::Launcher
+            && self
+                .closing
+                .is_some_and(|closing| now < closing.started + CLOSE_ANIMATION);
+        let shaking = self.view == View::Locked
+            && self
+                .pin_error_at
+                .is_some_and(|at| now < at + SHAKE_ANIMATION);
+        opening || closing || shaking
     }
 
     pub fn tick(&mut self) {
+        let now = Instant::now();
         let _ = self.is_lockout_active();
+        if self.view == View::Locked
+            && self.lock_face == LockFace::Passcode
+            && now.duration_since(self.last_lock_input) >= PASSCODE_IDLE_TIMEOUT
+            && self.pointer.is_none()
+        {
+            self.cancel_passcode();
+            self.last_action = "passcode_idle_timeout".into();
+        }
+        if self
+            .closing
+            .is_some_and(|closing| now >= closing.started + CLOSE_ANIMATION)
+        {
+            self.closing = None;
+            self.redraw = true;
+        }
+        if self
+            .pin_error_at
+            .is_some_and(|at| now >= at + SHAKE_ANIMATION)
+        {
+            self.pin_error_at = None;
+            self.redraw = true;
+        }
         if self
             .volume_overlay_until
             .is_some_and(|deadline| Instant::now() >= deadline)
@@ -520,11 +689,13 @@ impl ShellState {
     }
 
     pub fn next_deadline(&self, now: Instant) -> Option<Instant> {
+        let passcode_timeout = (self.view == View::Locked && self.lock_face == LockFace::Passcode)
+            .then(|| self.last_lock_input + PASSCODE_IDLE_TIMEOUT);
         [
             self.lockout_until,
             self.volume_overlay_until,
-            self.app_window_mapped_at
-                .and_then(|mapped| mapped.checked_add(Duration::from_millis(1500))),
+            self.reveal_at(),
+            passcode_timeout,
         ]
         .into_iter()
         .flatten()
@@ -565,6 +736,7 @@ mod tests {
             keyboard_repeat_delay_ms: 200,
             keyboard_repeat_rate_hz: 45,
             deep_suspend: false,
+            clock_24h: false,
             socket_path: "/tmp/a26-shell-test.sock".into(),
         }
     }
@@ -632,25 +804,93 @@ mod tests {
         assert!(state.app_launching());
 
         state.note_app_window_mapped();
-        state.app_window_mapped_at = Some(Instant::now() - Duration::from_secs(2));
+        assert!(!state.app_ready_to_reveal());
+        let launch = state.launch.as_mut().unwrap();
+        launch.started -= Duration::from_secs(2);
+        launch.window_mapped_at = Some(Instant::now() - Duration::from_secs(2));
         assert!(state.app_ready_to_reveal());
         state.finish_app_launch();
         assert!(!state.app_launching());
     }
 
     #[test]
-    fn fast_system_app_does_not_enter_launch_overlay() {
+    fn system_app_reveals_after_the_opening_zoom() {
         let mut state = ShellState::new(false, 50);
         state.launch_system();
         assert_eq!(state.view, View::System);
-        assert!(!state.app_launching());
+        assert!(state.app_launching());
+        assert!(state.animating(Instant::now()));
+        assert!(!state.app_ready_to_reveal());
+
+        state.note_app_window_mapped();
+        let launch = state.launch.as_mut().unwrap();
+        launch.started -= OPEN_ANIMATION;
+        launch.window_mapped_at = Some(Instant::now() - Duration::from_millis(100));
+        assert!(state.app_ready_to_reveal());
+        state.finish_app_launch();
         assert!(!public(&state).app_launching);
+        assert!(!state.animating(Instant::now()));
+    }
+
+    #[test]
+    fn resumed_app_reveals_without_waiting_for_first_paint() {
+        let mut state = ShellState::new(false, 50);
+        state.launch_browser();
+        state.note_app_resumed(AppId::Browser);
+        state.launch.as_mut().unwrap().started -= OPEN_ANIMATION;
+        assert!(state.app_ready_to_reveal());
+    }
+
+    #[test]
+    fn going_home_plays_the_closing_zoom_once() {
+        let mut state = ShellState::new(false, 50);
+        state.launch_system();
+        state.finish_app_launch();
+        state.home();
+        assert_eq!(state.view, View::Launcher);
+        assert_eq!(
+            state.closing.map(|closing| closing.app),
+            Some(AppId::System)
+        );
+        assert!(state.animating(Instant::now()));
+        state.closing.as_mut().unwrap().started -= CLOSE_ANIMATION;
+        state.tick();
+        assert!(state.closing.is_none());
+    }
+
+    #[test]
+    fn lock_screen_reveals_passcode_and_times_out_to_the_clock() {
+        let config = test_config();
+        let mut state = ShellState::new(true, 50);
+        assert_eq!(state.lock_face, LockFace::Clock);
+        state.input_digit(1, &config);
+        assert_eq!(state.lock_face, LockFace::Passcode);
+        assert_eq!(state.pin_input.len(), 1);
+        state.last_lock_input -= PASSCODE_IDLE_TIMEOUT;
+        state.tick();
+        assert_eq!(state.lock_face, LockFace::Clock);
+        assert!(state.pin_input.is_empty());
+    }
+
+    #[test]
+    fn wrong_passcode_shakes_and_lock_resets_the_face() {
+        let config = test_config();
+        let mut state = ShellState::new(true, 50);
+        for digit in [1, 1, 1, 1, 1, 1] {
+            state.input_digit(digit, &config);
+        }
+        assert!(state.pin_error_at.is_some());
+        assert!(state.animating(Instant::now()));
+        state.lock();
+        assert_eq!(state.lock_face, LockFace::Clock);
+        assert!(state.pin_error_at.is_none());
     }
 
     #[test]
     fn keyboard_state_follows_app_and_security_transitions() {
         let mut state = ShellState::new(false, 50);
         state.launch_system();
+        state.finish_app_launch();
         state.managed_windows.push(42);
         assert!(state.show_keyboard(KeyboardPurpose::Text));
         assert!(state.keyboard.is_visible());
@@ -660,6 +900,7 @@ mod tests {
         assert!(!state.keyboard.is_visible());
 
         state.launch_system();
+        state.finish_app_launch();
         state.managed_windows.push(43);
         assert!(state.show_keyboard(KeyboardPurpose::Search));
         state.replace_managed_windows(Vec::new());
@@ -698,6 +939,7 @@ mod tests {
     fn password_keyboard_public_state_has_no_typed_content() {
         let mut state = ShellState::new(false, 50);
         state.launch_system();
+        state.finish_app_launch();
         state.managed_windows.push(42);
         assert!(state.show_keyboard(KeyboardPurpose::Password));
         assert!(matches!(

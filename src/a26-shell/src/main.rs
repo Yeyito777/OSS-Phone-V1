@@ -1,17 +1,20 @@
 mod apps;
 mod audio;
+mod clock;
 mod config;
-mod font;
 mod freezer;
+mod gfx;
 mod input;
 mod ipc;
 mod keyboard;
 mod lease;
 mod memory;
 mod model;
+mod present;
 mod status;
 mod status_bar;
 mod suspend;
+mod text;
 mod ui;
 mod volume;
 
@@ -29,10 +32,10 @@ use config::Config;
 use input::{Backlight, PowerKey, TouchscreenPower, VolumeKey, VolumeKeys};
 use ipc::{Command, IpcServer};
 use keyboard::{KeyboardEffect, KeyboardGeometry, KeyboardSurface, XtestInjector};
-use model::{AppId, PointerGesture, ShellState, View};
+use model::{AppId, LockFace, PointerGesture, Press, ShellState, View};
 use status_bar::StatusBarSurface;
 use suspend::{PersistedSuspendState, PlatformSuspend, SuspendAction, SuspendCoordinator};
-use ui::{KeypadAction, Renderer};
+use ui::{KeypadAction, Renderer, StatusInfo};
 use volume::VolumeSurface;
 use x11rb::connection::Connection;
 use x11rb::protocol::Event;
@@ -40,8 +43,8 @@ use x11rb::protocol::xfixes::ConnectionExt as _;
 use x11rb::protocol::xinput::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
     AtomEnum, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, Blanking, ChangeWindowAttributesAux,
-    ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask, Exposures,
-    InputFocus, MOTION_NOTIFY_EVENT, NotifyDetail, PropMode, StackMode, WindowClass,
+    ConfigureWindowAux, ConnectionExt as _, CreateWindowAux, EventMask, Exposures, InputFocus,
+    MOTION_NOTIFY_EVENT, NotifyDetail, PropMode, StackMode, WindowClass,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
@@ -53,7 +56,12 @@ const MEDIA_ACTIVITY_INTERVAL: Duration = Duration::from_millis(250);
 const MEDIA_ACTIVITY_MAX_AGE: Duration = Duration::from_secs(2);
 const MEMORY_STATUS_INTERVAL: Duration = Duration::from_secs(5);
 const FALLBACK_PROCESS_STATUS_INTERVAL: Duration = Duration::from_millis(250);
-const LAUNCH_ANIMATION_INTERVAL: Duration = Duration::from_millis(180);
+/// The launch-screen activity indicator steps at 12 Hz, like iOS's.
+const LAUNCH_ANIMATION_INTERVAL: Duration = Duration::from_millis(83);
+/// Frame interval for shell zoom and shake animations.
+const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+/// A touch that travels further than this is a drag, not a press.
+const PRESS_SLOP: i32 = 35;
 const MAX_REPEAT_CATCH_UP: usize = 8;
 const STALE_POINTER_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -176,20 +184,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         b"moon-shell",
     )?;
 
-    let shell_back_buffer = conn.generate_id()?;
-    conn.create_pixmap(
-        screen.root_depth,
-        shell_back_buffer,
-        shell_window,
-        width,
-        height,
-    )?;
-    let gc = conn.generate_id()?;
-    conn.create_gc(gc, shell_window, &CreateGCAux::new().graphics_exposures(0))?;
     let keyboard_geometry = KeyboardGeometry::new(width, height);
     let mut keyboard_surface =
         KeyboardSurface::create(&conn, root, screen.root_depth, keyboard_geometry)?;
-    let mut volume_surface = VolumeSurface::create(&conn, root, screen.root_depth)?;
+    // Resolve the SHAPE extension now: an extension's first use otherwise
+    // costs a QueryExtension reply wait, which the event loop must never do.
+    let shape_available = x11rb::connection::RequestConnection::extension_information(
+        &conn,
+        x11rb::protocol::shape::X11_EXTENSION_NAME,
+    )?
+    .is_some();
+    let mut volume_surface =
+        VolumeSurface::create(&conn, root, screen.root_depth, shape_available)?;
     let mut status_bar_surface = StatusBarSurface::create(&conn, root, screen.root_depth, width)?;
     conn.map_window(shell_window)?;
     conn.xfixes_hide_cursor(shell_window)?.check()?;
@@ -201,15 +207,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     conn.set_input_focus(InputFocus::PARENT, shell_window, CURRENT_TIME)?;
     conn.flush()?;
 
-    let renderer = Renderer {
-        window: shell_window,
-        back_buffer: shell_back_buffer,
-        gc,
+    let mut renderer = Renderer::new(
+        &conn,
+        shell_window,
+        screen.root_depth,
         width,
         height,
-        system_icon: ui::load_system_icon(),
-        browser_icon: ui::load_browser_icon(),
-    };
+        config.clock_24h,
+        config.pin_length,
+    )?;
     let ipc = IpcServer::bind(&config.socket_path)?;
     let audio_volume = match AudioVolume::open("/run/moon-audio/volume") {
         Ok(control) => Some(control),
@@ -245,6 +251,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut next_media_activity = Instant::now();
     let mut next_memory_status = Instant::now() + MEMORY_STATUS_INTERVAL;
     let mut next_launch_animation = Instant::now();
+    let mut next_clock_tick = clock::next_minute_boundary(Instant::now());
+    // MOON_PROFILE=1 logs the CPU time of every shell frame.
+    let profile_frames = env::var_os("MOON_PROFILE").is_some();
     let mut power_key = match PowerKey::open("/dev/input/event1") {
         Ok(device) => {
             eprintln!("physical power key ready at /dev/input/event1");
@@ -485,9 +494,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             &mut apps,
             update,
         )?;
-        let desired_shell_inset = state.view.is_app();
+        // The shell covers the full screen while it is visible (including
+        // the launch zoom) and steps below the status strip behind an app.
+        let desired_shell_inset = state.view.is_app() && !state.app_launching();
         if desired_shell_inset != shell_inset {
             resize_shell_window(&conn, shell_window, width, height, desired_shell_inset)?;
+            renderer.window_top = i32::from(shell_geometry(height, desired_shell_inset).0);
             shell_inset = desired_shell_inset;
         }
         state.replace_managed_windows(apps.active_windows());
@@ -546,14 +558,28 @@ fn main() -> Result<(), Box<dyn Error>> {
             state.redraw = true;
             next_launch_animation = Instant::now() + LAUNCH_ANIMATION_INTERVAL;
         }
+        if Instant::now() >= next_clock_tick {
+            // The minute changed: repaint every clock.
+            state.redraw = true;
+            next_clock_tick = clock::next_minute_boundary(Instant::now());
+        }
+        if state.animating(Instant::now()) {
+            state.redraw = true;
+        }
         state.tick();
         if state.redraw {
             if !state.view.is_app() || state.app_launching() {
                 raise_shell(&conn, shell_window)?;
+                let frame_started = Instant::now();
                 renderer.render(&conn, &state)?;
-                if state.app_launching() {
-                    status_bar_surface.request_raise();
+                if profile_frames {
+                    eprintln!(
+                        "frame {:?} {:.2} ms",
+                        state.view,
+                        frame_started.elapsed().as_secs_f64() * 1000.0
+                    );
                 }
+                state.shell_exposed = false;
             }
             state.redraw = false;
         }
@@ -561,13 +587,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         // the cutout strip out of the app viewport, this gives the bar the last
         // stacking request on every animated launch frame and prevents the two
         // override-redirect surfaces from alternately covering one another.
-        let status_bar_visible = state.screen_awake && state.view.is_app();
+        let status_bar_visible =
+            state.screen_awake && state.view.is_app() && !state.app_launching();
         status_bar_surface.sync(
             &conn,
             status_bar_visible,
-            state.wifi_connected,
-            state.battery_percent,
-            state.battery_charging,
+            &StatusInfo::from_state(&state, config.clock_24h),
         )?;
         // External-app MapRequest/configure operations may be the only X11
         // traffic in this state, so they cannot rely on a shell repaint to
@@ -661,6 +686,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         if state.app_launching() {
             deadline = deadline.min(next_launch_animation);
         }
+        if state.screen_awake {
+            deadline = deadline.min(next_clock_tick);
+        }
+        if state.animating(now) {
+            deadline = deadline.min(now + ANIMATION_FRAME_INTERVAL);
+        }
         if let Some(state_deadline) = state.next_deadline(now) {
             deadline = deadline.min(state_deadline);
         }
@@ -701,8 +732,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     keyboard_surface.destroy(&conn);
     volume_surface.destroy(&conn);
     status_bar_surface.destroy(&conn);
-    let _ = conn.free_pixmap(shell_back_buffer);
-    let _ = conn.free_gc(gc);
+    renderer.destroy(&conn);
     let _ = conn.flush();
     eprintln!("a26-shell stopping");
     Ok(())
@@ -955,7 +985,10 @@ fn handle_x_event(
                 raw_touch.touch_id = None;
             }
         }
-        Event::Expose(event) if event.window == shell_window => state.redraw = true,
+        Event::Expose(event) if event.window == shell_window => {
+            state.shell_exposed = true;
+            state.redraw = true;
+        }
         Event::Expose(event) if event.window == keyboard_window => {
             state.keyboard.request_redraw();
         }
@@ -1021,11 +1054,6 @@ fn handle_x_event(
                         &ChangeWindowAttributesAux::new().event_mask(EventMask::FOCUS_CHANGE),
                     )?;
                 }
-                if should_show {
-                    conn.map_window(event.window)?;
-                    let _ = conn.xfixes_hide_cursor(event.window)?;
-                }
-                state.replace_managed_windows(apps.active_windows());
                 let is_active = registration
                     .as_ref()
                     .is_some_and(|registration| apps.active() == Some(registration.owner));
@@ -1033,19 +1061,33 @@ fn handle_x_event(
                     .as_ref()
                     .is_some_and(|registration| registration.primary);
                 if is_active {
-                    state.last_action = "map_external_window".into();
-                    state.redraw = true;
                     let app_height = if is_primary && state.keyboard.is_visible() {
                         keyboard_geometry.app_height()
                     } else {
                         height
                     };
-                    fullscreen_window(conn, event.window, width, app_height)?;
+                    if state.app_launching() {
+                        // A new window is created at the top of the stack.
+                        // Put the shell back above it before it maps so the
+                        // launch screen never flickers to a half-painted app.
+                        resize_app_window(conn, event.window, width, app_height)?;
+                        raise_shell(conn, shell_window)?;
+                    } else {
+                        fullscreen_window(conn, event.window, width, app_height)?;
+                    }
+                }
+                if should_show {
+                    conn.map_window(event.window)?;
+                    let _ = conn.xfixes_hide_cursor(event.window)?;
+                }
+                state.replace_managed_windows(apps.active_windows());
+                if is_active {
+                    state.last_action = "map_external_window".into();
+                    state.redraw = true;
                     if state.app_launching() {
                         if is_primary {
                             state.note_app_window_mapped();
                         }
-                        raise_shell(conn, shell_window)?;
                     } else if is_primary {
                         conn.set_input_focus(InputFocus::PARENT, event.window, CURRENT_TIME)?;
                     }
@@ -1061,6 +1103,8 @@ fn handle_x_event(
                 let is_primary = apps.primary_active_window() == Some(event.window);
                 if is_primary && state.keyboard.is_visible() {
                     resize_app_window(conn, event.window, width, keyboard_geometry.app_height())?;
+                } else if state.app_launching() {
+                    resize_app_window(conn, event.window, width, height)?;
                 } else {
                     fullscreen_window(conn, event.window, width, height)?;
                 }
@@ -1286,7 +1330,11 @@ fn apply_registry_update(
         raise_shell(conn, shell_window)?;
     } else if let Some(app) = update.resumed {
         state.note_app_resumed(app);
-        if let Some(window) = apps.primary_active_window() {
+        if state.app_launching() {
+            // Keep the remapped window under the opening zoom; the main loop
+            // raises and focuses it once the animation completes.
+            raise_shell(conn, shell_window)?;
+        } else if let Some(window) = apps.primary_active_window() {
             fullscreen_window(conn, window, width, height)?;
             conn.set_input_focus(InputFocus::PARENT, window, CURRENT_TIME)?;
         }
@@ -1321,9 +1369,27 @@ fn pointer_begin(
     {
         state.keyboard.press_key_index(index);
     }
+    if !pointer.keyboard_owned {
+        state.pressed = press_target(state, x, y);
+        if state.pressed.is_some() {
+            state.redraw = true;
+        }
+    }
     state.pointer = Some(pointer);
     state.last_action = "pointer_begin".into();
     action
+}
+
+/// The shell control under a new touch, highlighted until it is released.
+fn press_target(state: &mut ShellState, x: i16, y: i16) -> Option<Press> {
+    let lockout = state.is_lockout_active();
+    match state.view {
+        View::Locked if state.lock_face == LockFace::Passcode && !lockout => {
+            ui::keypad_action_at(x, y, !state.pin_input.is_empty()).map(Press::Keypad)
+        }
+        View::Launcher => ui::launcher_app_at(x, y).map(Press::App),
+        _ => None,
+    }
 }
 
 fn new_pointer_gesture(
@@ -1365,6 +1431,16 @@ fn pointer_move(state: &mut ShellState, keyboard_geometry: &KeyboardGeometry, x:
             .then_some(pointer.keyboard_key_index)
             .flatten()
     });
+    if state.pressed.is_some()
+        && let Some(pointer) = state.pointer.as_ref()
+        && (i32::from(x) - i32::from(pointer.start_x))
+            .abs()
+            .max((i32::from(y) - i32::from(pointer.start_y)).abs())
+            > PRESS_SLOP
+    {
+        state.pressed = None;
+        state.redraw = true;
+    }
     if let Some(pointer) = state.pointer.as_mut() {
         let was_pressed = pointer.keyboard_pressed;
         pointer.last_x = x;
@@ -1645,6 +1721,9 @@ fn pointer_end(
     config: &Config,
     key_injector: &XtestInjector,
 ) {
+    if state.pressed.take().is_some() {
+        state.redraw = true;
+    }
     let Some(mut pointer) = state.pointer.take() else {
         return;
     };
@@ -1674,6 +1753,18 @@ fn pointer_end(
         state.home();
         state.last_action = "swipe_up_background".into();
         return;
+    }
+    if state.view == View::Locked && elapsed <= Duration::from_millis(1400) {
+        // An upward swipe anywhere reveals the passcode keypad; a downward
+        // swipe puts it away again.
+        if state.lock_face == LockFace::Clock && upward >= 120 && upward * 2 >= dx.abs() * 3 {
+            state.show_passcode();
+            return;
+        }
+        if state.lock_face == LockFace::Passcode && dy >= 260 && dy * 2 >= dx.abs() * 3 {
+            state.cancel_passcode();
+            return;
+        }
     }
     if dx.abs() <= 35 && dy.abs() <= 35 && elapsed <= Duration::from_millis(650) {
         handle_tap(
@@ -1731,7 +1822,7 @@ fn handle_tap(
     state: &mut ShellState,
     x: i16,
     y: i16,
-    width: u16,
+    _width: u16,
     keyboard_geometry: &KeyboardGeometry,
     config: &Config,
     key_injector: &XtestInjector,
@@ -1745,23 +1836,21 @@ fn handle_tap(
         return;
     }
     match state.view {
-        View::Locked => match ui::keypad_action_at(width, x, y) {
+        View::Locked if state.lock_face == LockFace::Clock => state.show_passcode(),
+        View::Locked => match ui::keypad_action_at(x, y, !state.pin_input.is_empty()) {
             Some(KeypadAction::Digit(digit)) => state.input_digit(digit, config),
             Some(KeypadAction::Backspace) => state.backspace_pin(),
+            Some(KeypadAction::Cancel) => state.cancel_passcode(),
             Some(KeypadAction::Submit) => {
                 state.submit_pin(config);
             }
             None => state.last_action = "lock_tap_outside".into(),
         },
-        View::Launcher => {
-            if ui::system_app_at(x, y) {
-                state.launch_system();
-            } else if ui::browser_app_at(x, y) {
-                state.launch_browser();
-            } else {
-                state.last_action = "launcher_tap_outside".into();
-            }
-        }
+        View::Launcher => match ui::launcher_app_at(x, y) {
+            Some(AppId::System) => state.launch_system(),
+            Some(AppId::Browser) => state.launch_browser(),
+            None => state.last_action = "launcher_tap_outside".into(),
+        },
         View::System | View::Browser => {
             let app_name = if state.view == View::System {
                 "system"
