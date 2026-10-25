@@ -100,3 +100,35 @@ server-pushed device_config flags).
   reboot lands in Moon in ~30 s and skips the volume window.
 * **Watchdog:** kernel/init pet the hardware watchdog; system_server's
   Watchdog only watches itself.
+
+## Results on the phone (2026-10-24, BOOT 3bf29162…e9f6)
+
+Flashed with samloader 2.0.0 from macOS (libusb backend); the phone then
+needed a manual restart (see RESCUE.md).
+
+| Boot | adb up | Moon ready | kernel uptime at Moon ready |
+| --- | --- | --- | --- |
+| direct, restart from Download mode | 29.7 s | 48.9 s | ≈ 34 s |
+| direct, `adb reboot` (×3) | 37.4–37.9 s | 56.4–56.9 s | 33.5–34.0 s |
+| legacy (`DIRECT_BOOT=0`), `adb reboot` | 44.8 s | 81.3 s | — |
+| Android (`skip-once`), `adb reboot` | 45 s | boot_completed 51 s | — |
+
+Times from `adb reboot` include Android's shutdown, the bootloader and its
+unlocked-bootloader warning. Kernel-time breakdown of a direct boot: zygote
+forked 12.2 s and stopped at once (no ZygoteInit or system_server in logcat),
+SurfaceFlinger 12.7 s, boot animation 13.1 s, supervisor ≈ 13 s, display
+ready (animation + 3 s window) ≈ 18 s, Xorg exec 24.7 s, Xorg ready ≈ 32.6 s
+(includes the Wi-Fi start the Xorg session runs before reporting ready),
+Moon ≈ 34 s.
+
+Verified over adb on direct boots: framework never started; `sys.usb.config`
+adb with only `ffs.adb` + `ss_mon` bound, and a UDC unbind/rebind re-enumerated
+with adb; tone through Moon's FIFO ran ABOX RDMA0 with a cold audioserver
+(music index initialized 0–15 at 5) and Moon's volume keys changed the gain
+file; Wi-Fi radio up and a scan found 7 networks; charging: usb online, Full,
++414 mA; zram swap on and `vendor.thermal.bt_completed=1` after the reported
+boot completion; no crashes. Fallbacks: runtime `disable`, `stop moon-session`
+(init rc fallback) and killing the supervisor (ramdisk wrapper fallback) each
+started the framework (system_server in 29–46 s, keyguard focused, USB back to
+`mtp,adb`); `skip-once` booted Android; `DIRECT_BOOT=0` restored the legacy
+takeover.
