@@ -90,8 +90,60 @@ struct RawTouchTracker {
     keyboard_contacts: Vec<(u32, PointerGesture)>,
 }
 
+/// Raises the scheduler's utilization floor for Moon's (only) thread, which
+/// draws every frame. Without Android's framework nothing boosts the
+/// foreground UI, so the scheduler kept Moon on slow cores at low clocks: zoom
+/// frames took 15-50 ms on the A26, and with a 60 % floor they hold about
+/// 13 ms. The floor applies only while Moon is runnable, so an idle Moon costs
+/// nothing. RESET_ON_FORK keeps launched apps and any later thread at the
+/// default. Best effort: an older kernel just leaves Moon unboosted.
+fn boost_ui_thread() {
+    #[repr(C)]
+    struct SchedAttr {
+        size: u32,
+        sched_policy: u32,
+        sched_flags: u64,
+        sched_nice: i32,
+        sched_priority: u32,
+        sched_runtime: u64,
+        sched_deadline: u64,
+        sched_period: u64,
+        sched_util_min: u32,
+        sched_util_max: u32,
+    }
+    const SCHED_FLAG_RESET_ON_FORK: u64 = 0x01;
+    const SCHED_FLAG_UTIL_CLAMP_MIN: u64 = 0x20;
+    // 60 % of SCHED_CAPACITY_SCALE (1024).
+    const UI_UTIL_MIN: u32 = 614;
+
+    // SAFETY: getpriority takes scalar arguments only.
+    let nice = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+    let attr = SchedAttr {
+        size: std::mem::size_of::<SchedAttr>() as u32,
+        sched_policy: libc::SCHED_OTHER as u32,
+        sched_flags: SCHED_FLAG_RESET_ON_FORK | SCHED_FLAG_UTIL_CLAMP_MIN,
+        sched_nice: nice.clamp(-20, 19),
+        sched_priority: 0,
+        sched_runtime: 0,
+        sched_deadline: 0,
+        sched_period: 0,
+        sched_util_min: UI_UTIL_MIN,
+        sched_util_max: 0,
+    };
+    // SAFETY: attr is a complete, initialized sched_attr (VER1, 56 bytes) that
+    // outlives the call; pid 0 is the calling thread.
+    let result = unsafe { libc::syscall(libc::SYS_sched_setattr, 0, &attr as *const SchedAttr, 0) };
+    if result != 0 {
+        eprintln!(
+            "UI thread boost unavailable: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let config_path = parse_config_path()?;
+    boost_ui_thread();
     let config = Config::load(&config_path)?;
     let key_repeat_timing = KeyRepeatTiming::from_config(&config);
     if let Some(zone) = &config.timezone {

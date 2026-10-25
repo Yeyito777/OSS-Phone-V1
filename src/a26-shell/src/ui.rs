@@ -762,7 +762,14 @@ fn draw_battery_widget(canvas: &mut Canvas, rect: RectF, state: &ShellState) {
     let value = state
         .battery_percent
         .map_or_else(|| "--".to_owned(), |percent| format!("{percent}%"));
-    let size = 74.0;
+    // Keep "100%" clear of the ring: fit inside its inner edge with margin.
+    let inner = 2.0 * (radius - 12.0) - 36.0;
+    let width = text::measure(&value, Weight::DisplaySemiBold, 74.0);
+    let size = if width > inner {
+        74.0 * inner / width
+    } else {
+        74.0
+    };
     text::draw_centered(
         canvas,
         &value,

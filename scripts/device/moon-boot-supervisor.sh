@@ -312,6 +312,20 @@ fi
 echo "$token" >"$XORG_STATE/keep-token"
 log "Xorg ready pid=$(pidof Xorg 2>/dev/null || true); safety token committed locally"
 
+# Without the framework nothing boosts the foreground UI, so the scheduler ran
+# Moon's animation frames on slow cores at low clocks. Moon raises its own
+# thread's utilization floor; give Xorg, which composites every frame, the
+# same 60 % floor through a cpu group. It applies only while Xorg runs.
+boost_display_server() {
+    group=/dev/cpuctl/moon-display
+    [ -d /dev/cpuctl ] || return 0
+    mkdir -p "$group" && echo 60 >"$group/cpu.uclamp.min" || return 0
+    for task in /proc/$(pidof Xorg 2>/dev/null | cut -d' ' -f1)/task/[0-9]*; do
+        echo "${task##*/}" >"$group/tasks" 2>/dev/null || true
+    done
+}
+boost_display_server
+
 finish_audio_start
 if [ "$audio_ok" = 1 ] || /system/bin/sh "$PERSIST/moon-audio-start.sh"; then
     log "audio ready pid=$(cat /data/local/tmp/moon-audio/bridge.pid 2>/dev/null || true)"
