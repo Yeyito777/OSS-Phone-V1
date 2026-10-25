@@ -6,6 +6,18 @@ SOURCE="$PROJECT_ROOT/src/a26-shell"
 IMAGE="$PROJECT_ROOT/images/a26-shell-0.1.0"
 TARGET=aarch64-unknown-linux-musl
 
+# Homebrew's rustup is keg-only; prefer its proxies over a Homebrew cargo that
+# has no cross targets.
+if [[ "$(uname -s)" == Darwin ]] && command -v brew >/dev/null; then
+    PATH="$(brew --prefix rustup)/bin:$PATH"
+fi
+# Without the musl cross-gcc pinned in .cargo/config.toml (e.g. on macOS), link
+# through zig instead.
+CARGO_BUILD=(cargo build)
+if ! command -v aarch64-linux-musl-gcc >/dev/null; then
+    CARGO_BUILD=(cargo zigbuild)
+fi
+
 rustup target add "$TARGET" >/dev/null
 # Cargo only discovers .cargo/config.toml by walking up from its current
 # directory (not from --manifest-path), so build from the source directory to
@@ -13,8 +25,14 @@ rustup target add "$TARGET" >/dev/null
 (
     cd "$SOURCE"
     cargo fmt --check
-    cargo test --locked
-    cargo build --locked --release --target "$TARGET"
+    if [[ "$(uname -s)" == Linux ]]; then
+        cargo test --locked
+    else
+        # The shell is Linux-only (pidfd, evdev, freezer cgroups), so elsewhere
+        # the test binaries are cross-built and run inside the phone's chroot.
+        "$PROJECT_ROOT/scripts/a26-shell/device-test.sh" "${CARGO_BUILD[@]}"
+    fi
+    "${CARGO_BUILD[@]}" --locked --release --target "$TARGET"
 )
 
 # Moon's X connection is deliberately long-lived and can cross the 16-bit X11

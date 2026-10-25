@@ -49,6 +49,11 @@ the ignored local cache under `build/a26-audio-bridge/`.
 scripts/a26-shell/build.sh
 ```
 
+On macOS, install `brew install rustup zig`, `rustup target add
+aarch64-unknown-linux-musl`, and `cargo install --locked cargo-zigbuild`. The
+build then links through zig, and because the shell is Linux-only its tests are
+cross-built and run inside the attached phone's chroot (`device-test.sh`).
+
 Generated binaries and source archives are written under
 `images/a26-shell-0.1.0/` and `images/a26-audio-bridge/` and are intentionally
 ignored by Git.
@@ -82,6 +87,10 @@ https://github.com/Yeyito777/a26-system
 Install `a26-system` first. It supplies both
 `/opt/a26-system/bin/a26-system` and the launcher icon under
 `/opt/a26-system/share/`.
+
+To iterate on the shell itself, `scripts/a26-shell/deploy.sh [--reboot]`
+rebuilds and replaces only the Moon binaries, keeping the phone's PIN config
+and audio bridge.
 
 Start just the shell when Xorg is already running:
 
