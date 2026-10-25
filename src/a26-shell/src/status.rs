@@ -29,8 +29,7 @@ impl DeviceStatus {
             .map(|value| value.min(100));
         let battery_charging =
             read_status(BATTERY_STATUS).is_ok_and(|value| value.trim() == "Charging");
-        let wifi_connected = read_status(WIFI_OPERSTATE)
-            .is_ok_and(|value| value.trim() == "up")
+        let wifi_connected = read_status(WIFI_OPERSTATE).is_ok_and(|value| value.trim() == "up")
             && read_status(WIFI_CARRIER).is_ok_and(|value| value.trim() == "1");
         Self {
             battery_percent,
