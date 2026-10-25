@@ -11,14 +11,12 @@ use std::fs;
 use std::time::Instant;
 
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::Window;
 
 use crate::clock::LocalTime;
+use crate::compositor::{Compositor, Frame, Node, SurfaceId};
 use crate::gfx::{self, Canvas, Image, Path, RectF, Rgb};
-use crate::model::{
-    AppId, CLOSE_ANIMATION, LockFace, OPEN_ANIMATION, Press, SHAKE_ANIMATION, ShellState, View,
-};
-use crate::present::Presenter;
+use crate::interaction::{CARD_RADIUS, SCREEN, SCREEN_H, SCREEN_W, SWITCHER_DIM};
+use crate::model::{AppId, Press, SHAKE_ANIMATION, ShellState, UNLOCK_ANIMATION, View};
 use crate::status_bar;
 use crate::text::{self, Weight};
 
@@ -54,9 +52,6 @@ const DOCK_RADIUS: f32 = 98.0;
 const DOCK_PITCH: f32 = 254.0;
 /// The order of apps in the dock.
 pub const LAUNCHER_APPS: [AppId; 2] = [AppId::Browser, AppId::System];
-
-/// The A26 panel has rounded corners of roughly this radius.
-const DISPLAY_CORNER_RADIUS: f32 = 56.0;
 
 // Lock screen and passcode geometry.
 const PASSCODE_TITLE_BASELINE: f32 = 612.0;
@@ -260,127 +255,289 @@ struct HomeKey {
     date: (u8, u8, u8),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClockKey {
+    time: String,
+    date: String,
+    charging: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PasscodeKey {
+    title: String,
+    pressed: Option<KeypadAction>,
+    corner: &'static str,
+    enabled: bool,
+}
+
+/// A layer drawn on the CPU and uploaded when its content key changes.
+struct Layer<K> {
+    id: SurfaceId,
+    canvas: Canvas,
+    key: Option<K>,
+}
+
+impl<K: PartialEq> Layer<K> {
+    fn new<C: Connection>(
+        conn: &C,
+        compositor: &mut Compositor,
+        width: i32,
+        height: i32,
+        transparent: bool,
+    ) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            id: compositor.create_layer(conn, width as u16, height as u16, transparent)?,
+            canvas: Canvas::new(width, height),
+            key: None,
+        })
+    }
+
+    /// Redraws and uploads the layer when `key` differs from the last one.
+    fn update<C: Connection>(
+        &mut self,
+        conn: &C,
+        compositor: &mut Compositor,
+        key: K,
+        draw: impl FnOnce(&mut Canvas),
+    ) -> Result<(), Box<dyn Error>> {
+        if self.key.as_ref() == Some(&key) {
+            return Ok(());
+        }
+        draw(&mut self.canvas);
+        compositor.upload(conn, self.id, &self.canvas)?;
+        self.key = Some(key);
+        Ok(())
+    }
+}
+
+/// What an app's card shows while it moves.
+#[derive(Debug, Clone, Copy)]
+enum CardFace {
+    Snapshot(SurfaceId),
+    Splash(AppId),
+}
+
+/// Builds the shell's frames. Static content lives in CPU-drawn layers that
+/// are re-uploaded only when they change; each frame is a list of compositor
+/// nodes sampled at the time it will reach the panel.
 pub struct Renderer {
-    /// Screen row at which the shell window currently begins.
-    pub window_top: i32,
     pub twenty_four_hour: bool,
     pin_length: usize,
-    profile: bool,
-    canvas: Canvas,
-    presenter: Presenter,
+    pub compositor: Compositor,
     wallpaper: Canvas,
-    dimmed_wallpaper: Canvas,
-    home_layer: Canvas,
-    home_key: Option<HomeKey>,
+    wall: SurfaceId,
+    dimmed: SurfaceId,
+    home: Layer<HomeKey>,
+    clock: Layer<ClockKey>,
+    lock_status: Layer<StatusInfo>,
+    passcode: Layer<PasscodeKey>,
+    dots: Layer<usize>,
+    volume: Layer<u8>,
+    spinner: Layer<u32>,
     icons: [AppIcon; 2],
+    icon_layers: [SurfaceId; 2],
+    labels: [SurfaceId; 2],
+    snapshots: [Option<SurfaceId>; 2],
+    fade_snapshot: Option<SurfaceId>,
 }
+
+const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
+const SPINNER_SIZE: i32 = 96;
+const LABEL_W: i32 = 640;
+const LABEL_H: i32 = 96;
 
 impl Renderer {
     pub fn new<C: Connection>(
         conn: &C,
-        window: Window,
-        depth: u8,
+        mut compositor: Compositor,
         width: u16,
         height: u16,
         twenty_four_hour: bool,
         pin_length: usize,
     ) -> Result<Self, Box<dyn Error>> {
-        let presenter = Presenter::create(conn, window, depth, width, height)?;
         let (w, h) = (i32::from(width), i32::from(height));
         let wallpaper = wallpaper(w, h);
-        let dimmed_wallpaper = darken(&wallpaper, 0.42);
+        let wall = compositor.create_layer(conn, width, height, false)?;
+        compositor.upload(conn, wall, &wallpaper)?;
+        let dimmed = compositor.create_layer(conn, width, height, false)?;
+        compositor.upload(conn, dimmed, &darken(&wallpaper, 0.42))?;
+        let icons = [AppIcon::new(AppId::System), AppIcon::new(AppId::Browser)];
+        let mut icon_layers = [wall; 2];
+        let mut labels = [wall; 2];
+        for app in [AppId::System, AppId::Browser] {
+            let icon = &icons[app.index()];
+            let id = compositor.create_layer(
+                conn,
+                ICON_SOURCE_SIZE as u16,
+                ICON_SOURCE_SIZE as u16,
+                true,
+            )?;
+            let mut canvas = Canvas::new(ICON_SOURCE_SIZE, ICON_SOURCE_SIZE);
+            canvas.draw_image(&icon.large, 0, 0, 1.0);
+            compositor.upload(conn, id, &canvas)?;
+            icon_layers[app.index()] = id;
+
+            let label = compositor.create_layer(conn, LABEL_W as u16, LABEL_H as u16, true)?;
+            let mut canvas = Canvas::new(LABEL_W, LABEL_H);
+            canvas.draw_image_scaled(&icon.large, RectF::new(0.0, 12.0, 72.0, 72.0), 1.0);
+            let baseline = text::centered_baseline(48.0, Weight::SemiBold, 44.0);
+            text::draw(
+                &mut canvas,
+                app.display_name(),
+                96.0,
+                baseline,
+                Weight::SemiBold,
+                44.0,
+                WHITE,
+                1.0,
+            );
+            compositor.upload(conn, label, &canvas)?;
+            labels[app.index()] = label;
+        }
         Ok(Self {
-            window_top: 0,
             twenty_four_hour,
             pin_length,
-            profile: std::env::var_os("MOON_PROFILE").is_some(),
-            canvas: Canvas::new(w, h),
-            presenter,
+            home: Layer::new(conn, &mut compositor, w, h, false)?,
+            clock: Layer::new(conn, &mut compositor, w, h, true)?,
+            lock_status: Layer::new(
+                conn,
+                &mut compositor,
+                w,
+                i32::from(status_bar::HEIGHT),
+                true,
+            )?,
+            passcode: Layer::new(conn, &mut compositor, w, h, true)?,
+            dots: Layer::new(conn, &mut compositor, w, 64, true)?,
+            volume: Layer::new(
+                conn,
+                &mut compositor,
+                VOLUME_HUD.w as i32,
+                VOLUME_HUD.h as i32,
+                true,
+            )?,
+            spinner: Layer::new(conn, &mut compositor, SPINNER_SIZE, SPINNER_SIZE, true)?,
+            compositor,
             wallpaper,
-            dimmed_wallpaper,
-            home_layer: Canvas::new(w, h),
-            home_key: None,
-            icons: [AppIcon::new(AppId::System), AppIcon::new(AppId::Browser)],
+            wall,
+            dimmed,
+            icons,
+            icon_layers,
+            labels,
+            snapshots: [None, None],
+            fade_snapshot: None,
         })
-    }
-
-    fn icon(&self, app: AppId) -> &AppIcon {
-        &self.icons[app.index()]
-    }
-
-    pub fn render<C: Connection>(
-        &mut self,
-        conn: &C,
-        state: &ShellState,
-    ) -> Result<(), Box<dyn Error>> {
-        let now = Instant::now();
-        if !state.screen_awake {
-            // The runtime also turns off the panel backlight, but retain a
-            // black X framebuffer as a safe fallback.
-            self.canvas.clear(BLACK);
-        } else {
-            match state.view {
-                View::Locked => self.draw_lock(state, now),
-                View::Launcher => {
-                    self.draw_home(state, None);
-                    if let Some(closing) = state.closing {
-                        self.draw_closing(closing.app, closing.started, now);
-                    }
-                }
-                View::System | View::Browser => {
-                    if let Some(launch) = state.launch() {
-                        self.draw_home(state, Some(launch.app));
-                        self.draw_opening(state, launch.app, launch.started, now);
-                    }
-                }
-            }
-            if !state.view.is_app()
-                && state
-                    .volume_overlay_until
-                    .is_some_and(|deadline| deadline > now)
-            {
-                draw_volume_hud(&mut self.canvas, VOLUME_HUD, state.volume);
-            }
-        }
-        let drawn = now.elapsed();
-        let damage = self
-            .presenter
-            .present(conn, &self.canvas, self.window_top)?;
-        if self.profile {
-            eprintln!(
-                "  draw {:.2} ms, present {:.2} ms, damage {:?}",
-                drawn.as_secs_f64() * 1000.0,
-                (now.elapsed() - drawn).as_secs_f64() * 1000.0,
-                damage
-            );
-        }
-        if state.shell_exposed {
-            self.presenter.expose(conn, self.window_top)?;
-        }
-        conn.flush()?;
-        Ok(())
-    }
-
-    pub fn destroy<C: Connection>(&self, conn: &C) {
-        self.presenter.destroy(conn);
     }
 
     fn status(&self, state: &ShellState) -> StatusInfo {
         StatusInfo::from_state(state, self.twenty_four_hour)
     }
 
-    fn draw_lock(&mut self, state: &ShellState, now: Instant) {
+    /// Snapshots what is on screen as `app`'s card. Call before restacking.
+    pub fn capture_app<C: Connection>(
+        &mut self,
+        conn: &C,
+        app: AppId,
+    ) -> Result<(), Box<dyn Error>> {
+        let id = match self.snapshots[app.index()] {
+            Some(id) => id,
+            None => {
+                let id = self.compositor.create_snapshot(conn)?;
+                self.snapshots[app.index()] = Some(id);
+                id
+            }
+        };
+        self.compositor.capture_root(conn, id)
+    }
+
+    /// Snapshots the screen for the power fade.
+    pub fn capture_fade<C: Connection>(&mut self, conn: &C) -> Result<(), Box<dyn Error>> {
+        let id = match self.fade_snapshot {
+            Some(id) => id,
+            None => {
+                let id = self.compositor.create_snapshot(conn)?;
+                self.fade_snapshot = Some(id);
+                id
+            }
+        };
+        self.compositor.capture_root(conn, id)
+    }
+
+    /// Forgets an app's card once its process is gone.
+    pub fn forget_app<C: Connection>(&mut self, conn: &C, app: AppId) {
+        if let Some(id) = self.snapshots[app.index()].take() {
+            self.compositor.free(conn, id);
+        }
+    }
+
+    pub fn has_snapshot(&self, app: AppId) -> bool {
+        self.snapshots[app.index()].is_some()
+    }
+
+    /// Composes and submits the frame for `display_time`. Returns false when
+    /// nothing changed on screen.
+    pub fn render<C: Connection>(
+        &mut self,
+        conn: &C,
+        state: &ShellState,
+        display_time: Instant,
+    ) -> Result<bool, Box<dyn Error>> {
+        self.refresh_layers(conn, state, display_time)?;
+        let frame = self.frame(state, display_time);
+        self.compositor.compose(conn, frame)
+    }
+
+    fn refresh_layers<C: Connection>(
+        &mut self,
+        conn: &C,
+        state: &ShellState,
+        now: Instant,
+    ) -> Result<(), Box<dyn Error>> {
         let status = self.status(state);
-        let width = self.canvas.width as f32;
-        let cx = width / 2.0;
-        match state.lock_face {
-            LockFace::Clock => {
-                self.canvas.copy_from(&self.wallpaper);
-                let time = LocalTime::now();
-                draw_padlock(&mut self.canvas, cx, 214.0);
+        let time = LocalTime::now();
+        let compositor = &mut self.compositor;
+        if !state.screen_awake {
+            return Ok(());
+        }
+        let shows_home = state.view != View::Locked || state.unlock_at.is_some();
+        if shows_home {
+            let key = HomeKey {
+                status: status.clone(),
+                date: (time.weekday, time.day, time.month),
+            };
+            let wallpaper = &self.wallpaper;
+            let icons = &self.icons;
+            self.home.update(conn, compositor, key, |canvas| {
+                canvas.copy_from(wallpaper);
+                draw_calendar_widget(canvas, widget_rect(0), time);
+                draw_battery_widget(canvas, widget_rect(1), state);
+                canvas.fill_rrect(DOCK, DOCK_RADIUS, WHITE, 0.14);
+                for (index, app) in LAUNCHER_APPS.iter().enumerate() {
+                    let rect = app_icon_rect(index);
+                    canvas.shadow_rrect(rect.inset(6.0), ICON_RADIUS, 20.0, BLACK, 0.18);
+                    canvas.draw_image(&icons[app.index()].home, rect.x as i32, rect.y as i32, 1.0);
+                }
+                draw_status_bar(canvas, &status, None);
+            })?;
+        }
+        if state.view == View::Locked || state.unlock_at.is_some() {
+            let cx = SCREEN_W / 2.0;
+            let charging = state.battery_charging.then(|| {
+                state
+                    .battery_percent
+                    .map_or_else(|| "Charging".to_owned(), |p| format!("{p}% Charged"))
+            });
+            let key = ClockKey {
+                time: time.time_text(self.twenty_four_hour),
+                date: time.date_text(),
+                charging,
+            };
+            let clock_key = key.clone();
+            self.clock.update(conn, compositor, key, |canvas| {
+                canvas.clear(0);
+                draw_padlock(canvas, cx, 214.0);
                 text::draw_centered(
-                    &mut self.canvas,
-                    &time.date_text(),
+                    canvas,
+                    &clock_key.date,
                     cx,
                     358.0,
                     Weight::SemiBold,
@@ -389,8 +546,8 @@ impl Renderer {
                     0.86,
                 );
                 text::draw_centered(
-                    &mut self.canvas,
-                    &time.time_text(self.twenty_four_hour),
+                    canvas,
+                    &clock_key.time,
                     cx,
                     640.0,
                     Weight::DisplaySemiBold,
@@ -398,20 +555,12 @@ impl Renderer {
                     WHITE,
                     0.94,
                 );
-                if state.battery_charging {
-                    let line = state
-                        .battery_percent
-                        .map_or_else(|| "Charging".to_owned(), |p| format!("{p}% Charged"));
-                    draw_bolt(
-                        &mut self.canvas,
-                        cx - text::measure(&line, Weight::Medium, 44.0) / 2.0 - 30.0,
-                        742.0,
-                        1.0,
-                        GREEN,
-                    );
+                if let Some(line) = &clock_key.charging {
+                    let width = text::measure(line, Weight::Medium, 44.0);
+                    draw_bolt(canvas, cx - width / 2.0 - 30.0, 742.0, 1.0, GREEN);
                     text::draw_centered(
-                        &mut self.canvas,
-                        &line,
+                        canvas,
+                        line,
                         cx + 14.0,
                         758.0,
                         Weight::Medium,
@@ -421,7 +570,7 @@ impl Renderer {
                     );
                 }
                 text::draw_centered(
-                    &mut self.canvas,
+                    canvas,
                     "Swipe up to unlock",
                     cx,
                     2226.0,
@@ -430,21 +579,46 @@ impl Renderer {
                     WHITE,
                     0.72,
                 );
-                self.canvas.fill_rrect(HOME_INDICATOR, 7.0, WHITE, 0.92);
-            }
-            LockFace::Passcode => {
-                self.canvas.copy_from(&self.dimmed_wallpaper);
-                let lockout = state
-                    .lockout_until
-                    .map(|deadline| deadline.saturating_duration_since(now).as_secs() + 1)
-                    .filter(|_| state.lockout_until.is_some_and(|deadline| deadline > now));
-                let title = match lockout {
-                    Some(seconds) => format!("Try again in {seconds} s"),
-                    None => "Enter Passcode".to_owned(),
-                };
+                canvas.fill_rrect(HOME_INDICATOR, 7.0, WHITE, 0.92);
+            })?;
+            // The big clock replaces the status-bar time on the lock screen.
+            let lock_status = StatusInfo {
+                time: String::new(),
+                ..status.clone()
+            };
+            let drawn = lock_status.clone();
+            self.lock_status
+                .update(conn, compositor, lock_status, |canvas| {
+                    canvas.clear(0);
+                    draw_status_bar(canvas, &drawn, None);
+                })?;
+
+            let lockout = state
+                .lockout_until
+                .filter(|deadline| *deadline > now)
+                .map(|deadline| deadline.saturating_duration_since(now).as_secs() + 1);
+            let key = PasscodeKey {
+                title: lockout.map_or_else(
+                    || "Enter Passcode".to_owned(),
+                    |s| format!("Try again in {s} s"),
+                ),
+                pressed: match state.pressed {
+                    Some(Press::Keypad(action)) => Some(action),
+                    _ => None,
+                },
+                corner: if state.pin_input.is_empty() {
+                    "Cancel"
+                } else {
+                    "Delete"
+                },
+                enabled: lockout.is_none(),
+            };
+            let passcode_key = key.clone();
+            self.passcode.update(conn, compositor, key, |canvas| {
+                canvas.clear(0);
                 text::draw_centered(
-                    &mut self.canvas,
-                    &title,
+                    canvas,
+                    &passcode_key.title,
                     cx,
                     PASSCODE_TITLE_BASELINE,
                     Weight::Regular,
@@ -452,58 +626,18 @@ impl Renderer {
                     WHITE,
                     1.0,
                 );
-                let shake = state
-                    .pin_error_at
-                    .map(|at| {
-                        let t = (now.saturating_duration_since(at).as_secs_f32()
-                            / SHAKE_ANIMATION.as_secs_f32())
-                        .clamp(0.0, 1.0);
-                        (t * std::f32::consts::TAU * 3.5).sin() * 46.0 * (1.0 - t)
-                    })
-                    .unwrap_or(0.0);
-                let count = self.pin_length.max(1);
-                let first = cx - PASSCODE_DOT_PITCH * (count as f32 - 1.0) / 2.0 + shake;
-                for index in 0..count {
-                    let x = first + index as f32 * PASSCODE_DOT_PITCH;
-                    if index < state.pin_input.len() {
-                        self.canvas.fill_circle(
-                            x,
-                            PASSCODE_DOTS_Y,
-                            PASSCODE_DOT_RADIUS,
-                            WHITE,
-                            1.0,
-                        );
-                    } else {
-                        self.canvas.stroke_circle(
-                            x,
-                            PASSCODE_DOTS_Y,
-                            PASSCODE_DOT_RADIUS,
-                            3.5,
-                            WHITE,
-                            1.0,
-                        );
-                    }
-                }
-                let enabled = lockout.is_none();
                 for digit in 0_u8..=9 {
                     let (kx, ky) = keypad_center(digit);
-                    let pressed = state.pressed == Some(Press::Keypad(KeypadAction::Digit(digit)));
-                    draw_keypad_key(&mut self.canvas, kx, ky, digit, pressed, enabled);
+                    let pressed = passcode_key.pressed == Some(KeypadAction::Digit(digit));
+                    draw_keypad_key(canvas, kx, ky, digit, pressed, passcode_key.enabled);
                 }
-                let corner = if state.pin_input.is_empty() {
-                    "Cancel"
-                } else {
-                    "Delete"
-                };
                 let corner_pressed = matches!(
-                    state.pressed,
-                    Some(Press::Keypad(
-                        KeypadAction::Cancel | KeypadAction::Backspace
-                    ))
+                    passcode_key.pressed,
+                    Some(KeypadAction::Cancel | KeypadAction::Backspace)
                 );
                 text::draw_centered(
-                    &mut self.canvas,
-                    corner,
+                    canvas,
+                    passcode_key.corner,
                     cx + KEYPAD_COLUMN_OFFSET,
                     PASSCODE_CORNER_BASELINE,
                     Weight::Regular,
@@ -511,135 +645,374 @@ impl Renderer {
                     WHITE,
                     if corner_pressed { 0.45 } else { 1.0 },
                 );
-                self.canvas.fill_rrect(HOME_INDICATOR, 7.0, WHITE, 0.92);
-            }
+                canvas.fill_rrect(HOME_INDICATOR, 7.0, WHITE, 0.92);
+            })?;
+            let count = self.pin_length.max(1);
+            let filled = state.pin_input.len();
+            self.dots.update(conn, compositor, filled, |canvas| {
+                canvas.clear(0);
+                let first = cx - PASSCODE_DOT_PITCH * (count as f32 - 1.0) / 2.0;
+                let cy = PASSCODE_DOTS_Y - DOTS_TOP;
+                for index in 0..count {
+                    let x = first + index as f32 * PASSCODE_DOT_PITCH;
+                    if index < filled {
+                        canvas.fill_circle(x, cy, PASSCODE_DOT_RADIUS, WHITE, 1.0);
+                    } else {
+                        canvas.stroke_circle(x, cy, PASSCODE_DOT_RADIUS, 3.5, WHITE, 1.0);
+                    }
+                }
+            })?;
         }
-        // The lock screen's big clock replaces the status-bar time.
-        let status = if state.lock_face == LockFace::Clock {
-            StatusInfo {
-                time: String::new(),
-                ..status
-            }
-        } else {
-            status
-        };
-        draw_status_bar(&mut self.canvas, &status, None);
+        let volume = state.volume;
+        self.volume.update(conn, compositor, volume, |canvas| {
+            canvas.clear(0);
+            draw_volume_hud(
+                canvas,
+                RectF::new(0.0, 0.0, VOLUME_HUD.w, VOLUME_HUD.h),
+                volume,
+            );
+        })?;
+        if let Some(launch) = state.launch() {
+            let step = (now.saturating_duration_since(launch.started).as_millis() / 83) as u32;
+            self.spinner.update(conn, compositor, step % 8, |canvas| {
+                canvas.clear(0);
+                let c = SPINNER_SIZE as f32 / 2.0;
+                draw_spinner(canvas, c, c, step, 1.0);
+            })?;
+        }
+        Ok(())
     }
 
-    /// Draws the home screen; `hidden` leaves an app's icon slot empty while
-    /// that app zooms out of it.
-    fn draw_home(&mut self, state: &ShellState, hidden: Option<AppId>) {
-        let time = LocalTime::now();
-        let key = HomeKey {
-            status: self.status(state),
-            date: (time.weekday, time.day, time.month),
-        };
-        if self.home_key.as_ref() != Some(&key) {
-            self.home_layer.copy_from(&self.wallpaper);
-            draw_calendar_widget(&mut self.home_layer, widget_rect(0), time);
-            draw_battery_widget(&mut self.home_layer, widget_rect(1), state);
-            self.home_layer.fill_rrect(DOCK, DOCK_RADIUS, WHITE, 0.14);
-            for (index, app) in LAUNCHER_APPS.iter().enumerate() {
-                let rect = app_icon_rect(index);
-                self.home_layer
-                    .shadow_rrect(rect.inset(6.0), ICON_RADIUS, 20.0, BLACK, 0.18);
-                self.home_layer.draw_image(
-                    &self.icons[app.index()].home,
-                    rect.x as i32,
-                    rect.y as i32,
-                    1.0,
-                );
-            }
-            draw_status_bar(&mut self.home_layer, &key.status, None);
-            self.home_key = Some(key);
-        }
-        self.canvas.copy_from(&self.home_layer);
-        if let Some(app) = hidden
-            && let Some(index) = LAUNCHER_APPS.iter().position(|a| *a == app)
-        {
-            let rect = app_icon_rect(index).inset(-30.0);
-            let (y0, y1) = (rect.y as i32, (rect.y + rect.h) as i32);
-            for y in y0.max(0)..y1.min(self.canvas.height) {
-                let start = (y * self.canvas.width + rect.x as i32) as usize;
-                let end = start + rect.w as usize;
-                self.canvas.pixels[start..end].copy_from_slice(&self.wallpaper.pixels[start..end]);
-            }
-        }
-        if let Some(Press::App(app)) = state.pressed
-            && let Some(index) = LAUNCHER_APPS.iter().position(|a| *a == app)
-        {
-            self.canvas
-                .fill_rrect(app_icon_rect(index), ICON_RADIUS, BLACK, 0.38);
+    fn card_face(&self, app: AppId) -> CardFace {
+        match self.snapshots[app.index()] {
+            Some(id) => CardFace::Snapshot(id),
+            None => CardFace::Splash(app),
         }
     }
 
-    fn draw_opening(&mut self, state: &ShellState, app: AppId, started: Instant, now: Instant) {
-        let elapsed = now.saturating_duration_since(started);
-        let t = (elapsed.as_secs_f32() / OPEN_ANIMATION.as_secs_f32()).clamp(0.0, 1.0);
-        let e = gfx::ease_out(t);
-        let from = launcher_icon_rect(app);
-        let screen = RectF::new(
-            0.0,
-            0.0,
-            self.canvas.width as f32,
-            self.canvas.height as f32,
-        );
-        let rect = from.lerp(screen, e);
-        let radius = if t >= 1.0 {
-            0.0
-        } else {
-            gfx::lerp(ICON_RADIUS, DISPLAY_CORNER_RADIUS, e)
+    fn push_card(
+        &self,
+        nodes: &mut Vec<Node>,
+        face: CardFace,
+        rect: RectF,
+        radius: f32,
+        alpha: f32,
+    ) {
+        match face {
+            CardFace::Snapshot(surface) => nodes.push(Node::Image {
+                surface,
+                src: SCREEN,
+                dst: rect,
+                alpha,
+                radius,
+                // Near full size, nearest sampling is indistinguishable and
+                // several times cheaper on the phone's unaccelerated Xorg.
+                smooth: rect.w < SCREEN_W * 0.92,
+            }),
+            CardFace::Splash(app) => {
+                nodes.push(Node::Fill {
+                    dst: rect,
+                    color: self.icons[app.index()].splash,
+                    alpha,
+                    radius,
+                });
+                let grow =
+                    ((rect.w - ICON_SIZE as f32) / (SCREEN_W - ICON_SIZE as f32)).clamp(0.0, 1.0);
+                let size = (ICON_SIZE as f32 + (SPLASH_ICON_SIZE - ICON_SIZE as f32) * grow)
+                    .min(rect.w)
+                    .min(rect.h);
+                let (cx, cy) = rect.center();
+                nodes.push(Node::Image {
+                    surface: self.icon_layers[app.index()],
+                    src: RectF::new(0.0, 0.0, ICON_SOURCE_SIZE as f32, ICON_SOURCE_SIZE as f32),
+                    dst: RectF::new(cx - size / 2.0, cy - size / 2.0, size, size),
+                    alpha,
+                    radius: 0.0,
+                    smooth: true,
+                });
+            }
+        }
+    }
+
+    fn full(surface: SurfaceId, width: f32, height: f32, dx: f32, dy: f32, alpha: f32) -> Node {
+        Node::Image {
+            surface,
+            src: RectF::new(0.0, 0.0, width, height),
+            dst: RectF::new(dx.round(), dy.round(), width, height),
+            alpha,
+            radius: 0.0,
+            smooth: false,
+        }
+    }
+
+    fn frame(&self, state: &ShellState, t: Instant) -> Frame {
+        let mut nodes = Vec::new();
+        if !state.screen_awake {
+            nodes.push(Node::Fill {
+                dst: SCREEN,
+                color: BLACK,
+                alpha: 1.0,
+                radius: 0.0,
+            });
+            return Frame {
+                base: self.wall,
+                nodes,
+            };
+        }
+        if let Some(fade) = state.fade.filter(|fade| fade.out)
+            && let Some(snapshot) = self.fade_snapshot
+        {
+            nodes.push(Node::Fill {
+                dst: SCREEN,
+                color: BLACK,
+                alpha: fade.black(t),
+                radius: 0.0,
+            });
+            return Frame {
+                base: snapshot,
+                nodes,
+            };
+        }
+        let base = match state.view {
+            View::Locked => {
+                self.lock_nodes(state, t, &mut nodes);
+                self.wall
+            }
+            _ => {
+                self.home_nodes(state, t, &mut nodes);
+                self.home.id
+            }
         };
-        let icon = self.icon(app);
-        let splash = icon.splash;
-        self.canvas.fill_rrect(rect, radius, splash, 1.0);
-        let size = gfx::lerp(ICON_SIZE as f32, SPLASH_ICON_SIZE, e);
-        let (cx, cy) = rect.center();
-        self.canvas.draw_image_scaled(
-            &self.icons[app.index()].large,
-            RectF::new(cx - size / 2.0, cy - size / 2.0, size, size),
+        let volume_visible = state
+            .volume_overlay_until
+            .is_some_and(|deadline| deadline > t);
+        nodes.push(Self::full(
+            self.volume.id,
+            VOLUME_HUD.w,
+            VOLUME_HUD.h,
+            VOLUME_HUD.x,
+            VOLUME_HUD.y,
+            if volume_visible { 1.0 } else { 0.0 },
+        ));
+        let black = state
+            .fade
+            .filter(|fade| !fade.out)
+            .map_or(0.0, |fade| fade.black(t));
+        nodes.push(Node::Fill {
+            dst: SCREEN,
+            color: BLACK,
+            alpha: black,
+            radius: 0.0,
+        });
+        Frame { base, nodes }
+    }
+
+    fn lock_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) {
+        let p = state.lock_motion.progress(t);
+        let shown = p.clamp(0.0, 1.0);
+        nodes.push(Self::full(self.dimmed, SCREEN_W, SCREEN_H, 0.0, 0.0, shown));
+        // The clock rises with the finger and fades; the keypad rises into
+        // place behind it.
+        let clock_alpha = (1.0 - p * 1.7).clamp(0.0, 1.0);
+        nodes.push(Self::full(
+            self.clock.id,
+            SCREEN_W,
+            SCREEN_H,
+            0.0,
+            -p * 520.0,
+            clock_alpha,
+        ));
+        let rise = (1.0 - p) * 200.0;
+        nodes.push(Self::full(
+            self.passcode.id,
+            SCREEN_W,
+            SCREEN_H,
+            0.0,
+            rise,
+            shown,
+        ));
+        let shake = state
+            .pin_error_at
+            .map(|at| {
+                let s = (t.saturating_duration_since(at).as_secs_f32()
+                    / SHAKE_ANIMATION.as_secs_f32())
+                .clamp(0.0, 1.0);
+                (s * std::f32::consts::TAU * 3.5).sin() * 46.0 * (1.0 - s)
+            })
+            .unwrap_or(0.0);
+        nodes.push(Self::full(
+            self.dots.id,
+            SCREEN_W,
+            64.0,
+            shake,
+            DOTS_TOP + rise,
+            shown,
+        ));
+        nodes.push(Self::full(
+            self.lock_status.id,
+            SCREEN_W,
+            f32::from(status_bar::HEIGHT),
+            0.0,
+            0.0,
             1.0,
-        );
-        // A slow first paint gets an activity indicator under the icon.
-        let waited = elapsed.as_secs_f32() - OPEN_ANIMATION.as_secs_f32() - 0.35;
-        if waited > 0.0 {
-            draw_spinner(
-                &mut self.canvas,
-                cx,
-                cy + 300.0,
-                (elapsed.as_millis() / 83) as u32,
-                (waited / 0.25).min(1.0),
+        ));
+    }
+
+    fn home_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) {
+        // Unlock: the keypad fades away over the home screen.
+        let unlock = state.unlock_at.map_or(0.0, |at| {
+            1.0 - gfx::ease_out(
+                t.saturating_duration_since(at).as_secs_f32() / UNLOCK_ANIMATION.as_secs_f32(),
+            )
+        });
+        nodes.push(Self::full(
+            self.dimmed,
+            SCREEN_W,
+            SCREEN_H,
+            0.0,
+            0.0,
+            unlock,
+        ));
+        nodes.push(Self::full(
+            self.passcode.id,
+            SCREEN_W,
+            SCREEN_H,
+            0.0,
+            0.0,
+            unlock,
+        ));
+        nodes.push(Self::full(
+            self.dots.id,
+            SCREEN_W,
+            64.0,
+            0.0,
+            DOTS_TOP,
+            unlock,
+        ));
+
+        let pressed = match state.pressed {
+            Some(Press::App(app)) => Some(app),
+            _ => None,
+        };
+        for app in LAUNCHER_APPS {
+            nodes.push(Node::Fill {
+                dst: launcher_icon_rect(app),
+                color: BLACK,
+                alpha: if pressed == Some(app) { 0.38 } else { 0.0 },
+                radius: ICON_RADIUS,
+            });
+        }
+
+        if let Some(switcher) = &state.switcher {
+            let enter = switcher.entrance(t);
+            let fade = 1.0 - switcher.exit_progress(t);
+            nodes.push(Node::Fill {
+                dst: SCREEN,
+                color: BLACK,
+                alpha: SWITCHER_DIM * fade,
+                radius: 0.0,
+            });
+            for (index, app) in switcher.apps.iter().enumerate() {
+                let entering = state.switcher_entry.is_some_and(|entry| entry.app == *app);
+                let rect = switcher.card_rect(index, t);
+                let alpha =
+                    switcher.card_alpha(index, t) * fade * if entering { 1.0 } else { enter };
+                let label_alpha = alpha * enter;
+                nodes.push(Node::Image {
+                    surface: self.labels[app.index()],
+                    src: RectF::new(0.0, 0.0, LABEL_W as f32, LABEL_H as f32),
+                    dst: RectF::new(
+                        rect.x.round(),
+                        (rect.y - LABEL_H as f32 - 18.0).round(),
+                        LABEL_W as f32,
+                        LABEL_H as f32,
+                    ),
+                    alpha: label_alpha,
+                    radius: 0.0,
+                    smooth: false,
+                });
+                let (rect, radius) = match state.switcher_entry.filter(|_| entering) {
+                    Some(entry) => (entry.rect(t), entry.radius(t)),
+                    None => (rect, CARD_RADIUS),
+                };
+                self.push_card(nodes, self.card_face(*app), rect, radius, alpha);
+            }
+            return;
+        }
+
+        if let Some(gesture) = &state.gesture {
+            nodes.push(Node::Fill {
+                dst: SCREEN,
+                color: BLACK,
+                alpha: gesture.backdrop_dim(t),
+                radius: 0.0,
+            });
+            self.push_card(
+                nodes,
+                self.card_face(gesture.app),
+                gesture.card_rect(t),
+                gesture.card_radius(t),
+                1.0,
+            );
+        } else if let Some(card) = &state.returning {
+            nodes.push(Node::Fill {
+                dst: SCREEN,
+                color: BLACK,
+                alpha: 0.0,
+                radius: 0.0,
+            });
+            self.push_card(
+                nodes,
+                self.card_face(card.app),
+                card.rect(t),
+                card.radius(t),
+                1.0,
+            );
+        } else if let Some(launch) = state.launch() {
+            nodes.push(Node::Fill {
+                dst: SCREEN,
+                color: BLACK,
+                alpha: 0.0,
+                radius: 0.0,
+            });
+            let face = self.card_face(launch.app);
+            let rect = launch.card.rect(t);
+            self.push_card(nodes, face, rect, launch.card.radius(t), 1.0);
+            let waited = t.saturating_duration_since(launch.started).as_secs_f32() - 0.7;
+            if matches!(face, CardFace::Splash(_)) && waited > 0.0 {
+                let (cx, cy) = rect.center();
+                let half = SPINNER_SIZE as f32 / 2.0;
+                nodes.push(Self::full(
+                    self.spinner.id,
+                    SPINNER_SIZE as f32,
+                    SPINNER_SIZE as f32,
+                    cx - half,
+                    cy + 300.0 - half,
+                    (waited / 0.25).min(1.0),
+                ));
+            }
+        } else if let Some(card) = &state.closing {
+            nodes.push(Node::Fill {
+                dst: SCREEN,
+                color: BLACK,
+                alpha: 0.0,
+                radius: 0.0,
+            });
+            let p = card.progress(t);
+            // Cross-fade into the real dock icon at the end of the flight.
+            let alpha = 1.0 - ((p - 0.82) / 0.18).clamp(0.0, 1.0);
+            self.push_card(
+                nodes,
+                self.card_face(card.app),
+                card.rect(t),
+                card.radius(t),
+                alpha,
             );
         }
-        let status = self.status(state);
-        draw_status_bar(&mut self.canvas, &status, None);
     }
 
-    fn draw_closing(&mut self, app: AppId, started: Instant, now: Instant) {
-        let t = (now.saturating_duration_since(started).as_secs_f32()
-            / CLOSE_ANIMATION.as_secs_f32())
-        .clamp(0.0, 1.0);
-        let e = gfx::ease_out(t);
-        let to = launcher_icon_rect(app);
-        let screen = RectF::new(
-            0.0,
-            0.0,
-            self.canvas.width as f32,
-            self.canvas.height as f32,
-        );
-        let rect = screen.lerp(to, e);
-        let radius = gfx::lerp(DISPLAY_CORNER_RADIUS, ICON_RADIUS, e);
-        // Crossfade into the real icon over the last part of the motion.
-        let alpha = 1.0 - ((t - 0.7) / 0.3).clamp(0.0, 1.0);
-        let splash = self.icon(app).splash;
-        self.canvas.fill_rrect(rect, radius, splash, alpha);
-        let size = gfx::lerp(SPLASH_ICON_SIZE, ICON_SIZE as f32, e);
-        let (cx, cy) = rect.center();
-        self.canvas.draw_image_scaled(
-            &self.icons[app.index()].large,
-            RectF::new(cx - size / 2.0, cy - size / 2.0, size, size),
-            alpha,
-        );
+    pub fn destroy<C: Connection>(&mut self, conn: &C) {
+        self.compositor.destroy(conn);
     }
 }
 
@@ -660,7 +1033,7 @@ fn app_icon_rect(index: usize) -> RectF {
     RectF::new(cx - size / 2.0, dock_cy - size / 2.0, size, size)
 }
 
-fn launcher_icon_rect(app: AppId) -> RectF {
+pub fn launcher_icon_rect(app: AppId) -> RectF {
     LAUNCHER_APPS
         .iter()
         .position(|a| *a == app)
@@ -1135,7 +1508,11 @@ mod tests {
         draw_status_bar(&mut canvas, &status, Some(BLACK));
         let below = &canvas.pixels[(status_bar::HEIGHT as usize) * 1080..];
         assert!(below.iter().all(|pixel| *pixel == 0x123456));
-        assert!(canvas.pixels[..1080 * 124].contains(&WHITE));
+        assert!(
+            canvas.pixels[..1080 * 124]
+                .iter()
+                .any(|p| p & 0xffffff == WHITE)
+        );
     }
 
     #[test]
@@ -1144,8 +1521,11 @@ mod tests {
         let rect = RectF::new(40.0, 40.0, 112.0, 392.0);
         draw_volume_hud(&mut canvas, rect, 50);
         let x = 96;
-        assert_eq!(canvas.pixels[(120 * 200 + x) as usize], CARD_RAISED);
-        assert_eq!(canvas.pixels[(300 * 200 + x) as usize], WHITE);
+        assert_eq!(
+            canvas.pixels[(120 * 200 + x) as usize] & 0xffffff,
+            CARD_RAISED
+        );
+        assert_eq!(canvas.pixels[(300 * 200 + x) as usize] & 0xffffff, WHITE);
     }
 }
 

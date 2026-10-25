@@ -55,7 +55,7 @@ pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
 
 /// Mixes two colors; `t` = 0 returns `a`.
 pub fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
-    blend(a, b, alpha_256(t))
+    blend(a, b, alpha_256(t)) & 0x00ff_ffff
 }
 
 #[inline]
@@ -63,16 +63,20 @@ fn alpha_256(alpha: f32) -> u32 {
     (alpha.clamp(0.0, 1.0) * 256.0 + 0.5) as u32
 }
 
-/// Source-over blend of an opaque `src` with coverage `alpha` (0..=256).
+/// Source-over blend of an opaque `src` color with coverage `alpha`
+/// (0..=256) onto a premultiplied ARGB pixel. Opaque canvases simply ignore
+/// the alpha byte; transparent layers (cleared to 0) accumulate it, so the
+/// same drawing code produces compositor-ready premultiplied content.
 #[inline]
 pub fn blend(dst: u32, src: u32, alpha: u32) -> u32 {
     if alpha >= 256 {
-        return src;
+        return src | 0xff00_0000;
     }
     let inverse = 256 - alpha;
     let rb = (((src & 0x00ff_00ff) * alpha + (dst & 0x00ff_00ff) * inverse) >> 8) & 0x00ff_00ff;
     let g = (((src & 0x0000_ff00) * alpha + (dst & 0x0000_ff00) * inverse) >> 8) & 0x0000_ff00;
-    rb | g
+    let a = ((255 * alpha + (dst >> 24) * inverse) >> 8) << 24;
+    a | rb | g
 }
 
 /// A premultiplied ARGB image (alpha in the top byte).
@@ -233,7 +237,7 @@ impl Canvas {
         let row = (y * self.width) as usize;
         let slice = &mut self.pixels[row + x0 as usize..row + x1 as usize];
         if alpha >= 256 {
-            slice.fill(color);
+            slice.fill(color | 0xff00_0000);
         } else {
             for pixel in slice {
                 *pixel = blend(*pixel, color, alpha);
@@ -553,7 +557,7 @@ fn over(dst: u32, src: u32, alpha: u32) -> u32 {
         let d = dst >> shift & 0xff;
         (s + ((d * inverse) >> 8)).min(255) << shift
     };
-    scale(16) | scale(8) | scale(0)
+    scale(24) | scale(16) | scale(8) | scale(0)
 }
 
 /// Interpolates two ARGB pixels; `t` is 0..=256.
@@ -799,8 +803,12 @@ mod tests {
 
     #[test]
     fn blend_endpoints_are_exact() {
-        assert_eq!(blend(0x000000, 0xffffff, 256), 0xffffff);
+        assert_eq!(blend(0x000000, 0xffffff, 256) & 0xffffff, 0xffffff);
         assert_eq!(blend(0x123456, 0xffffff, 0), 0x123456);
+        // Transparent layers accumulate premultiplied alpha.
+        let half = blend(0, 0xffffff, 128);
+        assert_eq!(half >> 24, 127);
+        assert!((127..=128).contains(&(half & 0xff)));
         assert!((0x7f..=0x80).contains(&(mix(0x000000, 0xff0000, 0.5) >> 16 & 0xff)));
     }
 
@@ -808,10 +816,11 @@ mod tests {
     fn rounded_rect_is_solid_inside_and_soft_at_corners() {
         let mut canvas = Canvas::new(100, 100);
         canvas.fill_rrect(RectF::new(10.0, 10.0, 80.0, 80.0), 20.0, 0xffffff, 1.0);
-        assert_eq!(canvas.pixels[50 * 100 + 50], 0xffffff);
-        assert_eq!(canvas.pixels[50 * 100 + 10], 0xffffff);
-        assert_eq!(canvas.pixels[10 * 100 + 10], 0x000000);
-        assert_eq!(canvas.pixels[50 * 100 + 9], 0x000000);
+        let rgb = |x: usize, y: usize| canvas.pixels[y * 100 + x] & 0xffffff;
+        assert_eq!(rgb(50, 50), 0xffffff);
+        assert_eq!(rgb(10, 50), 0xffffff);
+        assert_eq!(rgb(10, 10), 0x000000);
+        assert_eq!(rgb(9, 50), 0x000000);
         let corner = canvas.pixels[15 * 100 + 16] & 0xff;
         assert!(corner > 0 && corner < 255, "corner pixel {corner}");
     }

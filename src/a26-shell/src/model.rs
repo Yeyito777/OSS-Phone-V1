@@ -5,6 +5,11 @@ use subtle::ConstantTimeEq;
 
 use crate::config::Config;
 use crate::freezer::FreezerState;
+use crate::gfx::RectF;
+use crate::interaction::{
+    CARD_RADIUS, CardMotion, DISPLAY_RADIUS, Fade, GestureOutcome, HomeGesture, LockMotion, SCREEN,
+    Switcher, SwitcherAction,
+};
 use crate::keyboard::{
     KeyAction, KeyboardEffect, KeyboardPurpose, KeyboardState, PublicKeyboardState,
 };
@@ -109,26 +114,18 @@ pub enum Press {
     App(AppId),
 }
 
-/// An app opening from (or closing into) its launcher icon.
+/// An app opening: its card grows from where it was tapped (a dock icon or
+/// a switcher card) to full screen.
 #[derive(Debug, Clone, Copy)]
 pub struct Launch {
     pub app: AppId,
     pub started: Instant,
+    pub card: CardMotion,
     /// A background app being brought back: its window already exists.
     pub resumed: bool,
     pub window_mapped_at: Option<Instant>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Closing {
-    pub app: AppId,
-    pub started: Instant,
-}
-
-/// Duration of the icon-to-fullscreen zoom when an app opens.
-pub const OPEN_ANIMATION: Duration = Duration::from_millis(340);
-/// Duration of the fullscreen-to-icon zoom when an app goes home.
-pub const CLOSE_ANIMATION: Duration = Duration::from_millis(300);
 /// Wrong-passcode shake.
 pub const SHAKE_ANIMATION: Duration = Duration::from_millis(480);
 /// The passcode keypad returns to the clock after this much inactivity.
@@ -137,6 +134,13 @@ pub const PASSCODE_IDLE_TIMEOUT: Duration = Duration::from_secs(12);
 /// launch screen up briefly after its window maps so no blank frame shows.
 const BROWSER_FIRST_PAINT_DELAY: Duration = Duration::from_millis(1500);
 const SYSTEM_FIRST_PAINT_DELAY: Duration = Duration::from_millis(80);
+/// Cross-fade from the passcode keypad to the home screen after unlock.
+pub const UNLOCK_ANIMATION: Duration = Duration::from_millis(260);
+/// How far a touch in an app's bottom zone must rise before it becomes the
+/// interactive home gesture (taps there still reach the app).
+pub const HOME_GESTURE_SLOP: f32 = 22.0;
+/// The bottom zone where the home gesture starts.
+pub const HOME_GESTURE_ZONE: f32 = 180.0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PointerGesture {
@@ -175,7 +179,28 @@ pub struct ShellState {
     pub last_lock_input: Instant,
     pub pressed: Option<Press>,
     pub pin_error_at: Option<Instant>,
-    pub closing: Option<Closing>,
+    /// An app card zooming back into its dock icon.
+    pub closing: Option<CardMotion>,
+    /// The finger-following swipe up out of an app.
+    pub gesture: Option<HomeGesture>,
+    /// A cancelled home gesture: the card springs back to full screen.
+    pub returning: Option<CardMotion>,
+    pub switcher: Option<Switcher>,
+    /// A card flying from the home gesture into its switcher slot.
+    pub switcher_entry: Option<CardMotion>,
+    pub lock_motion: LockMotion,
+    pub fade: Option<Fade>,
+    pub unlock_at: Option<Instant>,
+    /// Snapshot requests for the main loop (taken before restacking).
+    pub pending_capture: Option<AppId>,
+    pub pending_fade_capture: bool,
+    /// Apps the user closed from the switcher, for the main loop to stop.
+    pub pending_kills: Vec<AppId>,
+    /// A cancelled home gesture finished; the app window must be raised.
+    pub pending_reveal: bool,
+    /// The home gesture ended in the app switcher; the main loop opens it
+    /// with the running apps.
+    pub pending_switcher: bool,
     /// The shell window was exposed and must be recopied from its pixmap.
     pub shell_exposed: bool,
     active_app_focused: bool,
@@ -236,6 +261,18 @@ impl ShellState {
             pressed: None,
             pin_error_at: None,
             closing: None,
+            gesture: None,
+            returning: None,
+            switcher: None,
+            switcher_entry: None,
+            lock_motion: LockMotion::default(),
+            fade: None,
+            unlock_at: None,
+            pending_capture: None,
+            pending_fade_capture: false,
+            pending_kills: Vec::new(),
+            pending_reveal: false,
+            pending_switcher: false,
             shell_exposed: false,
             active_app_focused: false,
             launch: None,
@@ -287,10 +324,17 @@ impl ShellState {
         self.keyboard.hide();
         self.view = View::Locked;
         self.lock_face = LockFace::Clock;
+        self.lock_motion.snap(0.0);
         self.clear_pin();
         self.pointer = None;
         self.pressed = None;
         self.closing = None;
+        self.gesture = None;
+        self.returning = None;
+        self.switcher = None;
+        self.switcher_entry = None;
+        self.unlock_at = None;
+        self.pending_capture = None;
         self.pin_error_at = None;
         self.active_app_focused = false;
         self.cancel_app_launch();
@@ -300,6 +344,7 @@ impl ShellState {
 
     pub fn screen_off(&mut self) {
         self.lock();
+        self.fade = None;
         self.screen_awake = false;
         self.last_action = "screen_off".into();
     }
@@ -310,30 +355,225 @@ impl ShellState {
         self.last_action = "screen_on".into();
     }
 
-    pub fn toggle_screen(&mut self) {
-        if self.screen_awake {
-            self.screen_off();
-        } else {
+    /// The power key: fades to black before the screen-off transaction, or
+    /// wakes to the lock screen.
+    pub fn power_key(&mut self) {
+        if !self.screen_awake {
             self.screen_on();
+        } else if self.fade.is_none_or(|fade| !fade.out) {
+            self.fade = Some(Fade {
+                out: true,
+                started: Instant::now(),
+            });
+            self.pending_fade_capture = true;
+            self.pointer = None;
+            self.pressed = None;
+            self.keyboard.hide();
+            self.last_action = "power_fade_out".into();
+            self.redraw = true;
         }
     }
 
+    /// Starts the fade in from black once a woken panel is lit.
+    pub fn fade_in(&mut self) {
+        self.fade = Some(Fade {
+            out: false,
+            started: Instant::now(),
+        });
+        self.redraw = true;
+    }
+
     pub fn home(&mut self) {
-        if self.screen_awake && self.view != View::Locked {
-            self.keyboard.hide();
-            if let Some(app) = AppId::from_view(self.view) {
-                self.closing = Some(Closing {
-                    app,
-                    started: Instant::now(),
-                });
-            }
-            self.pressed = None;
-            self.view = View::Launcher;
-            self.active_app_focused = false;
-            self.cancel_app_launch();
-            self.last_action = "home".into();
+        self.go_home(true);
+    }
+
+    /// Home after the app's process ended: there is nothing to snapshot.
+    pub fn home_after_exit(&mut self) {
+        self.go_home(false);
+    }
+
+    fn go_home(&mut self, snapshot: bool) {
+        if !self.screen_awake || self.view == View::Locked {
+            return;
+        }
+        let now = Instant::now();
+        self.keyboard.hide();
+        if let Some(app) = AppId::from_view(self.view) {
+            let (from, radius) = if let Some(gesture) = self.gesture.take() {
+                (gesture.card_rect(now), gesture.card_radius(now))
+            } else if let Some(card) = self.returning.take() {
+                (card.rect(now), card.radius(now))
+            } else if let Some(launch) = self.launch() {
+                (launch.card.rect(now), launch.card.radius(now))
+            } else {
+                if snapshot {
+                    self.pending_capture = Some(app);
+                }
+                (SCREEN, DISPLAY_RADIUS)
+            };
+            self.closing = Some(close_motion(app, from, radius, (0.0, 0.0), now));
+        }
+        self.switcher = None;
+        self.switcher_entry = None;
+        self.pressed = None;
+        self.view = View::Launcher;
+        self.active_app_focused = false;
+        self.cancel_app_launch();
+        self.last_action = "home".into();
+        self.redraw = true;
+    }
+
+    /// The finger rose out of an app's bottom zone: from now on the app's
+    /// snapshot follows it.
+    pub fn begin_home_gesture(&mut self, x: f32, y: f32) -> bool {
+        let Some(app) = AppId::from_view(self.view) else {
+            return false;
+        };
+        if !self.screen_awake
+            || self.app_launching()
+            || self.fade.is_some()
+            || self.gesture.is_some()
+        {
+            return false;
+        }
+        let now = Instant::now();
+        let mut gesture = HomeGesture::new(app, (x, y + HOME_GESTURE_SLOP), now);
+        gesture.update(x, y, now);
+        self.gesture = Some(gesture);
+        self.returning = None;
+        self.pending_capture = Some(app);
+        self.keyboard.hide();
+        self.active_app_focused = false;
+        self.last_action = "home_gesture".into();
+        self.redraw = true;
+        true
+    }
+
+    pub fn update_home_gesture(&mut self, x: f32, y: f32) {
+        if let Some(gesture) = self.gesture.as_mut() {
+            gesture.update(x, y, Instant::now());
             self.redraw = true;
         }
+    }
+
+    /// The finger lifted: go home, back to the app, or to the switcher.
+    pub fn end_home_gesture(&mut self) -> Option<GestureOutcome> {
+        let gesture = self.gesture.take()?;
+        let now = Instant::now();
+        let (outcome, velocity) = gesture.release(now);
+        let rect = gesture.card_rect(now);
+        let radius = gesture.card_radius(now);
+        match outcome {
+            GestureOutcome::Home => {
+                self.go_home(false);
+                self.closing = Some(close_motion(gesture.app, rect, radius, velocity, now));
+                self.last_action = "swipe_up_background".into();
+            }
+            GestureOutcome::App => {
+                self.returning = Some(CardMotion::new(
+                    gesture.app,
+                    rect,
+                    SCREEN,
+                    radius,
+                    DISPLAY_RADIUS,
+                    velocity,
+                    now,
+                    crate::interaction::RETURN_RESPONSE,
+                    0.9,
+                ));
+                self.last_action = "home_gesture_cancel".into();
+            }
+            GestureOutcome::Switcher => {
+                // The caller opens the switcher with the running apps.
+                self.go_home(false);
+                self.closing = None;
+                self.switcher_entry = Some(CardMotion::new(
+                    gesture.app,
+                    rect,
+                    rect,
+                    radius,
+                    CARD_RADIUS,
+                    velocity,
+                    now,
+                    0.36,
+                    0.9,
+                ));
+                self.pending_switcher = true;
+                self.last_action = "app_switcher".into();
+            }
+        }
+        self.redraw = true;
+        Some(outcome)
+    }
+
+    /// Opens the app switcher over the home screen. `apps` are the running
+    /// apps, oldest first; the newest is centered.
+    pub fn open_switcher(&mut self, apps: Vec<AppId>) {
+        if !self.screen_awake || self.view == View::Locked {
+            return;
+        }
+        if self.view.is_app() {
+            self.go_home(true);
+            self.closing = None;
+        }
+        if apps.is_empty() {
+            self.switcher_entry = None;
+            return;
+        }
+        let now = Instant::now();
+        let switcher = Switcher::new(apps, now);
+        if let Some(entry) = self.switcher_entry.take()
+            && let Some(index) = switcher.apps.iter().position(|app| *app == entry.app)
+        {
+            let slot = switcher.card_rect(index, now);
+            let from = entry.rect(now);
+            let velocity = (0.0, 0.0);
+            self.switcher_entry = Some(CardMotion::new(
+                entry.app,
+                from,
+                slot,
+                entry.from_radius,
+                CARD_RADIUS,
+                velocity,
+                now,
+                0.36,
+                0.92,
+            ));
+        }
+        self.switcher = Some(switcher);
+        self.last_action = "app_switcher".into();
+        self.redraw = true;
+    }
+
+    pub fn switcher_touch_begin(&mut self, x: f32, y: f32) {
+        if let Some(switcher) = self.switcher.as_mut() {
+            switcher.begin_touch(x, y, Instant::now());
+            self.redraw = true;
+        }
+    }
+
+    pub fn switcher_touch_move(&mut self, x: f32, y: f32) {
+        if let Some(switcher) = self.switcher.as_mut() {
+            switcher.move_touch(x, y, Instant::now());
+            self.redraw = true;
+        }
+    }
+
+    pub fn switcher_touch_end(&mut self) {
+        let Some(switcher) = self.switcher.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        match switcher.end_touch(now) {
+            SwitcherAction::None => {}
+            SwitcherAction::Home => switcher.exit(now),
+            SwitcherAction::Open(app, rect) => {
+                self.switcher = None;
+                self.switcher_entry = None;
+                self.begin_launch_from(app, rect, CARD_RADIUS);
+            }
+        }
+        self.redraw = true;
     }
 
     pub fn replace_managed_windows(&mut self, windows: Vec<u32>) {
@@ -384,20 +624,37 @@ impl ShellState {
     }
 
     fn begin_launch(&mut self, app: AppId) {
+        let origin = crate::ui::launcher_icon_rect(app);
+        self.begin_launch_from(app, origin, crate::ui::ICON_RADIUS);
+    }
+
+    fn begin_launch_from(&mut self, app: AppId, origin: RectF, radius: f32) {
         let view = match app {
             AppId::System => View::System,
             AppId::Browser => View::Browser,
         };
         if self.screen_awake && self.view != View::Locked && self.view != view {
+            let now = Instant::now();
             self.keyboard.hide();
+            if let Some(current) = AppId::from_view(self.view)
+                && self.launch().is_none()
+            {
+                // Switching straight from another app: keep its snapshot.
+                self.pending_capture = Some(current);
+            }
             self.view = view;
             self.active_app_focused = false;
             self.pressed = None;
             self.closing = None;
+            self.gesture = None;
+            self.returning = None;
+            self.switcher = None;
+            self.switcher_entry = None;
             self.managed_windows.clear();
             self.launch = Some(Launch {
                 app,
-                started: Instant::now(),
+                started: now,
+                card: CardMotion::open(app, origin, radius, now),
                 resumed: false,
                 window_mapped_at: None,
             });
@@ -425,6 +682,7 @@ impl ShellState {
     pub fn show_passcode(&mut self) {
         if self.screen_awake && self.view == View::Locked && self.lock_face != LockFace::Passcode {
             self.lock_face = LockFace::Passcode;
+            self.lock_motion.animate_to(1.0, Instant::now());
             self.last_lock_input = Instant::now();
             self.last_action = "passcode_shown".into();
             self.redraw = true;
@@ -435,11 +693,64 @@ impl ShellState {
     pub fn cancel_passcode(&mut self) {
         if self.view == View::Locked && self.lock_face == LockFace::Passcode {
             self.lock_face = LockFace::Clock;
+            self.lock_motion.animate_to(0.0, Instant::now());
             self.clear_pin();
             self.pin_error_at = None;
             self.last_action = "passcode_cancel".into();
             self.redraw = true;
         }
+    }
+
+    /// A touch went down on the lock screen; vertical motion drags between
+    /// the clock and the keypad.
+    pub fn lock_drag_begin(&mut self, y: f32) {
+        if self.view == View::Locked && self.screen_awake && self.fade.is_none() {
+            self.lock_motion.begin_drag(y, Instant::now());
+        }
+    }
+
+    pub fn lock_drag_move(&mut self, y: f32) {
+        if self.lock_motion.dragging() {
+            self.lock_motion.move_drag(y, Instant::now());
+            self.last_lock_input = Instant::now();
+            self.redraw = true;
+        }
+    }
+
+    /// Ends a lock-screen drag. Returns true when the touch moved enough to
+    /// count as a drag (so it is not also a tap).
+    pub fn lock_drag_end(&mut self, travelled: f32) -> bool {
+        if !self.lock_motion.dragging() {
+            return false;
+        }
+        if travelled < 24.0 {
+            // A tap: settle where it was without a decision.
+            let target = self.lock_motion.target();
+            self.lock_motion.animate_to(target, Instant::now());
+            return false;
+        }
+        let keypad = self.lock_motion.end_drag(Instant::now());
+        let face = if keypad {
+            LockFace::Passcode
+        } else {
+            LockFace::Clock
+        };
+        if face != self.lock_face {
+            self.lock_face = face;
+            self.last_lock_input = Instant::now();
+            if face == LockFace::Clock {
+                self.clear_pin();
+                self.pin_error_at = None;
+            }
+            self.last_action = if keypad {
+                "passcode_shown"
+            } else {
+                "passcode_cancel"
+            }
+            .into();
+        }
+        self.redraw = true;
+        true
     }
 
     pub fn input_digit(&mut self, digit: u8, config: &Config) {
@@ -476,6 +787,7 @@ impl ShellState {
         self.clear_pin();
         self.last_lock_input = Instant::now();
         if accepted {
+            self.unlock_at = Some(Instant::now());
             self.view = View::Launcher;
             self.lock_face = LockFace::Clock;
             self.pin_error_at = None;
@@ -615,12 +927,24 @@ impl ShellState {
                 AppId::Browser => BROWSER_FIRST_PAINT_DELAY,
             }
         };
-        Some((launch.started + OPEN_ANIMATION).max(mapped_at + paint_delay))
+        Some(mapped_at + paint_delay)
     }
 
     pub fn app_ready_to_reveal(&self) -> bool {
-        self.reveal_at()
-            .is_some_and(|reveal_at| Instant::now() >= reveal_at)
+        let now = Instant::now();
+        self.launch()
+            .is_some_and(|launch| launch.card.progress(now) >= 0.995 || launch.card.settled(now))
+            && self.reveal_at().is_some_and(|reveal_at| now >= reveal_at)
+    }
+
+    /// The shell covers the foreground app: while it opens, while the home
+    /// gesture or its return is in motion, and during the power fade.
+    pub fn shell_covers_app(&self) -> bool {
+        self.view.is_app()
+            && (self.app_launching()
+                || self.gesture.is_some()
+                || self.returning.is_some()
+                || self.fade.is_some_and(|fade| fade.out))
     }
 
     pub fn finish_app_launch(&mut self) {
@@ -640,23 +964,35 @@ impl ShellState {
         self.launch = None;
     }
 
-    /// True while a shell animation needs frames (zooms, shake).
+    /// True while a shell animation needs frames.
     pub fn animating(&self, now: Instant) -> bool {
         if !self.screen_awake {
             return false;
         }
-        let opening = self
-            .launch()
-            .is_some_and(|launch| now < launch.started + OPEN_ANIMATION);
-        let closing = self.view == View::Launcher
-            && self
-                .closing
-                .is_some_and(|closing| now < closing.started + CLOSE_ANIMATION);
+        let opening = self.launch().is_some_and(|launch| {
+            !launch.card.settled(now)
+                // The launch screen's activity indicator.
+                || now.duration_since(launch.started) > Duration::from_millis(700)
+        });
+        let card = |motion: &Option<CardMotion>| motion.is_some_and(|m| !m.settled(now));
         let shaking = self.view == View::Locked
             && self
                 .pin_error_at
                 .is_some_and(|at| now < at + SHAKE_ANIMATION);
-        opening || closing || shaking
+        let unlocking = self.unlock_at.is_some_and(|at| now < at + UNLOCK_ANIMATION);
+        opening
+            || card(&self.closing)
+            || card(&self.returning)
+            || card(&self.switcher_entry)
+            || self.gesture.as_ref().is_some_and(|g| {
+                g.armed_at
+                    .is_some_and(|at| now < at + Duration::from_millis(500))
+            })
+            || self.switcher.as_ref().is_some_and(|s| s.animating(now))
+            || (self.view == View::Locked && self.lock_motion.animating(now))
+            || self.fade.is_some()
+            || shaking
+            || unlocking
     }
 
     pub fn tick(&mut self) {
@@ -673,12 +1009,54 @@ impl ShellState {
             self.cancel_passcode();
             self.last_action = "passcode_idle_timeout".into();
         }
-        if self
-            .closing
-            .is_some_and(|closing| now >= closing.started + CLOSE_ANIMATION)
-        {
+        if self.closing.is_some_and(|closing| closing.settled(now)) {
             self.closing = None;
             self.redraw = true;
+        }
+        if self.switcher_entry.is_some_and(|entry| entry.settled(now)) {
+            self.switcher_entry = None;
+            self.redraw = true;
+        }
+        if self.returning.is_some_and(|card| card.settled(now)) {
+            self.returning = None;
+            self.pending_reveal = true;
+            self.redraw = true;
+        }
+        if let Some(gesture) = self.gesture.as_mut() {
+            let armed = gesture.armed();
+            gesture.refresh_hold(now);
+            if gesture.armed() != armed {
+                self.redraw = true;
+            }
+        }
+        if let Some(switcher) = self.switcher.as_mut() {
+            if let Some(app) = switcher.finish_dismissal(now) {
+                self.pending_kills.push(app);
+                self.last_action = format!("{}_closed", app.display_name().to_ascii_lowercase());
+                self.redraw = true;
+            }
+            if switcher.exited(now) || (switcher.apps.is_empty() && switcher.dismissal.is_none()) {
+                self.switcher = None;
+                self.redraw = true;
+            }
+        }
+        if self
+            .unlock_at
+            .is_some_and(|at| now >= at + UNLOCK_ANIMATION)
+        {
+            self.unlock_at = None;
+            self.redraw = true;
+        }
+        if let Some(fade) = self.fade
+            && fade.finished(now)
+        {
+            if fade.out {
+                // The screen is black: hand over to the screen-off transaction.
+                self.screen_off();
+            } else {
+                self.fade = None;
+                self.redraw = true;
+            }
         }
         if self
             .pin_error_at
@@ -712,12 +1090,35 @@ impl ShellState {
             self.volume_overlay_until,
             self.reveal_at(),
             passcode_timeout,
+            self.gesture.as_ref().and_then(HomeGesture::hold_deadline),
+            self.fade.map(|fade| fade.deadline()),
         ]
         .into_iter()
         .flatten()
         .filter(|deadline| *deadline > now)
         .min()
     }
+}
+
+/// The card of an app going home, zooming into its dock icon.
+fn close_motion(
+    app: AppId,
+    from: RectF,
+    radius: f32,
+    velocity: (f32, f32),
+    now: Instant,
+) -> CardMotion {
+    CardMotion::new(
+        app,
+        from,
+        crate::ui::launcher_icon_rect(app),
+        radius,
+        crate::ui::ICON_RADIUS,
+        velocity,
+        now,
+        crate::interaction::CLOSE_RESPONSE,
+        0.86,
+    )
 }
 
 impl Drop for ShellState {
@@ -824,6 +1225,7 @@ mod tests {
         assert!(!state.app_ready_to_reveal());
         let launch = state.launch.as_mut().unwrap();
         launch.started -= Duration::from_secs(2);
+        launch.card.spring.started -= Duration::from_secs(2);
         launch.window_mapped_at = Some(Instant::now() - Duration::from_secs(2));
         assert!(state.app_ready_to_reveal());
         state.finish_app_launch();
@@ -841,7 +1243,7 @@ mod tests {
 
         state.note_app_window_mapped();
         let launch = state.launch.as_mut().unwrap();
-        launch.started -= OPEN_ANIMATION;
+        launch.card.spring.started -= Duration::from_secs(2);
         launch.window_mapped_at = Some(Instant::now() - Duration::from_millis(100));
         assert!(state.app_ready_to_reveal());
         state.finish_app_launch();
@@ -854,7 +1256,7 @@ mod tests {
         let mut state = ShellState::new(false, 50);
         state.launch_browser();
         state.note_app_resumed(AppId::Browser);
-        state.launch.as_mut().unwrap().started -= OPEN_ANIMATION;
+        state.launch.as_mut().unwrap().card.spring.started -= Duration::from_secs(2);
         assert!(state.app_ready_to_reveal());
     }
 
@@ -870,9 +1272,128 @@ mod tests {
             Some(AppId::System)
         );
         assert!(state.animating(Instant::now()));
-        state.closing.as_mut().unwrap().started -= CLOSE_ANIMATION;
+        state.closing.as_mut().unwrap().spring.started -= Duration::from_secs(2);
         state.tick();
         assert!(state.closing.is_none());
+    }
+
+    fn foreground_system() -> ShellState {
+        let mut state = ShellState::new(false, 50);
+        state.launch_system();
+        state.finish_app_launch();
+        state.pending_capture = None;
+        state
+    }
+
+    #[test]
+    fn home_gesture_snapshots_and_flick_goes_home() {
+        let mut state = foreground_system();
+        assert!(state.begin_home_gesture(540.0, 2250.0));
+        assert_eq!(state.pending_capture, Some(AppId::System));
+        assert!(state.shell_covers_app());
+        for step in 1..=6 {
+            std::thread::sleep(Duration::from_millis(4));
+            state.update_home_gesture(540.0, 2250.0 - step as f32 * 60.0);
+        }
+        assert_eq!(state.end_home_gesture(), Some(GestureOutcome::Home));
+        assert_eq!(state.view, View::Launcher);
+        assert!(state.closing.is_some());
+        assert!(state.gesture.is_none());
+    }
+
+    #[test]
+    fn short_home_gesture_springs_back_and_reveals_the_app() {
+        let mut state = foreground_system();
+        state.begin_home_gesture(540.0, 2250.0);
+        state.gesture.as_mut().unwrap().tracker = Default::default();
+        assert_eq!(state.end_home_gesture(), Some(GestureOutcome::App));
+        assert_eq!(state.view, View::System);
+        assert!(state.shell_covers_app());
+        state.returning.as_mut().unwrap().spring.started -= Duration::from_secs(2);
+        state.tick();
+        assert!(state.pending_reveal);
+        assert!(!state.shell_covers_app());
+    }
+
+    #[test]
+    fn held_home_gesture_opens_the_switcher_and_a_thrown_card_closes_its_app() {
+        let mut state = foreground_system();
+        state.begin_home_gesture(540.0, 2250.0);
+        let gesture = state.gesture.as_mut().unwrap();
+        gesture.armed_at = Some(Instant::now());
+        gesture.tracker = Default::default();
+        gesture.current = (540.0, 1500.0);
+        assert_eq!(state.end_home_gesture(), Some(GestureOutcome::Switcher));
+        assert!(state.pending_switcher);
+        state.open_switcher(vec![AppId::Browser, AppId::System]);
+        assert!(state.switcher.is_some());
+        assert!(state.switcher_entry.is_some());
+
+        let now = Instant::now();
+        let rect = state.switcher.as_ref().unwrap().card_rect(0, now);
+        let (x, y) = rect.center();
+        state.switcher_touch_begin(x, y);
+        for step in 1..=8 {
+            std::thread::sleep(Duration::from_millis(3));
+            state.switcher_touch_move(x, y - step as f32 * 90.0);
+        }
+        state.switcher_touch_end();
+        let dismissal = state.switcher.as_mut().unwrap().dismissal.as_mut().unwrap();
+        assert!(dismissal.closing);
+        dismissal.offset.started -= Duration::from_secs(2);
+        state.tick();
+        assert_eq!(state.pending_kills, vec![AppId::Browser]);
+        assert_eq!(state.switcher.as_ref().unwrap().apps, vec![AppId::System]);
+
+        // Tapping the remaining card opens its app from the card.
+        let rect = state
+            .switcher
+            .as_ref()
+            .unwrap()
+            .card_rect(0, Instant::now() + Duration::from_secs(2));
+        let (x, y) = rect.center();
+        state
+            .switcher
+            .as_mut()
+            .unwrap()
+            .begin_touch(x, y, Instant::now() + Duration::from_secs(2));
+        state.switcher_touch_end();
+        assert_eq!(state.view, View::System);
+        assert!(state.app_launching());
+        assert!(state.switcher.is_none());
+    }
+
+    #[test]
+    fn power_key_fades_out_before_screen_off_and_wakes_to_the_lock_screen() {
+        let mut state = foreground_system();
+        state.power_key();
+        assert!(state.screen_awake);
+        assert!(state.pending_fade_capture);
+        assert!(state.shell_covers_app());
+        state.fade.as_mut().unwrap().started -= Duration::from_secs(1);
+        state.tick();
+        assert!(!state.screen_awake);
+        assert_eq!(state.view, View::Locked);
+        state.power_key();
+        assert!(state.screen_awake);
+        state.fade_in();
+        assert!(state.animating(Instant::now()));
+    }
+
+    #[test]
+    fn lock_screen_drag_reveals_the_keypad() {
+        let mut state = ShellState::new(true, 50);
+        state.lock_drag_begin(2000.0);
+        for step in 1..=6 {
+            std::thread::sleep(Duration::from_millis(3));
+            state.lock_drag_move(2000.0 - step as f32 * 80.0);
+        }
+        assert!(state.lock_drag_end(480.0));
+        assert_eq!(state.lock_face, LockFace::Passcode);
+        // A tap is not a drag.
+        state.lock_drag_begin(1000.0);
+        assert!(!state.lock_drag_end(3.0));
+        assert_eq!(state.lock_face, LockFace::Passcode);
     }
 
     #[test]

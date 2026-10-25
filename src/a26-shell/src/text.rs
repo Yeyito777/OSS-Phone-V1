@@ -279,7 +279,12 @@ mod tests {
             1.0,
         );
         assert!(width > 30.0);
-        assert!(canvas.pixels.contains(&0xffffff));
+        assert!(
+            canvas
+                .pixels
+                .iter()
+                .any(|pixel| pixel & 0xffffff == 0xffffff)
+        );
     }
 
     #[test]
