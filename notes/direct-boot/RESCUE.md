@@ -41,9 +41,14 @@ tools/samloader detect          # wait until it finds the phone
 tools/samloader flash -p BOOT A266MUBU1AYB8-current/boot.img
 ```
 
-samloader reboots the phone when done. If macOS's USB serial driver keeps
-libusb from claiming the device, retry with `--usb-backend vcom`, or plug the
-phone into the research host and use `tools/samloader` there.
+On this phone samloader's closing "Rebooting device..." does **not** reboot:
+the phone stays in Download mode until it is restarted by hand (hold
+**Power + Volume Down** about 7–10 s). Until then it also refuses a second
+session ("Unexpected handshake response", with both the libusb and vcom
+backends), so every flash costs one physical restart, and flashing again
+first needs Download mode re-entered (Level 3 steps 1–3). samloader 2.0.0's
+libusb backend works on macOS (verified 2026-10-24); `--usb-backend vcom`
+uses `/dev/cu.usbmodem*` instead.
 
 ## Level 3: no adb (boot loop or black screen)
 
