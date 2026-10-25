@@ -42,6 +42,8 @@ moon_owns_phone() {
 
 boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
 log "start boot_id=$boot_id direct=$DIRECT"
+# The supervisor starts this with setsid; the restore path ends the group.
+echo $$ >"$RUNTIME/post-ready.pid"
 
 if [ -x "$ROOT/opt/a26-system/libexec/a26-wifi-start" ]; then
     if in_chroot /opt/a26-system/libexec/a26-wifi-start; then
@@ -73,10 +75,12 @@ stop_unused_services() {
 
 if [ "$DIRECT" = 1 ]; then
     # Some services only start from boot-completed triggers, so look twice.
-    "$BB" sleep 5
-    moon_owns_phone && stop_unused_services
-    "$BB" sleep 55
-    moon_owns_phone && stop_unused_services
+    (
+        "$BB" sleep 5
+        moon_owns_phone && stop_unused_services
+        "$BB" sleep 55
+        moon_owns_phone && stop_unused_services
+    ) &
 fi
 
 # The phone keeps time only in its RTC without the framework. Sync once
@@ -89,8 +93,19 @@ sync_time() {
     log "network time synced: $(echo "$result" | grep -E 'setting time|offset:' | tail -1)"
 }
 
+wifi_routed() {
+    ip route show table all 2>/dev/null | grep -q '^default via .* dev wlan0'
+}
+
+# Poll for a Wi-Fi route for the first three minutes, then back off.
+waited=0
 retry=30
 while moon_owns_phone; do
+    if [ "$waited" -lt 180 ] && ! wifi_routed; then
+        "$BB" sleep 5
+        waited=$((waited + 5))
+        continue
+    fi
     if sync_time; then
         retry=30
         "$BB" sleep 43200

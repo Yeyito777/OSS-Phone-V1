@@ -96,6 +96,16 @@ echo "surfaceflinger=$(pidof surfaceflinger 2>/dev/null || true)"
 echo "hwcomposer=$(pidof android.hardware.graphics.composer@2.4-service 2>/dev/null || true)"
 echo "ExynosHWCServiceTW=$(pidof vendor.samsung_slsi.hardware.ExynosHWCServiceTW@1.0-service 2>/dev/null || true)"
 
+# End Moon's post-ready stage (its own session, recorded by itself) so it can
+# neither stop services nor keep syncing time once Android is back.
+post_ready="$(cat /data/local/tmp/moon-boot/post-ready.pid 2>/dev/null || true)"
+case "$post_ready" in ''|*[!0-9]*) post_ready='' ;; esac
+if [ -n "$post_ready" ] && tr '\000' ' ' <"/proc/$post_ready/cmdline" 2>/dev/null | grep -q moon-post-ready.sh; then
+    kill -TERM "-$post_ready" 2>/dev/null || true
+    echo "stopped Moon post-ready stage pid=$post_ready"
+fi
+rm -f /data/local/tmp/moon-boot/post-ready.pid
+
 # Moon mode stopped the Android services it does not use (moon-post-ready.sh).
 # Start exactly those again, from this boot's record only, before the
 # framework looks for them.
