@@ -5,6 +5,11 @@ the Samsung Galaxy A26 (SM-A266M).
 
 ## Current interface
 
+The October 2026 UI polish (iOS-style lock screen, home screen, keyboard,
+transitions, and System app) is documented with before/after captures in
+[`../ui-polish/README.md`](../ui-polish/README.md). The list below describes
+the earlier interface.
+
 - numeric lock screen;
 - minimal app-grid launcher with generated System artwork;
 - exact one-physical-pixel app-icon frame;

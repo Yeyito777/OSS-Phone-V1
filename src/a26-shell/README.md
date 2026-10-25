@@ -2,12 +2,20 @@
 
 `a26-shell` is the first native phone shell/window manager for the Galaxy A26
 research target. Its core UI is toolkit-free: X11 protocol work uses pure-Rust
-`x11rb`, and drawing uses X11 rectangles and an embedded bitmap font. Apps are
+`x11rb`, and drawing uses a small client-side software rasterizer (`gfx.rs`,
+`text.rs`) with the embedded Inter typeface (SIL OFL 1.1,
+`assets/fonts/OFL.txt`). Each surface uploads only the 64-pixel chunks that
+changed since its last frame (`present.rs`), using one-way requests. Apps are
 separate managed processes maintained in their own repositories.
 
 Current features:
 
-- fullscreen numeric lock screen;
+- lock screen with a large clock and date, revealed passcode keypad (tap, swipe
+  up, or type), press highlights, a wrong-passcode shake, and a live lockout
+  countdown;
+- home screen with calendar and battery widgets and a dock;
+- iOS-style icon-to-fullscreen launch and fullscreen-to-icon close zooms;
+- bottom-edge horizontal swipe to switch between apps;
 - salted, hashed six-digit PIN configuration (no plaintext PIN in source);
 - touch-first launcher containing separate **System** and **Browser** apps;
 - app-provided System artwork with a one-pixel launcher frame;
@@ -240,11 +248,29 @@ never present in public state.
 
 Managed apps begin at physical Y=124 rather than drawing underneath the A26's
 camera cutout. Moon owns that 124-pixel strip as a separate override-redirect,
-double-buffered X11 surface: Wi-Fi and battery remain in the left safe region,
-`MOON` remains in the right safe region, and the center cutout region stays
-visually quiet. App height is reduced exactly once. When the global keyboard is
+double-buffered X11 surface: black, so the notch disappears into it, with the
+time in the left safe region, Wi-Fi and battery in the right one, and the
+center cutout region visually quiet. The lock and home screens draw the same
+status content directly over the wallpaper. App height is reduced exactly once. When the global keyboard is
 visible, the app occupies Y=124 through the keyboard's physical top edge, so the
 browser's bottom navigation continues to meet the keyboard with no gap.
+
+## Clock and appearance settings
+
+The clock uses the chroot's local time (`TZ` or `/etc/localtime`). The
+reference Alpine rootfs has no tzdata, which means UTC, so `config.json`
+accepts an optional `"timezone"` (a POSIX rule such as
+`"EST5EDT,M3.2.0,M11.1.0"`, or a zone name once tzdata is installed) and
+`"clock_24h": true`. `generate-config.py` writes them from
+`A26_SHELL_TIMEZONE` and `A26_SHELL_CLOCK_24H=1`. Apps inherit the same `TZ`.
+
+## Off-device preview
+
+`scripts/a26-shell/preview.sh start` builds Moon for the host and runs it on a
+1080x2340 Xvfb display with PIN `123456` and simulated battery/Wi-Fi
+(`MOON_STATUS_ROOT`). Drive it with `preview.sh ctl ...` and capture it with
+`preview.sh shot out.png`. `MOON_PROFILE=1` logs each shell frame's draw and
+upload time.
 
 Development lifecycle from the project root:
 

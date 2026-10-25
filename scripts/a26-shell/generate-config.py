@@ -28,6 +28,13 @@ config = {
     "keyboard_repeat_rate_hz": 45,
     "socket_path": "/run/a26-shell/control.sock",
 }
+# Optional clock settings: A26_SHELL_TIMEZONE is a POSIX TZ rule (for example
+# EST5EDT,M3.2.0,M11.1.0) or a zone name when the rootfs has tzdata.
+timezone = os.environ.get("A26_SHELL_TIMEZONE")
+if timezone:
+    config["timezone"] = timezone
+if os.environ.get("A26_SHELL_CLOCK_24H") == "1":
+    config["clock_24h"] = True
 
 output = pathlib.Path(sys.argv[1])
 output.parent.mkdir(parents=True, exist_ok=True)

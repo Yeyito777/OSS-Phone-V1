@@ -2,17 +2,29 @@ use std::error::Error;
 
 use serde::Serialize;
 use x11rb::connection::Connection;
+use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
+use x11rb::protocol::xproto::{ClipOrdering, Rectangle};
 use x11rb::protocol::xproto::{
-    ChangeGCAux, ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask,
-    Gcontext, InputFocus, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, Keycode, Keysym, PropMode, Rectangle,
-    StackMode, Window, WindowClass,
+    ConfigureWindowAux, ConnectionExt as _, CreateWindowAux, EventMask, InputFocus,
+    KEY_PRESS_EVENT, KEY_RELEASE_EVENT, Keycode, Keysym, PropMode, StackMode, Window, WindowClass,
 };
 use x11rb::protocol::xtest::{self, ConnectionExt as _};
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
 
-use crate::font;
-use crate::ui::{ACCENT, ACCENT_2, BG, BG_CARD, FG, MUTED};
+use crate::gfx::{Canvas, Path, RectF, Rgb};
+use crate::present::Presenter;
+use crate::text::{self, Weight};
+use crate::ui::{BLUE, WHITE};
+
+// iOS dark-appearance keyboard colors.
+const KEYBOARD_BG: Rgb = 0x1c1c1e;
+const LETTER_KEY: Rgb = 0x5a5a5e;
+const FUNCTION_KEY: Rgb = 0x38383b;
+const PRESSED_LETTER_KEY: Rgb = 0x8a8a8f;
+const KEY_RADIUS: f32 = 15.0;
+/// Callouts are a step lighter than the keys so they read above the rows.
+const POPUP_KEY: Rgb = 0x707075;
 
 // Apple does not publish fixed software-keyboard frames. These dimensions use
 // the standard 390-point iPhone portrait keyboard as a proportional reference
@@ -58,7 +70,8 @@ impl KeyboardPurpose {
         match self {
             Self::Url => "GO",
             Self::Search => "SEARCH",
-            Self::Text | Self::Password | Self::Number => "DONE",
+            Self::Text => "RETURN",
+            Self::Password | Self::Number => "DONE",
         }
     }
 }
@@ -171,6 +184,11 @@ impl KeyboardState {
             self.pressed_key_indices.remove(position);
             self.request_redraw();
         }
+    }
+
+    /// The most recently pressed key still held down.
+    pub fn latest_pressed(&self) -> Option<usize> {
+        self.pressed_key_indices.last().copied()
     }
 
     pub fn is_key_pressed(&self, index: usize) -> bool {
@@ -295,13 +313,13 @@ impl KeyRect {
             && y < i32::from(self.y) + i32::from(self.height)
     }
 
-    fn xproto(self) -> Rectangle {
-        Rectangle {
-            x: self.x,
-            y: self.y,
-            width: self.width,
-            height: self.height,
-        }
+    fn rect_f(self) -> RectF {
+        RectF::new(
+            f32::from(self.x),
+            f32::from(self.y),
+            f32::from(self.width),
+            f32::from(self.height),
+        )
     }
 }
 
@@ -656,10 +674,165 @@ impl KeyboardGeometry {
 
 pub struct KeyboardSurface {
     pub window: Window,
-    back_buffer: u32,
-    gc: Gcontext,
+    canvas: Canvas,
+    presenter: Presenter,
     geometry: KeyboardGeometry,
     mapped: bool,
+    popup: Option<KeyPopup>,
+}
+
+/// The enlarged key callout shown above a held character key. It is a
+/// separate shaped window because top-row callouts rise above the keyboard
+/// over the app.
+pub struct KeyPopup {
+    pub window: Window,
+    canvas: Canvas,
+    presenter: Presenter,
+    shown: Option<(i16, i16, String)>,
+}
+
+const POPUP_MAX_WIDTH: u16 = 240;
+const POPUP_MAX_HEIGHT: u16 = 360;
+const POPUP_SIDE: f32 = 26.0;
+const POPUP_GAP: f32 = 12.0;
+
+impl KeyPopup {
+    fn create<C: Connection>(conn: &C, root: Window, depth: u8) -> Result<Self, Box<dyn Error>> {
+        let window = conn.generate_id()?;
+        conn.create_window(
+            COPY_DEPTH_FROM_PARENT,
+            window,
+            root,
+            0,
+            0,
+            POPUP_MAX_WIDTH,
+            POPUP_MAX_HEIGHT,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new()
+                .background_pixel(POPUP_KEY)
+                .override_redirect(1)
+                .event_mask(EventMask::EXPOSURE),
+        )?;
+        Ok(Self {
+            window,
+            canvas: Canvas::new(i32::from(POPUP_MAX_WIDTH), i32::from(POPUP_MAX_HEIGHT)),
+            presenter: Presenter::create(conn, window, depth, POPUP_MAX_WIDTH, POPUP_MAX_HEIGHT)?,
+            shown: None,
+        })
+    }
+
+    fn hide<C: Connection>(&mut self, conn: &C) -> Result<(), Box<dyn Error>> {
+        if self.shown.take().is_some() {
+            conn.unmap_window(self.window)?;
+        }
+        Ok(())
+    }
+
+    /// Shows the callout for `key`, whose rectangle is in root coordinates.
+    fn show<C: Connection>(
+        &mut self,
+        conn: &C,
+        key: RectF,
+        label: &str,
+        screen_width: f32,
+    ) -> Result<(), Box<dyn Error>> {
+        let id = (key.x as i16, key.y as i16, label.to_owned());
+        if self.shown.as_ref() == Some(&id) {
+            return Ok(());
+        }
+        let bubble_w = (key.w + 2.0 * POPUP_SIDE).min(f32::from(POPUP_MAX_WIDTH));
+        let bubble_h = (key.h * 1.12).round();
+        let height = (bubble_h + POPUP_GAP + key.h).min(f32::from(POPUP_MAX_HEIGHT));
+        let x0 = (key.x - POPUP_SIDE).clamp(0.0, (screen_width - bubble_w).max(0.0));
+        let y0 = key.y + key.h - height;
+        let local_key = RectF::new(key.x - x0, height - key.h, key.w, key.h);
+        let mut path = Path::new();
+        path.rounded_rect(RectF::new(0.0, 0.0, bubble_w, bubble_h), 24.0);
+        path.polygon(&[
+            (0.0, bubble_h - 26.0),
+            (bubble_w, bubble_h - 26.0),
+            (local_key.x + local_key.w, local_key.y + 14.0),
+            (local_key.x, local_key.y + 14.0),
+        ]);
+        path.rounded_rect(local_key, KEY_RADIUS);
+        self.canvas.clear(POPUP_KEY);
+        text::draw_centered(
+            &mut self.canvas,
+            label,
+            bubble_w / 2.0,
+            if label.chars().all(|c| c.is_ascii_lowercase()) {
+                bubble_h / 2.0 + 30.0
+            } else {
+                text::centered_baseline(bubble_h / 2.0 + 4.0, Weight::Regular, 96.0)
+            },
+            Weight::Regular,
+            96.0,
+            WHITE,
+            1.0,
+        );
+        let spans = path
+            .rasterize()
+            .map(|(ox, oy, w, h, mask)| mask_spans(ox, oy, w, h, &mask))
+            .unwrap_or_default();
+        conn.configure_window(
+            self.window,
+            &ConfigureWindowAux::new()
+                .x(x0.round() as i32)
+                .y(y0.round() as i32)
+                .width(bubble_w.round() as u32)
+                .height(height.round() as u32)
+                .stack_mode(StackMode::ABOVE),
+        )?;
+        conn.shape_rectangles(
+            SO::SET,
+            SK::BOUNDING,
+            ClipOrdering::Y_SORTED,
+            self.window,
+            0,
+            0,
+            &spans,
+        )?;
+        self.presenter.present(conn, &self.canvas, 0)?;
+        if self.shown.is_none() {
+            conn.map_window(self.window)?;
+        }
+        self.presenter.expose(conn, 0)?;
+        self.shown = Some(id);
+        Ok(())
+    }
+
+    fn destroy<C: Connection>(&self, conn: &C) {
+        let _ = conn.destroy_window(self.window);
+        self.presenter.destroy(conn);
+    }
+}
+
+/// Row spans of the pixels at least half covered by a mask.
+fn mask_spans(ox: i32, oy: i32, width: i32, height: i32, mask: &[u8]) -> Vec<Rectangle> {
+    let mut spans = Vec::new();
+    for y in 0..height {
+        let row = &mask[(y * width) as usize..((y + 1) * width) as usize];
+        let mut x = 0;
+        while x < width {
+            if row[x as usize] < 128 {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < width && row[x as usize] >= 128 {
+                x += 1;
+            }
+            spans.push(Rectangle {
+                x: (ox + start) as i16,
+                y: (oy + y) as i16,
+                width: (x - start) as u16,
+                height: 1,
+            });
+        }
+    }
+    spans
 }
 
 impl KeyboardSurface {
@@ -668,7 +841,13 @@ impl KeyboardSurface {
         root: Window,
         root_depth: u8,
         geometry: KeyboardGeometry,
+        shape_available: bool,
     ) -> Result<Self, Box<dyn Error>> {
+        let popup = if shape_available {
+            Some(KeyPopup::create(conn, root, root_depth)?)
+        } else {
+            None
+        };
         let window = conn.generate_id()?;
         conn.create_window(
             COPY_DEPTH_FROM_PARENT,
@@ -682,7 +861,7 @@ impl KeyboardSurface {
             WindowClass::INPUT_OUTPUT,
             0,
             &CreateWindowAux::new()
-                .background_pixel(BG)
+                .background_pixel(KEYBOARD_BG)
                 .override_redirect(1)
                 .event_mask(EventMask::EXPOSURE | EventMask::STRUCTURE_NOTIFY),
         )?;
@@ -693,23 +872,61 @@ impl KeyboardSurface {
             x11rb::protocol::xproto::AtomEnum::STRING,
             b"moon-keyboard",
         )?;
-        let back_buffer = conn.generate_id()?;
-        conn.create_pixmap(
-            root_depth,
-            back_buffer,
+        let presenter = Presenter::create(
+            conn,
             window,
+            root_depth,
             geometry.screen_width,
             geometry.window_height,
         )?;
-        let gc = conn.generate_id()?;
-        conn.create_gc(gc, window, &CreateGCAux::new().graphics_exposures(0))?;
         Ok(Self {
             window,
-            back_buffer,
-            gc,
+            canvas: Canvas::new(
+                i32::from(geometry.screen_width),
+                i32::from(geometry.window_height),
+            ),
+            presenter,
             geometry,
             mapped: false,
+            popup,
         })
+    }
+
+    pub fn popup_window(&self) -> Option<Window> {
+        self.popup.as_ref().map(|popup| popup.window)
+    }
+
+    fn sync_popup<C: Connection>(
+        &mut self,
+        conn: &C,
+        state: &KeyboardState,
+    ) -> Result<(), Box<dyn Error>> {
+        let Some(popup) = self.popup.as_mut() else {
+            return Ok(());
+        };
+        let keys = self.geometry.keys(state);
+        let letter_width = keys
+            .iter()
+            .find(|key| matches!(key.action, KeyAction::Character(c) if c.is_ascii_alphanumeric()))
+            .map(|key| key.rect.width)
+            .unwrap_or(0);
+        let target = state
+            .latest_pressed()
+            .filter(|_| self.mapped && state.layout() != KeyboardLayout::NumberPad)
+            .and_then(|index| keys.get(index))
+            .filter(|key| {
+                matches!(key.action, KeyAction::Character(_))
+                    && u32::from(key.rect.width) * 4 <= u32::from(letter_width) * 5
+            });
+        match target {
+            Some(key) => {
+                let mut rect = key.rect.rect_f();
+                rect.y += f32::from(self.geometry.window_y);
+                let label = display_label(key, state);
+                popup.show(conn, rect, &label, f32::from(self.geometry.screen_width))
+            }
+            None => popup.hide(conn),
+        }
     }
 
     pub fn sync<C: Connection>(
@@ -720,6 +937,9 @@ impl KeyboardSurface {
     ) -> Result<(), Box<dyn Error>> {
         let should_map = state.is_visible() && active_app.is_some();
         if !should_map {
+            if let Some(popup) = self.popup.as_mut() {
+                popup.hide(conn)?;
+            }
             if self.mapped {
                 conn.unmap_window(self.window)?;
                 self.mapped = false;
@@ -731,7 +951,11 @@ impl KeyboardSurface {
         }
 
         if state.needs_redraw() || !self.mapped {
-            self.render(conn, state)?;
+            self.render(state);
+            self.presenter.present(conn, &self.canvas, 0)?;
+            // Exposures (mapping, restacking) are repaired from the pixmap.
+            self.presenter.expose(conn, 0)?;
+            conn.flush()?;
             state.clear_redraw();
         }
         if !self.mapped {
@@ -747,168 +971,166 @@ impl KeyboardSurface {
                 self.window,
                 &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
             )?;
+            if let Some(popup) = self.popup.as_ref().filter(|popup| popup.shown.is_some()) {
+                conn.configure_window(
+                    popup.window,
+                    &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+                )?;
+            }
             state.clear_raise();
         }
-        Ok(())
+        self.sync_popup(conn, state)
     }
 
     pub fn destroy<C: Connection>(&self, conn: &C) {
+        if let Some(popup) = &self.popup {
+            popup.destroy(conn);
+        }
         let _ = conn.destroy_window(self.window);
-        let _ = conn.free_pixmap(self.back_buffer);
-        let _ = conn.free_gc(self.gc);
+        self.presenter.destroy(conn);
     }
 
-    fn render<C: Connection>(&self, conn: &C, state: &KeyboardState) -> Result<(), Box<dyn Error>> {
-        self.fill(
-            conn,
-            BG,
-            Rectangle {
-                x: 0,
-                y: 0,
-                width: self.geometry.screen_width,
-                height: self.geometry.window_height,
-            },
-        )?;
-        self.fill(
-            conn,
-            ACCENT_2,
-            Rectangle {
-                x: 0,
-                y: 0,
-                width: self.geometry.screen_width,
-                height: 2,
-            },
-        )?;
-
+    fn render(&mut self, state: &KeyboardState) {
+        let canvas = &mut self.canvas;
+        canvas.clear(KEYBOARD_BG);
         for (index, key) in self.geometry.keys(state).into_iter().enumerate() {
-            let pressed = state.is_key_pressed(index);
-            let outline = if pressed {
-                ACCENT
-            } else {
-                match key.action {
-                    KeyAction::Enter => ACCENT,
-                    KeyAction::Shift if state.shift() => ACCENT,
-                    KeyAction::Backspace => MUTED,
-                    _ => ACCENT_2,
+            draw_key(canvas, &key, state, state.is_key_pressed(index));
+        }
+        // Home indicator in the key-free bottom zone, where the global
+        // swipe-up gesture starts.
+        let width = f32::from(self.geometry.screen_width);
+        let height = f32::from(self.geometry.window_height);
+        canvas.fill_rrect(
+            RectF::new(width / 2.0 - 185.0, height - 36.0, 370.0, 14.0),
+            7.0,
+            WHITE,
+            0.9,
+        );
+    }
+}
+
+fn key_style(key: &KeyboardKey, state: &KeyboardState) -> (Rgb, bool) {
+    let purpose = state.purpose().unwrap_or(KeyboardPurpose::Text);
+    match key.action {
+        KeyAction::Character(_) | KeyAction::Space => (LETTER_KEY, true),
+        KeyAction::Enter if purpose != KeyboardPurpose::Text => (BLUE, false),
+        KeyAction::Shift if state.shift() => (WHITE, false),
+        _ if state.layout() == KeyboardLayout::NumberPad => (LETTER_KEY, true),
+        _ => (FUNCTION_KEY, false),
+    }
+}
+
+fn draw_key(canvas: &mut Canvas, key: &KeyboardKey, state: &KeyboardState, pressed: bool) {
+    let rect = key.rect.rect_f();
+    let (base, is_letter) = key_style(key, state);
+    let fill = match (pressed, is_letter, base) {
+        (true, true, _) => PRESSED_LETTER_KEY,
+        (true, false, BLUE) => 0x0060df,
+        (true, false, WHITE) => 0xc7c7cc,
+        (true, false, _) => LETTER_KEY,
+        (false, _, color) => color,
+    };
+    canvas.fill_rrect(
+        RectF::new(rect.x, rect.y + 3.0, rect.w, rect.h),
+        KEY_RADIUS,
+        0x000000,
+        0.55,
+    );
+    canvas.fill_rrect(rect, KEY_RADIUS, fill, 1.0);
+    let (cx, cy) = rect.center();
+    let ink = if fill == WHITE || fill == 0xc7c7cc {
+        0x000000
+    } else {
+        WHITE
+    };
+    match key.action {
+        KeyAction::Shift => draw_shift(canvas, cx, cy, state.shift(), ink),
+        KeyAction::Backspace => draw_delete(canvas, cx, cy, ink),
+        _ => {
+            let label = display_label(key, state);
+            let single = label.chars().count() == 1;
+            let size = if single {
+                if label.chars().all(|c| c.is_ascii_alphabetic()) {
+                    66.0
+                } else {
+                    62.0
                 }
+            } else {
+                44.0
             };
-            self.fill(
-                conn,
-                if pressed { ACCENT_2 } else { BG_CARD },
-                key.rect.xproto(),
-            )?;
-            self.outline(conn, outline, key.rect.xproto(), 3)?;
-            self.center_key_label(
-                conn,
-                key.label,
-                key.rect,
-                if pressed { FG } else { outline },
-            )?;
+            // Lowercase letters center on their x-height, capitals and
+            // symbols on the cap height.
+            let lowercase = single && label.chars().all(|c| c.is_ascii_lowercase());
+            let baseline = if lowercase {
+                cy + size * 0.27
+            } else {
+                text::centered_baseline(cy, Weight::Regular, size)
+            };
+            text::draw_centered(
+                canvas,
+                &label,
+                cx,
+                baseline,
+                Weight::Regular,
+                size,
+                ink,
+                1.0,
+            );
         }
-
-        let cue_width = self.geometry.screen_width.min(260);
-        self.fill(
-            conn,
-            MUTED,
-            Rectangle {
-                x: self.geometry.screen_width.saturating_sub(cue_width) as i16 / 2,
-                y: self.geometry.window_height.saturating_sub(70) as i16,
-                width: cue_width,
-                height: 6,
-            },
-        )?;
-        conn.copy_area(
-            self.back_buffer,
-            self.window,
-            self.gc,
-            0,
-            0,
-            0,
-            0,
-            self.geometry.screen_width,
-            self.geometry.window_height,
-        )?;
-        conn.flush()?;
-        Ok(())
     }
+}
 
-    fn center_key_label<C: Connection>(
-        &self,
-        conn: &C,
-        label: &str,
-        rect: KeyRect,
-        color: u32,
-    ) -> Result<(), Box<dyn Error>> {
-        let character_count = label.chars().count().max(1) as u16;
-        let width_scale = rect
-            .width
-            .saturating_sub(16)
-            .checked_div(character_count.saturating_mul(6))
-            .unwrap_or(1);
-        let height_scale = rect.height.saturating_sub(16) / 7;
-        let scale = width_scale.min(height_scale).clamp(3, 8);
-        let text_width = font::text_width(label, scale);
-        let x = i32::from(rect.x) + i32::from(rect.width.saturating_sub(text_width) / 2);
-        let y = i32::from(rect.y) + i32::from(rect.height.saturating_sub(7 * scale) / 2);
-        let rectangles = font::rectangles(label, x as i16, y as i16, scale);
-        conn.change_gc(self.gc, &ChangeGCAux::new().foreground(color))?;
-        if !rectangles.is_empty() {
-            conn.poly_fill_rectangle(self.back_buffer, self.gc, &rectangles)?;
+fn display_label(key: &KeyboardKey, state: &KeyboardState) -> String {
+    match key.action {
+        KeyAction::Character(c) if c.is_ascii_alphabetic() => {
+            if state.shift() {
+                c.to_ascii_uppercase().to_string()
+            } else {
+                c.to_string()
+            }
         }
-        Ok(())
+        KeyAction::Space => "space".into(),
+        KeyAction::Enter => key.label.to_ascii_lowercase(),
+        _ => key.label.to_owned(),
     }
+}
 
-    fn fill<C: Connection>(
-        &self,
-        conn: &C,
-        color: u32,
-        rect: Rectangle,
-    ) -> Result<(), Box<dyn Error>> {
-        conn.change_gc(self.gc, &ChangeGCAux::new().foreground(color))?;
-        conn.poly_fill_rectangle(self.back_buffer, self.gc, &[rect])?;
-        Ok(())
+fn draw_shift(canvas: &mut Canvas, cx: f32, cy: f32, active: bool, ink: Rgb) {
+    let points = [
+        (cx, cy - 27.0),
+        (cx + 26.0, cy + 1.0),
+        (cx + 12.0, cy + 1.0),
+        (cx + 12.0, cy + 24.0),
+        (cx - 12.0, cy + 24.0),
+        (cx - 12.0, cy + 1.0),
+        (cx - 26.0, cy + 1.0),
+    ];
+    let mut path = Path::new();
+    if active {
+        path.polygon(&points);
+    } else {
+        let mut outline = points.to_vec();
+        outline.push(points[0]);
+        path.stroke_polyline(&outline, 4.5);
     }
+    canvas.fill_path(&path, ink, 1.0);
+}
 
-    fn outline<C: Connection>(
-        &self,
-        conn: &C,
-        color: u32,
-        rect: Rectangle,
-        thickness: u16,
-    ) -> Result<(), Box<dyn Error>> {
-        let thickness = thickness.min(rect.width / 2).min(rect.height / 2);
-        let bottom = i32::from(rect.y) + i32::from(rect.height.saturating_sub(thickness));
-        let right = i32::from(rect.x) + i32::from(rect.width.saturating_sub(thickness));
-        let lines = [
-            Rectangle {
-                x: rect.x,
-                y: rect.y,
-                width: rect.width,
-                height: thickness,
-            },
-            Rectangle {
-                x: rect.x,
-                y: bottom as i16,
-                width: rect.width,
-                height: thickness,
-            },
-            Rectangle {
-                x: rect.x,
-                y: rect.y,
-                width: thickness,
-                height: rect.height,
-            },
-            Rectangle {
-                x: right as i16,
-                y: rect.y,
-                width: thickness,
-                height: rect.height,
-            },
-        ];
-        conn.change_gc(self.gc, &ChangeGCAux::new().foreground(color))?;
-        conn.poly_fill_rectangle(self.back_buffer, self.gc, &lines)?;
-        Ok(())
-    }
+fn draw_delete(canvas: &mut Canvas, cx: f32, cy: f32, ink: Rgb) {
+    let outline = [
+        (cx - 34.0, cy),
+        (cx - 15.0, cy - 22.0),
+        (cx + 32.0, cy - 22.0),
+        (cx + 32.0, cy + 22.0),
+        (cx - 15.0, cy + 22.0),
+        (cx - 34.0, cy),
+    ];
+    let mut path = Path::new();
+    path.stroke_polyline(&outline, 4.5);
+    let (x, y, r) = (cx + 9.0, cy, 9.0);
+    path.stroke_segment((x - r, y - r), (x + r, y + r), 4.5);
+    path.stroke_segment((x - r, y + r), (x + r, y - r), 4.5);
+    canvas.fill_path(&path, ink, 1.0);
 }
 
 pub struct XtestInjector {
@@ -1233,7 +1455,7 @@ mod tests {
     fn submit_labels_match_the_requested_purpose() {
         let geometry = KeyboardGeometry::new(1080, 2340);
         for (purpose, expected) in [
-            (KeyboardPurpose::Text, "DONE"),
+            (KeyboardPurpose::Text, "RETURN"),
             (KeyboardPurpose::Url, "GO"),
             (KeyboardPurpose::Search, "SEARCH"),
             (KeyboardPurpose::Password, "DONE"),
@@ -1331,7 +1553,7 @@ mod tests {
         assert_eq!(rows[2][8].label, "DEL");
         assert_eq!(
             rows[3].iter().map(|key| key.label).collect::<Vec<_>>(),
-            ["123", "SPACE", "DONE"]
+            ["123", "SPACE", "RETURN"]
         );
         assert!(rows[1][0].rect.x > rows[0][0].rect.x);
         assert!(rows[2][0].rect.width > rows[2][1].rect.width);
