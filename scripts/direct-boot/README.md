@@ -16,6 +16,8 @@ the panel is initialized.
 | boot ramdisk | `overlay.d/sbin/moon-fallback.sh` | self-contained "start Android's framework" |
 | /data/adb/moon | `moon-direct-policy.sh` | decides moon / android / legacy for this boot |
 | /data/adb/moon | `moon-boot-supervisor.sh --direct` | display handoff, audio, Moon, liveness monitor |
+| /data/adb/moon | `moon-post-ready.sh --direct` | after Moon is up: Wi-Fi, stopping unused services, network time |
+| /data/adb/moon | `moon-mode-stop.list` | the Android services stopped in Moon mode |
 
 The ramdisk part is deliberately small and fails toward stock Android; the
 policy and supervisor live on /data so they can change without reflashing.
@@ -42,13 +44,23 @@ Magisk v30.7 BOOT image and verifies kernel and magiskinit are byte-identical.
    instead (normal Android boot continues; prefer Volume Up: Volume Down held
    until the framework starts enters Android safe mode). Skipped after a
    deep-suspend resume, whose wake key can be a volume key.
-7. Takeover (`a26-xorg-takeover.sh`): stop bootanim, SurfaceFlinger, composer;
-   native Xorg in the chroot. Then native audio (`moon-permissiond` +
-   `moon-audiod`), then Moon.
+7. Takeover (`a26-xorg-takeover.sh`): stop bootanim, SurfaceFlinger, composer
+   (polling until init reaped them, no fixed sleeps); native Xorg in the
+   chroot. Native audio (`moon-permissiond` + `moon-audiod`) starts alongside
+   Xorg, then Moon.
 8. Moon answers IPC → `start-failures=0`, `moon.session.ready=1`, and
    `sys.boot_completed=1` / `dev.bootcomplete=1` so vendor boot-completed
    actions run (battery driver, zram, thermal, lmkd) and init's critical-crash
-   counting gets its normal time window.
+   counting gets its normal time window. Kernel uptime here: ≈ 21 s.
+9. Detached post-ready stage (`moon-post-ready.sh`), off the critical path:
+   native Wi-Fi (autoconnects to saved networks), then 5 s and 60 s after
+   ready `stop` every running service in `moon-mode-stop.list` (camera,
+   Bluetooth, GPS, biometrics, Knox extras, telemetry, media/DRM, NPU,
+   framework-only daemons; recorded with the boot ID in
+   `/data/local/tmp/moon-boot/stopped-services`), and network time with
+   ntpd once Wi-Fi has a default route (then every 12 h; RTC written in
+   UTC). Kept: display, touch, audio, Wi-Fi, USB, charging, sensors, keys,
+   thermal, keystore/TEE, and the whole cellular/RIL stack.
 
 ## Fallbacks
 
@@ -62,8 +74,20 @@ Magisk v30.7 BOOT image and verifies kernel and magiskinit are byte-identical.
 
 "Restore Android" (`a26-android-graphics-restore.sh`, `moon-fallback.sh`) is
 now simply "start the framework": stop Moon's audio and permission stand-in,
-start composer and SurfaceFlinger again, reset the RescueParty counters, start
-zygote. `moon.boot.mode` becomes `android`.
+start composer and SurfaceFlinger again, end the post-ready stage, start the
+services it stopped, reset the RescueParty counters, start zygote.
+`moon.boot.mode` becomes `android`.
+
+All of these were exercised on the phone on 2026-10-25 (RESEARCH.md),
+including the 240 s deadline and three consecutive failures.
+
+## Flashing and measuring
+
+* `flash-boot-inplace.sh IMAGE` writes a BOOT image from the running OS
+  (checks, backups, verified read-back); see `notes/direct-boot/RESCUE.md`.
+  Download mode is only for an image that does not boot.
+* `measure-boot.sh [N]` reboots N times and prints the kernel uptime of each
+  critical-path stage up to `moon.session.ready`.
 
 ## Controls
 

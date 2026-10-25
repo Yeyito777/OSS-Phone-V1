@@ -120,7 +120,8 @@ scripts/a26-shell/autostart.sh status
 
 With the direct-boot BOOT image (`scripts/direct-boot/`), Android's init still
 brings the hardware up but the Java framework never starts: Moon is on screen
-about half a minute after power-on, and pressing a volume key while the boot
+about 21 s after the kernel starts (Wi-Fi, network time and trimming unused
+Android services follow in the background), and pressing a volume key while the boot
 animation shows starts normal Android instead. Without that image, the Magisk
 `service.d` entry waits for Android to finish booting, suspends the framework,
 then performs the same proven DRM handoff. Either way the supervisor verifies
