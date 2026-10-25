@@ -90,8 +90,16 @@ frame while dark before restoring touch and brightness. Any preparation or
 hardware error rolls back to an awake locked state and is exposed as a fixed
 error code in `state.suspend`, never as a half-completed transition.
 
-By default that transaction is the whole screen-off: Moon, Xorg and apps stay
-resident and the power key wakes the panel instantly. Deep suspend below is
+By default that transaction ends by powering the panel and display pipeline
+down through Xorg's DPMS extension (`display_power.rs`): the panel sleeps and
+loses its regulators and DECON/DSIM runtime-suspend, which cuts the screen-off
+drain from about 200 mA to about 35 mA. Wake forces DPMS on first (about
+100 ms), so the lock frame rendered while dark is what the panel shows, then
+restores touch and brightness. Moon, Xorg and apps stay resident. DPMS only
+toggles the CRTC's active state; a full modeset (`xrandr --off`, a mode
+change) cannot be undone in place on this firmware and is never used. If
+Xorg offers no DPMS (the A26 config must not set `Option "DPMS" "false"`;
+`install-autostart.sh` fixes it), screen-off falls back to backlight-only. Deep suspend below is
 opt-in with `"deep_suspend": true` in `config.json`, because its wake path is a
 warm reboot.
 

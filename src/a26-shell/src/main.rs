@@ -2,6 +2,7 @@ mod apps;
 mod audio;
 mod clock;
 mod config;
+mod display_power;
 mod freezer;
 mod gfx;
 mod input;
@@ -29,6 +30,7 @@ use std::time::{Duration, Instant};
 use apps::{AppRegistry, RegistryUpdate, WindowVisibility};
 use audio::AudioVolume;
 use config::Config;
+use display_power::DisplayPower;
 use input::{Backlight, PowerKey, TouchscreenPower, VolumeKey, VolumeKeys};
 use ipc::{Command, IpcServer};
 use keyboard::{KeyboardEffect, KeyboardGeometry, KeyboardSurface, XtestInjector};
@@ -37,8 +39,9 @@ use status_bar::StatusBarSurface;
 use suspend::{PersistedSuspendState, PlatformSuspend, SuspendAction, SuspendCoordinator};
 use ui::{KeypadAction, Renderer, StatusInfo};
 use volume::VolumeSurface;
-use x11rb::connection::Connection;
+use x11rb::connection::{Connection, RequestConnection as _};
 use x11rb::protocol::Event;
+use x11rb::protocol::dpms::{self, ConnectionExt as _};
 use x11rb::protocol::xfixes::ConnectionExt as _;
 use x11rb::protocol::xinput::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
@@ -189,6 +192,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     // only reliable wake because they happened to be X events).
     conn.set_screen_saver(0, 0, Blanking::DEFAULT, Exposures::DEFAULT)?
         .check()?;
+    // Screen-off powers the panel down through DPMS when Xorg offers it (the
+    // A26 config must not set Option "DPMS" "false"). Zero Xorg's own DPMS
+    // timers, wake a panel a previous Moon left off, then disable DPMS until
+    // a screen-off transaction asks for it. Deep suspend keeps its own
+    // display handoff, so it does not use this path.
+    let dpms_available = !config.deep_suspend
+        && conn
+            .extension_information(dpms::X11_EXTENSION_NAME)?
+            .is_some()
+        && conn.dpms_capable()?.reply()?.capable;
+    if dpms_available {
+        conn.dpms_set_timeouts(0, 0, 0)?.check()?;
+        conn.dpms_enable()?.check()?;
+        conn.dpms_force_level(dpms::DPMSMode::ON)?.check()?;
+        conn.dpms_disable()?.check()?;
+    }
+    let display_power = DisplayPower::new(dpms_available);
+    eprintln!(
+        "screen-off panel power: {}",
+        if dpms_available {
+            "DPMS"
+        } else {
+            "backlight only"
+        }
+    );
     let raw_touch_mask = xinput::XIEventMask::RAW_TOUCH_BEGIN
         | xinput::XIEventMask::RAW_TOUCH_UPDATE
         | xinput::XIEventMask::RAW_TOUCH_END;
@@ -680,11 +708,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 } else {
                     // The lock frame and every app unmap are already flushed.
                     // Only then may device-local hardware be powered down.
-                    let result = power_down_display(&mut backlight, touchscreen.as_ref());
+                    let result = power_down_display(
+                        &conn,
+                        &display_power,
+                        &mut backlight,
+                        touchscreen.as_ref(),
+                    );
                     match result {
                         Ok(()) => suspend_coordinator.complete_sleep(),
                         Err(code) => {
                             eprintln!("screen-off transaction failed: {code}");
+                            let _ = display_power.on(&conn);
                             if let Some(device) = touchscreen.as_ref() {
                                 let _ = device.on();
                             }
@@ -709,7 +743,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 renderer.render(&conn, &state)?;
                 state.redraw = false;
                 conn.flush()?;
-                match power_up_display(backlight.as_ref(), touchscreen.as_ref()) {
+                match power_up_display(
+                    &conn,
+                    &display_power,
+                    backlight.as_ref(),
+                    touchscreen.as_ref(),
+                ) {
                     Ok(()) => suspend_coordinator.complete_wake(),
                     Err(code) => {
                         eprintln!("screen-on transaction failed: {code}");
@@ -741,7 +780,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     Err(error) => {
                         eprintln!("deep suspend handoff failed: {error}");
                         state.screen_on();
-                        let _ = power_up_display(backlight.as_ref(), touchscreen.as_ref());
+                        let _ = power_up_display(
+                            &conn,
+                            &display_power,
+                            backlight.as_ref(),
+                            touchscreen.as_ref(),
+                        );
                         suspend_coordinator.fail_wake("deep_suspend_handoff_failed");
                     }
                 }
@@ -788,6 +832,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !state.screen_awake {
         state.screen_on();
         let _ = renderer.render(&conn, &state);
+        let _ = display_power.on(&conn);
         if let Some(device) = touchscreen.as_ref() {
             let _ = device.on();
         }
@@ -846,7 +891,9 @@ fn safe_to_power_down(state: &ShellState, apps: &AppRegistry) -> bool {
         && apps.active().is_none()
 }
 
-fn power_down_display(
+fn power_down_display<C: Connection>(
+    conn: &C,
+    display: &DisplayPower,
     backlight: &mut Option<Backlight>,
     touchscreen: Option<&TouchscreenPower>,
 ) -> Result<(), &'static str> {
@@ -857,13 +904,20 @@ fn power_down_display(
     let Some(touchscreen) = touchscreen else {
         return Err("touchscreen_unavailable");
     };
-    touchscreen.off().map_err(|_| "touchscreen_sleep_failed")
+    touchscreen.off().map_err(|_| "touchscreen_sleep_failed")?;
+    // Last: the panel, DSI and DECON power down behind a dark, inert screen.
+    display.off(conn).map_err(|_| "display_sleep_failed")
 }
 
-fn power_up_display(
+fn power_up_display<C: Connection>(
+    conn: &C,
+    display: &DisplayPower,
     backlight: Option<&Backlight>,
     touchscreen: Option<&TouchscreenPower>,
 ) -> Result<(), &'static str> {
+    // First: the panel powers up and scans out the lock frame that was
+    // already rendered; brightness and touch follow.
+    display.on(conn).map_err(|_| "display_wake_failed")?;
     let Some(touchscreen) = touchscreen else {
         return Err("touchscreen_unavailable");
     };

@@ -172,7 +172,23 @@ calls VaultKeeper every few seconds, and VaultKeeper fails to reach PA
 (`PA_TZ_LIB ... driver open`) whether or not `proca` runs. The trim does not
 change it, and it is left alone as part of the RIL family.
 
-**Battery, screen off.** Measured on battery by suspending the charger input
+**Update, same day: real screen-off through DPMS.** The failure above was a
+*modeset*, which this driver rejects outside Samsung's seamless path. DPMS is a
+different commit: it only toggles the CRTC's `active` state. Xorg's A26 config
+had `Option "DPMS" "false"`, hiding the extension; with it enabled, DPMS Off
+runs `mcd_drm_panel_disable` (panel sleep-in) → `decon_disable` →
+`dsim_atomic_disable` → `panel_power_off` (regulators `LCD_DDI_VCI` and
+`vdd_ldo23` off), and DECON/DSIM runtime-suspend. DPMS On reverses it
+(`panel_power_on`, sleep-out, init 103 ms, `panel_display_on_seq done`) and
+DECON resumes at 120 Hz. Moon now uses it for screen-off (`display_power.rs`,
+stock kernel, no reboot): 20/20 off/on cycles through the power-key path,
+panel back 60–110 ms after the request, a 10-minute off soak with DECON at 0
+interrupts throughout, and screen-off drain **≈ 35 mA** (180 s on battery)
+instead of ≈ 193–218 mA; the locked screen at brightness 128 draws ≈ 77 mA.
+Deep suspend (opt-in) keeps its own `xrandr --off` handoff and does not use
+DPMS.
+
+**Battery, screen off (before DPMS).** Measured on battery by suspending the charger input
 (`batt_slate_mode=1`, auto-reset by a phone-side timer): ≈ 193–218 mA.
 Moon's screen-off only zeroes the backlight, so DECON/DSIM/DPP keep scanning
 out at 120 Hz (≈ 190 IRQ/s each, plus `fast_switch_pos` and ACPM IPC). A test

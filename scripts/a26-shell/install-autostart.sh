@@ -169,6 +169,14 @@ EOF
     chmod 0600 /data/adb/moon/config
 fi
 
+# Moon powers the panel down through DPMS on screen-off; an Xorg config that
+# disables DPMS would hide the extension and leave the panel refreshing.
+XCONF=/data/local/a26-linux/etc/X11/xorg.conf.d/20-a26.conf
+if [ -f "$XCONF" ] && grep -q "\"DPMS\" \"false\"" "$XCONF"; then
+    cp -p "$XCONF" /data/adb/moon/20-a26.conf.dpms-false
+    sed -i "s/\"DPMS\" \"false\"/\"DPMS\" \"true\"/" "$XCONF"
+fi
+
 rm -f /data/adb/moon/disabled
 rm -f \
     /data/local/tmp/moon-boot-supervisor.sh \
