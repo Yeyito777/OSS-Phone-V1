@@ -1,11 +1,14 @@
-# A26 Shell
+# OSS-Phone-V1
 
-An experimental touch-first X11 phone shell and window manager written in Rust
-for the Samsung Galaxy A26.
+An open-source phone operating system for the Samsung Galaxy A26. Android's
+kernel and native hardware services stay underneath, but the display, input,
+audio, and power policy are handed to a Linux userspace: an Alpine rootfs
+running native Xorg and **Moon**, a touch-first phone shell and window manager
+written in Rust (`a26-shell`).
 
-![A26 Shell launcher](notes/a26-shell/launcher-redesign.png)
+![Moon launcher](notes/a26-shell/launcher-redesign.png)
 
-A26 Shell runs directly on the phone's native Xorg session. It currently
+Moon runs directly on the phone's native Xorg session. It currently
 provides a numeric lock screen, a minimal app launcher, external X11 app
 lifecycle management, one-finger app-closing gestures, physical power/volume
 key policy, and a root-only Unix-socket control interface over ADB.
