@@ -96,6 +96,19 @@ echo "surfaceflinger=$(pidof surfaceflinger 2>/dev/null || true)"
 echo "hwcomposer=$(pidof android.hardware.graphics.composer@2.4-service 2>/dev/null || true)"
 echo "ExynosHWCServiceTW=$(pidof vendor.samsung_slsi.hardware.ExynosHWCServiceTW@1.0-service 2>/dev/null || true)"
 
+# Moon mode stopped the Android services it does not use (moon-post-ready.sh).
+# Start exactly those again, from this boot's record only, before the
+# framework looks for them.
+STOPPED=/data/local/tmp/moon-boot/stopped-services
+boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+if [ -r "$STOPPED" ] && [ "$(sed -n 1p "$STOPPED")" = "boot_id=$boot_id" ]; then
+    for service in $(sed 1d "$STOPPED"); do
+        /system/bin/start "$service" 2>/dev/null || true
+    done
+    echo "restarted Moon-mode services: $(sed 1d "$STOPPED" | tr '\n' ' ')"
+fi
+rm -f "$STOPPED"
+
 # Resume the Java framework only after the composer and SurfaceFlinger are
 # available.  Starting zygote recreates system_server; the secondary zygote is
 # needed for 32-bit applications on this firmware. Reset RescueParty's

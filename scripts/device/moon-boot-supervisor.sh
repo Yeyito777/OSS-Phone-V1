@@ -25,7 +25,7 @@ fi
 exec </dev/null >>"$LOG" 2>&1
 
 log() {
-    echo "moon-boot: $* [$(date --iso-8601=seconds 2>/dev/null || date)]"
+    echo "moon-boot: $* [$(date --iso-8601=seconds 2>/dev/null || date) up=$(cut -d' ' -f1 /proc/uptime)]"
 }
 
 read_uint() {
@@ -276,30 +276,44 @@ log "starting autonomous takeover token=$token attempt=$failures"
     /data/local/tmp/a26-xorg-takeover.sh "$token" \
     >/dev/null 2>&1 </dev/null &
 
+# Native audio (AAudio plus Moon's "permission" stand-in) needs no framework,
+# only that it is gone so the stand-in is the registered service. On a direct
+# boot it never ran, so audio starts alongside Xorg; the legacy path starts it
+# after the takeover stopped the framework. Moon reads the volume file it
+# creates at startup, and still runs without audio.
+audio_pid=''
+if [ "$DIRECT" = 1 ]; then
+    /system/bin/sh "$PERSIST/moon-audio-start.sh" &
+    audio_pid=$!
+fi
+finish_audio_start() {
+    audio_ok=0
+    if [ -n "$audio_pid" ]; then
+        wait "$audio_pid" && audio_ok=1
+        audio_pid=''
+    fi
+}
+
 xorg_ready=0
-for _ in $($BB seq 1 100); do
+for _ in $($BB seq 1 500); do
     status="$(cat "$ROOT/root/xorg-session.status" 2>/dev/null || true)"
-    if echo "$status" | grep -q '^XORG_READY=1$'; then
-        xorg_ready=1
-        break
-    fi
-    if echo "$status" | grep -q '^XORG_READY=0$'; then
-        break
-    fi
-    sleep 1
+    case "$status" in
+        XORG_READY=1*) xorg_ready=1; break ;;
+        XORG_READY=0*) break ;;
+    esac
+    "$BB" sleep 0.2
 done
 if [ "$xorg_ready" != 1 ]; then
     log 'Xorg readiness was not proven; restoring Android'
+    finish_audio_start
     /system/bin/sh /data/local/tmp/a26-android-graphics-restore.sh
     exit 30
 fi
 echo "$token" >"$XORG_STATE/keep-token"
 log "Xorg ready pid=$(pidof Xorg 2>/dev/null || true); safety token committed locally"
 
-# Native audio (AAudio plus Moon's "permission" stand-in) needs no framework;
-# start it once the framework is gone so the stand-in is registered. Moon reads
-# the volume file it creates at startup. Moon still runs without audio.
-if /system/bin/sh "$PERSIST/moon-audio-start.sh"; then
+finish_audio_start
+if [ "$audio_ok" = 1 ] || /system/bin/sh "$PERSIST/moon-audio-start.sh"; then
     log "audio ready pid=$(cat /data/local/tmp/moon-audio/bridge.pid 2>/dev/null || true)"
 else
     log 'native audio did not become ready; continuing without audio'
@@ -455,6 +469,14 @@ if [ "$DIRECT" = 1 ]; then
         setprop dev.bootcomplete 1
         log 'reported boot completion for the native session'
     fi
+fi
+# Everything not needed to show the lock screen (Wi-Fi, trimming Android
+# services, network time) runs detached from here on.
+if [ -x "$PERSIST/moon-post-ready.sh" ]; then
+    post_ready_mode=''
+    [ "$DIRECT" = 0 ] || post_ready_mode=--direct
+    "$BB" nohup "$BB" setsid /system/bin/sh "$PERSIST/moon-post-ready.sh" $post_ready_mode \
+        >/dev/null 2>&1 </dev/null &
 fi
 
 shell_unhealthy=0

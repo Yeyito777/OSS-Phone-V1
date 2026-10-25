@@ -12,6 +12,7 @@ AUDIOD_DIR="$PROJECT_ROOT/images/moon-audiod"
 for script in \
     "$PROJECT_ROOT/scripts/device/moon-boot-supervisor.sh" \
     "$PROJECT_ROOT/scripts/device/moon-direct-policy.sh" \
+    "$PROJECT_ROOT/scripts/device/moon-post-ready.sh" \
     "$PROJECT_ROOT/scripts/device/moon-audio-start.sh" \
     "$PROJECT_ROOT/scripts/device/moon-audio-stop.sh" \
     "$PROJECT_ROOT/scripts/device/moon-suspend-cycle.sh" \
@@ -38,6 +39,10 @@ adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-suspend-cycle.sh" \
     /data/local/tmp/moon-suspend-cycle.sh >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-direct-policy.sh" \
     /data/local/tmp/moon-direct-policy.sh >/dev/null
+adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-post-ready.sh" \
+    /data/local/tmp/moon-post-ready.sh >/dev/null
+adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-mode-stop.list" \
+    /data/local/tmp/moon-mode-stop.list >/dev/null
 adb -s "$SERIAL" push "$AUDIOD_DIR/moon-audiod" \
     /data/local/tmp/moon-audiod >/dev/null
 adb -s "$SERIAL" push "$AUDIOD_DIR/moon-permissiond" \
@@ -73,6 +78,10 @@ cp /data/local/tmp/moon-suspend-cycle.sh \
     /data/adb/moon/moon-suspend-cycle.sh.new
 cp /data/local/tmp/moon-direct-policy.sh \
     /data/adb/moon/moon-direct-policy.sh.new
+cp /data/local/tmp/moon-post-ready.sh \
+    /data/adb/moon/moon-post-ready.sh.new
+cp /data/local/tmp/moon-mode-stop.list \
+    /data/adb/moon/moon-mode-stop.list.new
 cp /data/local/tmp/moon-audiod \
     /data/local/a26-linux/opt/a26-audio/moon-audiod.new
 cp /data/local/tmp/moon-permissiond \
@@ -95,6 +104,8 @@ chown 0:0 \
     /data/adb/moon/moon-audio-stop.sh.new \
     /data/adb/moon/moon-suspend-cycle.sh.new \
     /data/adb/moon/moon-direct-policy.sh.new \
+    /data/adb/moon/moon-post-ready.sh.new \
+    /data/adb/moon/moon-mode-stop.list.new \
     /data/local/a26-linux/opt/a26-audio/moon-audiod.new \
     /data/local/a26-linux/opt/a26-audio/moon-permissiond.new \
     /data/local/a26-linux/a26-enter-chroot.sh.new \
@@ -107,7 +118,9 @@ chmod 0700 \
     /data/adb/moon/moon-audio-start.sh.new \
     /data/adb/moon/moon-audio-stop.sh.new \
     /data/adb/moon/moon-suspend-cycle.sh.new \
-    /data/adb/moon/moon-direct-policy.sh.new
+    /data/adb/moon/moon-direct-policy.sh.new \
+    /data/adb/moon/moon-post-ready.sh.new
+chmod 0600 /data/adb/moon/moon-mode-stop.list.new
 chmod 0755 \
     /data/local/a26-linux/opt/a26-audio/moon-audiod.new \
     /data/local/a26-linux/opt/a26-audio/moon-permissiond.new
@@ -131,6 +144,10 @@ mv -f /data/adb/moon/moon-suspend-cycle.sh.new \
     /data/adb/moon/moon-suspend-cycle.sh
 mv -f /data/adb/moon/moon-direct-policy.sh.new \
     /data/adb/moon/moon-direct-policy.sh
+mv -f /data/adb/moon/moon-post-ready.sh.new \
+    /data/adb/moon/moon-post-ready.sh
+mv -f /data/adb/moon/moon-mode-stop.list.new \
+    /data/adb/moon/moon-mode-stop.list
 mv -f /data/local/a26-linux/opt/a26-audio/moon-audiod.new \
     /data/local/a26-linux/opt/a26-audio/moon-audiod
 mv -f /data/local/a26-linux/opt/a26-audio/moon-permissiond.new \
@@ -160,6 +177,8 @@ rm -f \
     /data/local/tmp/moon-audio-stop.sh \
     /data/local/tmp/moon-suspend-cycle.sh \
     /data/local/tmp/moon-direct-policy.sh \
+    /data/local/tmp/moon-post-ready.sh \
+    /data/local/tmp/moon-mode-stop.list \
     /data/local/tmp/moon-audiod \
     /data/local/tmp/moon-permissiond \
     /data/local/tmp/a26-enter-chroot.sh.new \
@@ -175,6 +194,8 @@ ls -lZ \
     /data/adb/moon/moon-audio-stop.sh \
     /data/adb/moon/moon-suspend-cycle.sh \
     /data/adb/moon/moon-direct-policy.sh \
+    /data/adb/moon/moon-post-ready.sh \
+    /data/adb/moon/moon-mode-stop.list \
     /data/local/a26-linux/opt/a26-audio/moon-audiod \
     /data/local/a26-linux/opt/a26-audio/moon-permissiond \
     /data/adb/moon/config

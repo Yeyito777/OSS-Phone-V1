@@ -1,0 +1,61 @@
+# Android init services stopped in direct-boot Moon mode, about 5 s and again
+# 60 s after Moon is ready (moon-post-ready.sh). Each one is stopped only if it
+# is running, recorded in /data/local/tmp/moon-boot/stopped-services, and
+# started again by a26-android-graphics-restore.sh before the framework starts.
+# Nothing here is on a partition: Android boots exactly as stock.
+#
+# Kept on purpose: display/GPU, touch/input, audio (incl. its log/dump HALs),
+# Wi-Fi (HALs, wificond, wlbtd), USB/adb, health/charging, sensors, thermal,
+# power/perf HALs, vibrator/lights, keystore/keymint/gatekeeper and the TEE
+# daemons, netd, logd/lmkd/vold/watchdogd, and the whole cellular stack
+# (cpboot-daemon, ril-daemon, multiclient-daemon, imsd and the RIL rc's
+# BCS/DIAG/DR/SMD/Memlogger daemons, cass). vaultkeeper and vaultkeeper_aidl
+# stay because cass exits (and init restarts it every 15 s) without them.
+
+# Camera
+cameraserver
+sec-camera-provider-4-0
+# Bluetooth (the Wi-Fi/BT combo's wlbtd stays)
+vendor.bluetooth-1-0
+# GPS
+gpsd
+sec_gnss_service
+# Fingerprint and face unlock
+vendor.fps_hal
+sec-biometrics-face-aidl
+# Knox and Samsung security extras that only the framework uses
+proca
+fabric_crypto
+spqr_service
+drk_hal
+engmode_hal
+hdcp_hal
+# Samsung diagnostics, telemetry and framework-side helpers
+argos-daemon
+ewlogd
+kumihodecoder
+speg_helper
+statsd
+incidentd
+storaged
+traced
+traced_probes
+# Media codecs and DRM (Moon's apps decode in the Linux userspace; audio is
+# audioserver + the audio HALs, which stay)
+media
+mediaextractor
+media.swcodec
+vendor.media.omx
+android-hardware-media-c2-hal-1-0
+samsung-software-media-c2-hal-1-0
+drm
+mediadrm
+vendor.drm-clearkey-hal-1-4
+vendor.drm-widevine-hal-1-4
+# NPU runtime
+eden_runtime
+neuralnetworks_hal_service_eden_drv
+# Framework-only daemons
+installd
+idmap2d
+credstore

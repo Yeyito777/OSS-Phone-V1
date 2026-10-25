@@ -8,7 +8,8 @@ TOKEN="${1:-xorg-takeover-$(date +%s)-$$}"
 mkdir -p "$STATE"
 exec </dev/null >>"$LOG" 2>&1
 
-echo "takeover begin token=$TOKEN $(date --iso-8601=seconds 2>/dev/null || date)"
+uptime_now() { cut -d' ' -f1 /proc/uptime; }
+echo "takeover begin token=$TOKEN $(date --iso-8601=seconds 2>/dev/null || date) up=$(uptime_now)"
 
 if [ -n "$(pidof Xorg 2>/dev/null || true)" ]; then
     echo "Xorg is already running"
@@ -72,21 +73,48 @@ case "$(getprop sys.usb.config)" in
         ;;
 esac
 
-# A direct boot gets here with the boot animation still playing.
+# Wait (100 ms polls, bounded) until init has reaped every named service.
+wait_stopped() {
+    limit=$1
+    shift
+    for _ in $(seq 1 "$limit"); do
+        pending=''
+        for service in "$@"; do
+            case "$(getprop "init.svc.$service")" in
+                stopped|'') ;;
+                *) pending=1 ;;
+            esac
+        done
+        [ -n "$pending" ] || return 0
+        sleep 0.1
+    done
+    echo "still stopping after $((limit / 10)) s: $*"
+}
+card_in_use() {
+    /system/bin/toybox lsof /dev/dri/card0 2>/dev/null | grep -q /dev/dri/card0
+}
+
+# A direct boot gets here with the boot animation still playing. SurfaceFlinger
+# must be gone before its composer is stopped.
 /system/bin/stop bootanim
 /system/bin/stop surfaceflinger
-sleep 2
+wait_stopped 20 surfaceflinger bootanim
 /system/bin/stop vendor.hwcomposer-2-4
 /system/bin/stop ExynosHWCServiceTW
-sleep 3
+wait_stopped 30 vendor.hwcomposer-2-4 ExynosHWCServiceTW
+for _ in $(seq 1 10); do
+    card_in_use || break
+    sleep 0.2
+done
+echo "graphics services stopped up=$(uptime_now)"
 
-if /system/bin/toybox lsof /dev/dri/card0 2>/dev/null | grep -q /dev/dri/card0; then
+if card_in_use; then
     echo "DRM card still open after graphics handoff"
     /system/bin/toybox lsof /dev/dri/card0 2>/dev/null || true
     exit 30
 fi
 
-echo "DRM card released; entering Alpine Xorg supervisor"
+echo "DRM card released; entering Alpine Xorg supervisor up=$(uptime_now)"
 A26_ROOT="$ROOT" A26_BUSYBOX="$ROOT/busybox.static" \
     /system/bin/sh "$ROOT/a26-enter-chroot.sh" \
     /usr/local/sbin/a26-xorg-persistent-session
