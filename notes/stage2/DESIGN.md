@@ -1,301 +1,242 @@
-# Stage 2: OSS Phone's own init as PID 1 — research, design, and groundwork
+# Stage 2: OSS Phone's own init as PID 1, Android contained
 
 Device: SM-A266M (a26xs), Exynos 1280 / s5e8825, Android 15, firmware
-A266MUBU1AYB8, Samsung GKI kernel 5.10.223-android12-9. Written 2026-10-25.
-No flashing was done; all device evidence is from read-only adb (serial
-R5CY323ES7X) and the research workspace on `whale`.
+A266MUBU1AYB8. Updated 2026-10-25 after the OSS Phone kernel landed. No flashing
+was done; device evidence is from read-only adb (R5CY323ES7X) and the research
+workspace on `whale`.
 
 ## 0. TL;DR
 
-The canonical "Linux-first" goal — **our init as the real PID 1 with Android's
-init (first and second stage) contained in its own PID/mount namespace** — is
-**not achievable on this device's stock kernel**, and not safely testable
-tonight. The kernel is built with `# CONFIG_PID_NS is not set` and
-`# CONFIG_USER_NS is not set` (verified below), so the container model that
-Halium/Droidian/Ubuntu Touch use literally cannot be constructed, and Samsung's
-RKP/KDP/DEFEX/PROCA/FIVE stack is designed to kill exactly the kind of
-unsigned PID-1-over-vendor arrangement this would require. The research
-workspace already proved this empirically: every native-PID-1 supervisor
-(v5k–v5n) died; the pre-init wrapper that execs the exact stock init (v6a–v6c)
-succeeded and even kept a persistent root process alive.
+The earlier blocker — the stock kernel lacked `CONFIG_PID_NS` — is **resolved**.
+The kernel agent built the OSS Phone kernel from Samsung's source with
+`CONFIG_PID_NS=y`, `CONFIG_DEVTMPFS=y`, and `CONFIG_SECURITY_DEFEX` removed,
+proving all 306 vendor modules still match CRCs/vermagic and 274 rebuild
+byte-identical (`scripts/kernel`, branch `kernel`, image
+`boot-oss-mirror-A266MUBU1AYB8.img` sha256 `8c0461ee…`).
 
-So stage 2 delivers the **safe, real, incremental step** that is worth taking
-now and is the correct foundation for the long-term goal: **`oss-pid1`**, OSS
-Phone's own tiny PID-1 pre-init. The kernel execs *our* binary as PID 1; it
-owns the first userspace instant, then chain-loads the proven stage-1 boot
-(magiskinit → stock init → Moon) and falls back to stock Android init if
-anything goes wrong. PID 1 now belongs to OSS Phone, with a boot that is
-bit-for-bit today's boot on the happy path and a normal Android boot on the
-failure path. Full Linux-first containment is scoped as a separate
-custom-kernel effort (§6).
+With PID namespaces available, the canonical goal is now implementable and is
+implemented: **`oss-init`**, OSS Phone's own init, runs as the **real PID 1**
+and stays PID 1 for the life of the system. It runs Android's entire init
+(first + second stage, via the existing magiskinit → stock-init → Moon stack)
+as its child inside a **new PID + mount namespace**, so Android init sees
+`getpid()==1` in its own namespace and performs Samsung's full, proven hardware
+bring-up unchanged. OSS Phone owns the real init seat; Android is contained.
+
+The **iron rule** holds at every layer: any failure in our path leaves the
+phone booting exactly as today (setup failure → exec the stock stack as real
+PID 1; container crash / early death → fresh uncontained boot; container hang →
+kill + uncontained boot; intentional reboot → performed for real). The four
+paths were validated under real Linux PID+mount namespaces on whale (§5.5). The
+image is built and **not flashed**; the on-device unknowns (SELinux enforcement
+on our PID 1, full Android boot as a namespaced init, relay survival across
+switch_root) are what the attended morning test resolves.
 
 ## 1. What PID 1 does today (stage 1), from evidence
 
 - The ramdisk `/init` is **magiskinit** (Magisk v30.7). It runs only when
-  `getpid() == 1` (Magisk `native/src/init/init.rs:188`), does Magisk's
-  first-stage work, restores the stock init from `.backup/init.xz`, and execs
-  it. The real stock Android init then becomes PID 1 (execve preserves the PID)
-  and performs Samsung's full bring-up.
-- Android init brings up **306 kernel modules** (`/proc/modules`) and **~105
-  init services**, including ueventd/coldboot, first-stage mounts, the SELinux
-  policy load, the property service, firmware, adbd/USB, charging, and the
-  watchdog pet loop.
-- The **hardware watchdog** is `s3c2410_wdt` at `10060000.watchdog_cl0`,
-  exposed as `/dev/watchdog0`. The bootloader arms it
-  (`s3c2410_wdt.tmr_atboot=1` on the kernel cmdline) and a stock init service
-  pets it: `service watchdogd /system/bin/watchdogd 10 20` (class `core`,
-  `/vendor/etc/init/init.s5e8825.rc:1013`), started early at
-  `init.s5e8825.rc:197`. `watchdogd` opens `/dev/watchdog0`, sets a 30 s timer
-  and pets every 10 s. **Nothing but stock init/watchdogd pets this device's
-  watchdog**, which is why anything that replaces init must either run
-  watchdogd's equivalent within a few seconds or keep stock init in charge.
-- The direct-boot overlay (`scripts/direct-boot/`) adds init rc that stops
-  zygote in Moon mode and starts the Moon supervisor; Moon is on screen ≈34 s
-  after the kernel starts.
+  `getpid()==1` (Magisk `init.rs:188`), does first-stage work, restores the
+  stock init from `.backup/init.xz`, and execs it. Stock Android init then
+  becomes PID 1 and does the full bring-up.
+- Android brings up **306 modules** and **~105 init services**: ueventd/coldboot,
+  first-stage mounts, SELinux policy load, the property service, firmware,
+  adbd/USB, charging, and the watchdog.
+- The **hardware watchdog** `s3c2410_wdt` (`/dev/watchdog0`, `10060000.watchdog_cl0`)
+  is armed by the bootloader (`s3c2410_wdt.tmr_atboot=1`) and petted by
+  `service watchdogd /system/bin/watchdogd 10 20` (class `core`,
+  `init.s5e8825.rc:1013`, started at `:197`). Only stock init/watchdogd pets it.
+- The direct-boot overlay stops zygote in Moon mode and starts Moon ≈34 s after
+  the kernel.
 
-## 2. Question 1 — can Android init run contained while our init is PID 1?
+## 2. The kernel blocker and how it was removed
 
-**Answer: no, not on the stock kernel.** The pieces, with evidence:
+The stage-1 analysis found three kernel facts that made containment impossible:
+`# CONFIG_PID_NS is not set`, `# CONFIG_USER_NS is not set`,
+`# CONFIG_DEVTMPFS is not set`, plus Samsung's RKP/KDP/DEFEX/PROCA/FIVE. The
+OSS kernel addresses the load-bearing ones (`scripts/kernel/README.md`):
 
-### 2.1 The kernel has no PID or user namespaces
-From the live device (`zcat /proc/config.gz`):
+| Need | OSS kernel | Why it is safe for the frozen KMI |
+| --- | --- | --- |
+| PID namespace | `CONFIG_PID_NS=y` | `pid_namespace.h` inlines only; no vendor module uses them; no struct change |
+| Kernel-maintained `/dev` | `CONFIG_DEVTMPFS=y` (not auto-mounted) | `device.h` prototypes used only by built-in drivers/base |
+| Root processes not killed | `# CONFIG_SECURITY_DEFEX is not set` | header-free; removes the exec/open/write hooks that denied/killed "unauthorised" root — exactly what killed the v5 supervisors (§3) |
+| (variant) user namespace | `CONFIG_USER_NS=y` in `oss-userns` | **not required** for a privileged root container; the default `oss` variant omits it |
+
+KDP_NS protects mount-namespace vfsmounts (Android already creates them);
+KDP_CRED already refcounts `cred->user_ns`; RKP/uH are unchanged. A **privileged
+(root) container needs PID_NS, not USER_NS**, so stage 2 targets the `oss`
+variant (`8c0461ee`), which keeps the smaller, better-understood change set.
+
+Android init's PID-1 assumptions (`reboot_utils.cpp:184` `getpid()!=1`,
+`init.cpp:967` `/proc/1/oom_score_adj`, subreaper, `reboot(2)`) are now **all
+satisfied** because Android init genuinely is PID 1 *inside its namespace*.
+`/proc/1` on the device is referenced only by `/system/bin/init` and `ueventd`;
+inside the container both resolve to the container's own init. No vendor HAL
+hard-codes PID 1.
+
+## 3. Why containment, not a from-scratch init or full Halium (evidence)
+
+- **Native PID-1 supervisors v5k–v5n** (`tools/linux-supervisor-v5*.c`) loaded
+  vendor modules themselves and always died: `watchdog0 setup failed` at ~5–15 s
+  (no devtmpfs → `/dev/watchdog0` missing), USB never enumerated, Download-mode
+  resets (`v5m/v5n-kernel-markers.txt`, `v5n-soft-supervisor-experiment.log`).
+  Two of the three root causes (devtmpfs, DEFEX) are now fixed in the OSS
+  kernel, but the deeper lesson stands: **reproducing Samsung's 306-module +
+  coldboot + USB + watchdog bring-up by hand is impractical.** So we keep
+  Android doing 100 % of the bring-up and merely contain it.
+- **Pre-init wrapper v6a–v6c** (`tools/android-bootstrap-v6*.c`) ran code as
+  PID 1 then exec'd the exact stock init and even kept a forked root process
+  alive in the booted system ("Android completed under V6c" + persistent root
+  shell). This is the proven foundation; stage 2 generalizes it: instead of
+  exec'ing stock init (giving up PID 1), `oss-init` *clones* it into a namespace
+  and *keeps* PID 1.
+- **Full Halium** (systemd host + `lxc-android` + libhybris) is the long-term
+  shape but needs libhybris, a GNU/Linux host rootfs, and a container config for
+  every HAL — weeks of brittle work. Stage 2 delivers the architectural seam
+  (our init PID 1, Android in a PID+mount ns) at the cost of a ~190-line static
+  binary, with Android still driving the hardware and still bringing Moon up.
+  Moving userspace out of the container toward a Linux host is stage 3.
+
+## 4. Options, reconsidered with PID_NS available
+
+| Option | Safety | Complexity | Verdict |
+| --- | --- | --- | --- |
+| **A. Our init PID 1 + Android init in its own PID+mount ns (contain the existing full Android boot)** | High: Android does all bring-up unchanged; iron-rule fallback to today's boot at every layer | Low (≈190-line static binary + overlay rc) | **Chosen & implemented** |
+| **B. Our init does a minimal first stage, hand vendor bring-up to a second-stage Android container** | Needs us to reproduce first-stage mounts/coldboot before the container — the v5 failure surface | High | Rejected (no benefit over A) |
+| **C. Native PID-1 supervisor brings up hardware itself (v5)** | Proven to fail even with devtmpfs/DEFEX fixed: module order, USB, timing | High | Rejected (§3) |
+| **D. Full Halium (systemd + lxc-android + libhybris)** | Unknown; large new surface | Very high | Deferred to stage 3 |
+| **E. Stepping stone: `oss-pid1` pre-init that execs the stack (no containment)** | Highest (byte-identical boot) | Trivial | Kept as the safe fallback artifact (§5.6) |
+
+**Chosen: Option A — `oss-init` containment.** It is the real stage-2 goal, is
+safe to build and test now, and is the correct seam for stage 3.
+
+## 5. The `oss-init` design (implemented on this branch)
+
+### 5.1 Ramdisk layout (built on the OSS-kernel image `8c0461ee`)
 ```
-CONFIG_NAMESPACES=y
-CONFIG_UTS_NS=y
-# CONFIG_USER_NS is not set
-# CONFIG_PID_NS is not set
-CONFIG_NET_NS=y
-# CONFIG_DEVTMPFS is not set
-```
-Containing Android init "in its own PID namespace so it still sees
-`getpid()==1`" is impossible: `CLONE_NEWPID` will fail with `EINVAL`. There is
-no user namespace either, so an unprivileged/rootless container is out. This
-single fact removes the LXC-style model entirely.
-
-### 2.2 Android init assumes it is the real PID 1 in load-bearing ways
-Reading AOSP `android15-release` `system/core/init`:
-- `reboot_utils.cpp:184` — the crash signal handlers branch on
-  `getpid() != 1`; a non-PID-1 init `_exit()`s on any fatal signal instead of
-  handling reboot.
-- `init.cpp:967` — init writes its own oom score to `/proc/1/oom_score_adj`.
-- init is the subreaper/zombie-reaper for the whole process tree and issues the
-  `reboot(2)` syscall directly (`reboot_utils.cpp:103`). All of this assumes
-  real PID 1. Running stock init as a plain child (PID≠1) without a PID
-  namespace is unsupported and wedges reaping, reboot and RescueParty timing.
-- `/proc/1/` is referenced on the device only by `/system/bin/init` and
-  `/system/bin/ueventd` (scan of `/system/bin`, `/vendor/bin`,
-  `/system/lib64`, `/vendor/lib64`): **no vendor HAL or daemon hard-codes
-  PID 1**, so the vendor stack itself does not block a reparent — but init
-  does.
-
-### 2.3 Device nodes are not auto-created
-`# CONFIG_DEVTMPFS is not set`: there is no `devtmpfs` to mount on `/dev`.
-First-stage init `mknod`s a handful of nodes by hand and ueventd's coldboot
-creates the rest from `/sys` uevents. A replacement PID 1 would have to
-reproduce all of this before any driver's char device (including
-`/dev/watchdog0`) is usable — which is exactly what bit the v5 supervisors.
-
-### 2.4 SELinux policy is loaded exactly once, by whoever owns second stage
-`androidboot.selinux=enforcing` (bootconfig) and `CONFIG_SECURITY_SELINUX_DEVELOP=y`.
-The monolithic policy is loaded once in init's `selinux_setup` second stage;
-after that the policy is sealed. Whoever loads it defines every domain. If an
-unsigned init owns this step it must ship and maintain Samsung's full policy;
-if it lets stock init own it (our choice), our pre-init code only exists
-*before* the load and must live within the inherited `kernel`/`init` domain.
-The live policy's `kernel` domain is broad but not total (sampled with
-`magiskpolicy --print-rules`: `allow kernel self capability { … sys_module
-sys_boot sys_admin mknod … }`, `allow kernel kmsg_device chr_file …`), and
-Magisk injects a permissive `magisk` domain with `dyntransition`. This is
-enough for a trivial pre-init but not for a from-scratch PID 1.
-
-### 2.5 Samsung's hardening is built to stop unsigned PID-1-over-vendor
-From `/proc/config.gz` and the cmdline:
-```
-kvm-arm.mode=protected        (uH hypervisor active)
-CONFIG_UH=y  CONFIG_RKP=y  CONFIG_KDP=y  CONFIG_KDP_CRED=y  CONFIG_KDP_NS=y
-CONFIG_SECURITY_DEFEX=y  CONFIG_PROCA=y  CONFIG_FIVE=y  CONFIG_KNOX_NCM=y
-CONFIG_INTEGRITY=y
-```
-RKP (Realtime Kernel Protection) and KDP protect kernel credential and
-**namespace** structures (`KDP_NS`); DEFEX restricts privilege-escalation
-paths; PROCA/FIVE authenticate processes/files against Samsung certificates.
-Standing up a new namespaced container and a new privileged init is the precise
-workload these are designed to detect and reset. The empirical record agrees:
-the native supervisors never survived (§3).
-
-### 2.6 How Halium / Droidian / Ubuntu Touch / Sailfish actually do it
-Their model *is* "GNU/Linux init (systemd) as real PID 1, Android contained":
-systemd on the host, and the Android vendor userspace running inside an
-**LXC container** (`lxc-android`) whose own Android init is PID 1 *inside the
-container's PID namespace*; libhybris lets glibc processes load the bionic HAL
-`.so`s. But that model's hard prerequisites are exactly what this device
-lacks:
-- **PID and user namespaces** must be enabled in the kernel. Droidian/Halium
-  ship or require kernels with `CONFIG_PID_NS`/`CONFIG_USER_NS`; this stock
-  kernel has both **off**.
-- They run on devices **without** Samsung's RKP/KDP/DEFEX/PROCA/FIVE, or on
-  custom Halium kernels where the offending protections are patched out.
-- They typically relax SELinux (permissive host) — fighting
-  `androidboot.selinux=enforcing` plus Samsung's enforcement.
-
-So Halium's approach is real and is the right long-term target, but it requires
-**a custom kernel** here. It cannot be done on A266MUBU1AYB8's shipped kernel.
-
-## 3. Evidence from the research workspace (whale)
-
-- **Native PID-1 supervisors v5k–v5n** (`tools/linux-supervisor-v5*.c`): our
-  init was PID 1 and loaded vendor modules itself. They always failed:
-  - `notes/v5m-kernel-markers.txt` / `v5n-kernel-markers.txt`: after loading
-    `s3c2410_wdt.ko`, `a26-v5m: watchdog0 setup failed: No such file or
-    directory` at ~5–15 s — `/dev/watchdog0` did not exist yet (no devtmpfs,
-    coldboot not reproduced). v5m then rebooted to Download mode; v5n chose to
-    "continue with software supervision, hardware watchdog unavailable" and
-    **hung with no USB** (`v5n-soft-supervisor-experiment.log`: "No V5n ACM or
-    rescue within 10 minutes"). v5l likewise never brought USB up
-    (`v5l-physical-usb-watcher.log`: 700 s, nothing).
-  - Root cause matches §2.3/§2.5: reproducing Samsung's module order + coldboot
-    + USB gadget + watchdog timing by hand is impractical, and the hardening
-    stack is hostile to it.
-- **Pre-init wrapper v6a–v6c** (`tools/android-bootstrap-v6*.c`): our code runs
-  as PID 1, forks a helper, then `execve`s the exact stock init.
-  - `notes/v6a-…`: "SUCCESS: exact stock Android init completed under V6a
-    wrapper"; Android reached `boot_completed=1`.
-  - `notes/v6c-resumed-watcher.log`: "Android completed under V6c" with
-    `u:r:init:s0 … 1 0 … init` as PID 1, and a **persistent standalone BusyBox
-    root shell** forked by the wrapper still answering on tcp:2626 inside the
-    fully booted system. This is the proof that a forked-before-exec helper
-    survives into the running OS.
-
-The v6 line is the proven, safe foundation. Stage 2 generalizes it into a
-first-class OSS Phone init.
-
-## 4. Question 2 — alternatives compared, and the choice
-
-| Option | Safety | Complexity | Boot speed | Verdict |
-|---|---|---|---|---|
-| **A. Our init PID 1 + Android init in PID/mount ns (Halium LXC model)** | Impossible on stock kernel (no PID_NS/USER_NS); custom kernel vs RKP/KDP/DEFEX = high brick risk | Very high (kernel + libhybris + container) | Unknown; likely slower bring-up | **Rejected for now** (§2, §6) |
-| **B. Our init does a minimal first stage, hands vendor bring-up to Android init in a container** | Same namespace blocker as A; also needs devtmpfs/coldboot reproduction | Very high | — | **Rejected** (same root cause) |
-| **C. Native PID-1 supervisor that brings up hardware itself (v5)** | Proven to fail — watchdog/USB/module-order deaths, Download-mode resets | High | — | **Rejected** (§3) |
-| **D. Extend the proven v6 pre-init wrapper into OSS Phone's own PID-1 pre-init, chain-loading the stage-1 stack with a stock fallback** | High: happy path is byte-identical to today; failure path is a normal Android boot | Low (≈40-line static binary + build) | Adds <1 ms before handoff; Moon still ≈34 s | **Chosen** |
-
-**Chosen architecture: Option D — `oss-pid1`.** It is the only option that is
-safe to build and test now, it makes PID 1 genuinely OSS Phone's, and it is the
-natural staging point from which later pre-init Linux work (and, with a custom
-kernel, the §6 containment) can grow without ever giving up the safe fallback.
-
-## 5. The `oss-pid1` design (implemented on this branch)
-
-### 5.1 Ramdisk layout (built from the current Moon direct-boot image)
-```
-/init          → oss-pid1   (NEW: our static aarch64 PID-1 pre-init)
-/init.magisk   → magiskinit (the base image's former /init, byte-identical)
-/init.stock    → stock Android init (decompressed from Magisk .backup/init.xz)
-/overlay.d/…   → Moon direct-boot rc + sbin scripts (unchanged)
+/init          → oss-init    (NEW: real PID 1 / host supervisor, static aarch64)
+/init.magisk   → magiskinit  (contained-primary: today's Magisk + Moon stack)
+/init.stock    → stock init  (contained/host fallback)
+/overlay.d/moon-direct-boot.rc + sbin/…   (unchanged)
+/overlay.d/oss-contain.rc                 (NEW: liveness + reboot relay)
 kernel, everything else → unchanged (verified byte-for-byte at build time)
 ```
-Source: `scripts/native-init/oss-pid1.c`; builder:
-`scripts/native-init/build-boot-image.sh` (base
-`boot-moon-direct-A266MUBU1AYB8.img`, sha256 `3bf29162…e9f6`).
+Source `scripts/native-init/oss-init.c`; overlay
+`scripts/native-init/overlay.d/oss-contain.rc`; builder
+`scripts/native-init/build-stage2-image.sh`.
 
 ### 5.2 Boot flow
-1. Bootloader → kernel → kernel execs ramdisk `/init`, which is now **oss-pid1,
-   running as the real PID 1**.
-2. oss-pid1 writes one marker to `/dev/kmsg`
-   (`oss-pid1: OSS-Phone pre-init running as PID 1; chaining to stage-1 boot`)
-   — proof of ownership, recoverable from dmesg/pstore — and does nothing else.
-3. **Primary handoff:** `execve("/init.magisk", argv, environ)` with argv
-   passed through unchanged (argv[0]=="/init", no "selinux_setup"), so
-   magiskinit sees exactly what the kernel would have handed it and runs its
-   normal first-stage path. From here the boot is **bit-for-bit today's boot**:
-   Magisk restores/execs stock init → 306 modules, ueventd, SELinux, property
-   service, firmware, adbd/USB, charging, watchdogd → overlay.d stops zygote →
-   Moon supervisor → Moon on screen ≈34 s.
-4. The execve preserves PID 1, so stock Android init ends up as PID 1 exactly
-   as it does today; every `getpid()==1` assumption (§2.2) holds. oss-pid1 is
-   gone (its process image was replaced), and the ramdisk is freed at
-   switch_root as usual — oss-pid1 leaves no residue in the running system
-   other than its kmsg line.
+1. Bootloader → OSS kernel → kernel execs ramdisk `/init` = **oss-init as the
+   real PID 1**.
+2. oss-init writes a `/dev/kmsg` marker, opens held fds to `/init.magisk` and
+   `/init.stock` (so the fallback survives Android's `FreeRamdisk`), and mounts
+   a tmpfs at `/oss-run` (shared superblock with the container, for the relay).
+3. `clone(CLONE_NEWPID | CLONE_NEWNS | SIGCHLD)` creates the container. The
+   child is **PID 1 of a new PID + mount namespace**; it makes its mounts
+   private and `execve("/init.magisk", argv, environ)` — the exact stock stack.
+   Android does the full bring-up (modules, ueventd, SELinux, property service,
+   firmware, adbd/USB, charging, watchdogd) and starts Moon, all as today, all
+   inside the namespace.
+4. The parent (`oss-init`, real PID 1) supervises: reaps, watches the relay for
+   liveness, and handles container exit.
 
-### 5.3 Failure modes and fallbacks (safety is the design)
-- **magiskinit exec fails** (missing/corrupt `/init.magisk`): oss-pid1 logs and
-  `execve("/init.stock", …)` → a **normal, unrooted stock Android boot**. No
-  Moon, but a working, adb-reachable phone — recoverable.
-- **both execs fail** (both files absent — impossible in a correctly built
-  ramdisk, and verified present at build time): oss-pid1 does **not** return
-  (returning from PID 1 panics the kernel). It spins on `pause()`; the
-  bootloader-armed s3c2410 watchdog then resets the device into a fresh boot.
-- **oss-pid1 itself crashes before exec:** this is the only new brick-class
-  risk vs. today. Mitigations: the program is ~40 lines, static, no heap, only
-  `open`/`write`/`close`/`execve`/`pause`; its exec-chain + fallback were
-  tested under qemu-aarch64 (primary-present → primary; primary-absent →
-  fallback); and modifying the ramdisk `/init` is the *same class* of change
-  Magisk already makes and the device already boots (so AVB/FIVE/PROCA do not
-  block it — top-level vbmeta is verification-disabled on this unlocked
-  device). Residual risk is low but non-zero (§7).
-- Everything downstream of the handoff keeps **today's** fallbacks: the Moon
-  volume-key window, the supervisor's Android restore, the policy's
-  skip/disable/legacy paths, the kernel-panic one-Android-boot rule, and the
-  `scripts/direct-boot` rescue ladder in `notes/direct-boot/RESCUE.md`.
+### 5.3 The iron rule, at every layer
+- **Setup fails** (`clone`/`mount` error): exec the stock stack as the real
+  PID 1 → identical to today's boot, no containment.
+- **Container dies without a reboot request** (crash, or early bail — relay
+  `powerctl` empty): exec the stock stack as the real PID 1 → a fresh
+  **uncontained** boot. The dead container's mount namespace is auto-cleaned by
+  the kernel; loaded modules remain (insmod EEXIST is tolerated), so this is a
+  warm re-init. No reboot loop.
+- **Container hangs before liveness** (no `/oss-run/alive` within 90 s): kill the
+  container, then exec the stock stack as the real PID 1.
+- **Container asks for a real reboot/shutdown** (`sys.powerctl` → relay
+  `/oss-run/powerctl`): perform it for real. `reboot(2)` from a child PID
+  namespace only tears that namespace down, so PID 1 must do the real reboot;
+  the relay carries the target (`bootloader`, `download`, `recovery`, poweroff).
+- Fallback execs use the **held fds** via `execveat(AT_EMPTY_PATH)`, so they work
+  even after Android's `FreeRamdisk` unlinks the shared initramfs files.
 
 ### 5.4 Required behaviors — all preserved
-- **Watchdog keepalive:** unchanged. stock init/watchdogd still owns
-  `/dev/watchdog0`; oss-pid1 adds <1 ms before the identical handoff, far
-  inside the 30 s timer.
-- **Module loading order / firmware:** unchanged — stock init does all of it.
-- **USB/adb from early boot:** unchanged — adbd comes up exactly as today (and
-  the overlay forces `sys.usb.config=adb` in Moon mode as before).
-- **Charging:** unchanged — vendor charging path and `boot_completed` battery
-  actions run as today.
-- **Safe fallback to the exact stock init:** built in (§5.3), both to the
-  current Magisk+Moon stack and, below it, to plain stock Android.
+- **Watchdog keepalive:** unchanged. watchdogd runs inside the container and
+  pets `/dev/watchdog0` exactly as today (DEVTMPFS/ueventd create the node in
+  the container's `/dev`). oss-init never pets it, so a genuine hang still
+  self-resets instead of being masked.
+- **Module order / firmware / USB-adb / charging:** unchanged — the contained
+  Android does all of it.
+- **Safe fallback to the exact stock init:** built into every failure layer.
 
-## 6. The long-term Linux-first path (deferred, needs a custom kernel)
+### 5.5 Validation (on whale, real Linux PID+mount namespaces)
+A native build of `oss-init.c` (paths redirected to test stand-ins, 2 s
+deadline) was run under `unshare -Urmpf`:
+- **healthy** (container writes `alive`, stays up) → `container reported
+  liveness; supervising`, no fallback. ✓
+- **crash** (container exits early, no `powerctl`) → `container exited without a
+  reboot request; booting uncontained` → fallback re-exec reaches a stable
+  boot. ✓
+- **hang** (no `alive` by the deadline) → `container never signalled liveness;
+  killing and booting uncontained`. ✓
+- **reboot** (container writes `powerctl=reboot,download` then exits) → reboot
+  branch taken with the correct target, not fallback. ✓ (reboot syscall stubbed
+  in the test so it never rebooted the host).
 
-To reach the true goal (our init real PID 1, Android vendor stack as a
-contained HAL), a future effort must, in order:
-1. Build a custom kernel for s5e8825 with `CONFIG_PID_NS`, `CONFIG_USER_NS`,
-   `CONFIG_DEVTMPFS` (+mount), and the container cgroup/namespace options
-   enabled, and with DEFEX/PROCA/FIVE/KDP_NS relaxed enough to allow an
-   unsigned init and new namespaces — while keeping the device bootable
-   (RKP/uH may require `kvm-arm.mode` changes or signed-kernel handling; this
-   is the hard, brick-prone part). Samsung kernel source is in
-   `samsung-opensource/`.
-2. Adopt the Halium layout: systemd (or our Rust init) as PID 1 on a GNU/Linux
-   rootfs; Android `/system`+`/vendor` in an `lxc-android` container with its
-   own Android init as container-PID-1 bringing up the vendor HALs; libhybris
-   for HAL access; Moon on the host.
-3. Only attempt on hardware with a tested rescue path and, ideally, after a
-   recovery-based A/B-style safety net — never as an unattended flash.
+Build-time checks (in `build-stage2-image.sh`) confirm the kernel is
+byte-identical to `8c0461ee`, `/init` is our supervisor, `/init.magisk` is the
+base magiskinit byte-for-byte, the Moon overlay files are unchanged,
+`/init.stock` is the decompressed backup, and the relay rc is present.
 
-`oss-pid1` is the correct first rung: it already owns PID 1, so step 2's init
-can later be grown in place behind the same safe-fallback guarantee.
+### 5.6 `oss-pid1` — the safe stepping stone (kept)
+`scripts/native-init/oss-pid1.c` + `build-boot-image.sh` remain: a pre-init that
+owns PID 1 then *execs* the stack (no containment), with a built image on the
+**stock** kernel. It is the lowest-risk artifact and a useful bisection point
+("does our-init-as-PID-1 boot at all, without namespaces?") if stage-2
+containment misbehaves on-device.
+
+## 6. On-device unknowns the morning test must resolve
+
+These are sound in theory and validated in a generic namespace, but only the
+real device + OSS kernel can confirm:
+1. **SELinux enforcement on our PID 1.** The contained Android's second-stage
+   init loads the policy and sets enforcing *globally*; our parent (real PID 1,
+   `kernel`/`init` domain, never exec'd) is then subject to it. It does little
+   (waitpid, read `/oss-run`, execveat/reboot). DEFEX is gone, and the `kernel`
+   domain has `sys_boot` and `execute` of `init_exec`, so it should survive; if
+   a denial blocks the fallback, the test can run with SELinux permissive
+   (Magisk/moon policy) to isolate it.
+2. **Android completing a full boot as a namespaced PID 1** on this device
+   (property service, binder, servicemanager, ueventd coldboot, switch_root all
+   inside the ns). Expected to work (Android init only needs `getpid()==1`,
+   which holds), but unproven here.
+3. **Relay tmpfs surviving switch_root** so liveness/reboot work. If it does
+   not, oss-init degrades safely (treats exits as crashes → uncontained boot).
 
 ## 7. Risk ranking (honest)
 
-1. **Deferring the "real" containment goal** — *expected, not a defect.* The
-   stock kernel makes it impossible; attempting it tonight would mean an
-   unsigned custom kernel vs. RKP/KDP with no A/B and no hands = unacceptable
-   brick risk. **Do not attempt tonight.**
-2. **oss-pid1 crashes before exec** — low probability (tiny, static, qemu-
-   tested), high consequence (PID-1 panic → likely Download-mode rescue needing
-   physical hands). This is the one new risk the morning test must gate.
-3. **Everything else** — negligible delta from today: the happy path is
-   byte-identical, and the ramdisk-/init change is the same class Magisk
-   already makes and the device already boots.
+1. **Container hangs after liveness but before adbd/watchdogd** (narrow window):
+   no watchdog pet, no adb → hardware watchdog resets → loop → physical
+   Download-mode rescue. Low probability (adbd and watchdogd are both early),
+   high effort to recover. **This is why the test is attended.**
+2. **SELinux denies our PID 1 the fallback exec** after a late container death:
+   would leave Moon down with possibly-live adb → in-OS reflash, else physical
+   rescue. Medium uncertainty; mitigated by the permissive-SELinux test variant.
+3. **oss-init crashes before clone**: PID-1 panic. Low probability (static,
+   ~190 lines, namespace logic validated), mitigated by held-fd fallback and by
+   `oss-pid1` as a bisection artifact.
+4. **Everything else** ≈ today's risk: on any containment failure the iron rule
+   yields today's boot.
 
-Given no A/B slot and no hands during unattended runs, **the image must not be
-flashed unattended.** It is ready for an attended morning test (§ TEST-PLAN.md)
-with the device lead present for the rescue path.
+No A/B slot and no hands during unattended runs ⇒ **do not flash unattended.**
+Test attended, OSS kernel (passthrough) first, then stage 2 (§ TEST-PLAN.md).
 
 ## 8. Artifacts
 
-- `scripts/native-init/oss-pid1.c` — the PID-1 pre-init.
-- `scripts/native-init/build-boot-image.sh` — reproducible builder.
-- `scripts/native-init/README.md` — summary + controls.
+- `scripts/native-init/oss-init.c` — the containing PID-1 supervisor.
+- `scripts/native-init/overlay.d/oss-contain.rc` — liveness + reboot relay.
+- `scripts/native-init/build-stage2-image.sh` — reproducible builder (OSS base).
+- `scripts/native-init/oss-pid1.c`, `build-boot-image.sh` — the stepping stone.
 - Built, **unflashed** image (git-ignored):
-  `images/oss-pid1/boot-oss-pid1-A266MUBU1AYB8.img`
-  sha256 `9a63cf28b7dc0fef3c3cd2261c135f1a78c39f283ed0d7466dacef652e64dea4`
-  (also on whale `~/Workspace/research/linux-galaxy-a26/images/oss-pid1/` after
-  a research-host build). Base `boot-moon-direct-A266MUBU1AYB8.img` sha256
-  `3bf29162…e9f6`.
-- `notes/stage2/TEST-PLAN.md` — the attended morning test.
+  `images/oss-stage2/boot-oss-stage2-A266MUBU1AYB8.img`
+  sha256 `4d27b69bed59fd075f00963d19b29d630307cf1a247d3193832cd381bcac62f3`
+  (base `8c0461ee…`; also on whale
+  `~/Workspace/research/linux-galaxy-a26/images/oss-stage2/`).
+- `notes/stage2/TEST-PLAN.md` — attended morning test, layered on the kernel
+  agent's tests.

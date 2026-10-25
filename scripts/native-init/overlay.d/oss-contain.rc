@@ -1,0 +1,22 @@
+# OSS-Phone-V1 stage-2 containment relay.
+#
+# Appended to init.rc by magiskinit and run by the CONTAINED Android init
+# (inside its PID + mount namespace). It talks to the host PID 1 (oss-init)
+# through the shared /oss-run tmpfs oss-init mounted before cloning:
+#
+#   /oss-run/alive     written as soon as the container's init runs, so the
+#                      host can tell a healthy (if slow) boot from a wedged one
+#                      and only break a genuine early hang.
+#   /oss-run/powerctl  the reboot/shutdown request, so the host can perform the
+#                      real power transition (reboot(2) from a child PID
+#                      namespace only tears the namespace down).
+#
+# If /oss-run is absent (relay disabled, e.g. mount failed on the host) these
+# writes are harmless no-ops and the host degrades to the safe default: a
+# container death becomes a fresh uncontained boot.
+
+on early-init
+    write /oss-run/alive 1
+
+on property:sys.powerctl=*
+    write /oss-run/powerctl ${sys.powerctl}

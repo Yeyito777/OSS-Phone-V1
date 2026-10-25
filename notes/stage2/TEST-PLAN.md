@@ -1,90 +1,115 @@
-# Stage 2 (`oss-pid1`) — attended morning test plan
+# Stage 2 (`oss-init` containment) — attended morning test plan
 
-**Do not flash unattended.** This test puts OSS Phone's own binary at ramdisk
-`/init` (PID 1). The happy path is bit-for-bit today's Moon boot; the one new
-risk is an oss-pid1 crash *before* its handoff, which would panic PID 1 and
-likely need a physical Download-mode rescue. Run it only with the device lead
-present and the Mac + rescue kit at hand.
+**Do not flash unattended.** This boots OSS Phone's own `oss-init` as the real
+PID 1 and runs Android in a PID + mount namespace. The iron rule makes every
+failure fall back to today's boot, but one narrow case (a container hang after
+liveness but before adbd/watchdogd) can need a physical Download-mode rescue.
+Run only with the device lead present and the rescue kit ready.
+
+This test **layers on the kernel agent's plan** (`images/kernel/TEST-PLAN.md`).
+Do that one first: it proves the OSS kernel itself boots with the prebuilt
+modules. Only then test stage-2 containment on top of it.
 
 ## Preconditions
-- Battery ≥ 50 %, phone on the Mac's USB, adb authorized (`adb devices` shows
-  `R5CY323ES7X  device`).
-- Rescue kit ready (`notes/direct-boot/RESCUE.md`): `~/Desktop/a26-rescue/`
-  with `A266MUBU1AYB8-current/boot.img` (sha256 `365a8b3c…d4cfc12e08a0`) and
-  `tools/samloader`.
-- Image present and hashed:
-  `images/oss-pid1/boot-oss-pid1-A266MUBU1AYB8.img`
-  sha256 `9a63cf28b7dc0fef3c3cd2261c135f1a78c39f283ed0d7466dacef652e64dea4`.
-- Confirm the phone currently boots Moon normally (baseline) before changing
-  anything.
+- Battery ≥ 50 %, phone on the Mac's USB, adb authorized.
+- Rescue ready (`notes/direct-boot/RESCUE.md`). Keep these images handy:
+  - `images/kernel/boot-oss-mirror-A266MUBU1AYB8.img` (`8c0461ee…`) — OSS kernel,
+    **passthrough** (today's boot on the OSS kernel). The fallback if stage 2
+    misbehaves.
+  - `images/kernel/rollback/boot-moon-direct-A266MUBU1AYB8.img` (`3bf29162…`) —
+    stock kernel, today's shipping boot. The ultimate rollback.
+- Stage-2 image present:
+  `images/oss-stage2/boot-oss-stage2-A266MUBU1AYB8.img`
+  sha256 `4d27b69bed59fd075f00963d19b29d630307cf1a247d3193832cd381bcac62f3`.
 
 ## What the user must do physically
-- **Have hands on the phone for the whole test.** Hold **Power + Volume Down**
-  ~7–10 s if it ever stops responding.
-- Flashing requires Download mode and a manual restart (this device does not
-  auto-reboot out of Download mode — see RESCUE.md). Be ready to do the
-  Power+VolDown restart after every samloader flash.
-- During the Moon boot's volume-key window you may press **Volume Up** to force
-  a normal Android boot if desired (unchanged from today).
+- Stay at the phone the whole test. If it stops responding, hold **Power +
+  Volume Down** ~7–10 s.
+- With containment active, a software reboot is proxied by our PID 1 via the
+  relay; if the relay is not working, `adb reboot download` will NOT reach
+  Download mode — use the physical key combo (RESCUE.md Level 3).
 
-## Steps
-1. **Verify the image** on the Mac:
-   `shasum -a 256 images/oss-pid1/boot-oss-pid1-A266MUBU1AYB8.img`
-   must equal `9a63cf28…e64dea4`.
-2. **Flash BOOT** (Download mode, per RESCUE.md Level 2):
+## Stage A — OSS kernel alone (passthrough)
+Run the kernel agent's **Test 2** (`images/kernel/TEST-PLAN.md`) with
+`boot-oss-mirror-A266MUBU1AYB8.img`. Must pass fully (Moon ≈34 s; 306 modules;
+no KMI/module errors; root, display, audio, Wi-Fi, charging, suspend, clean
+reboot). Also confirm the namespace primitives the stage-2 design relies on, in
+the Alpine chroot as root:
+```
+unshare -p -f --mount-proc sh -c 'echo $$'        # prints 1
+mkdir -p /tmp/d && mount -t devtmpfs devtmpfs /tmp/d && ls /tmp/d   # populated
+```
+If Stage A fails, stop — stage 2 cannot be more stable than its kernel.
+
+## Stage B — stage-2 containment
+1. **Verify the image:**
+   `shasum -a 256 images/oss-stage2/boot-oss-stage2-A266MUBU1AYB8.img` =
+   `4d27b69b…`.
+2. **Flash.** The image carries the OSS kernel, so a kernel change from whatever
+   is installed is expected — use the device lead's in-OS script with the kernel
+   flag (it backs up and read-back-verifies):
    ```
-   adb reboot download
-   cd ~/Desktop/a26-rescue
-   tools/samloader detect
-   tools/samloader flash -p BOOT <path>/boot-oss-pid1-A266MUBU1AYB8.img
+   scripts/direct-boot/flash-boot-inplace.sh --allow-kernel-change \
+       images/oss-stage2/boot-oss-stage2-A266MUBU1AYB8.img
    ```
-   Then **manually restart** the phone (Power+VolDown ~7–10 s).
-3. **Observe the boot.** Expected: normal boot animation, then Moon on screen.
-4. **Confirm Moon reached readiness** and timing matches baseline:
-   `adb wait-for-device && adb shell su -c 'getprop moon.session.ready'` → `1`,
-   and kernel-time to Moon ≈ 34 s (adb up ≈ 30 s), i.e. **no regression** vs.
-   today's direct boot.
-5. **Confirm oss-pid1 actually owned PID 1** (the point of stage 2):
+   (Or samloader per RESCUE.md, then a manual restart.) Consider `--dry-run`
+   first to exercise the checks and make the backup without writing.
+3. **Reboot and observe.** Expected: normal boot animation, then Moon on screen,
+   in roughly the usual time plus a little (the container boots Android as
+   today).
+4. **Confirm oss-init is the real PID 1 and Android is contained:**
    ```
-   adb shell su -c 'dmesg | grep oss-pid1'
-   # expect: oss-pid1: OSS-Phone pre-init running as PID 1; chaining to stage-1 boot
-   # if it rolled out of the ring buffer, check pstore:
-   adb shell su -c 'cat /sys/fs/pstore/console-ramoops* 2>/dev/null | grep oss-pid1'
+   adb wait-for-device
+   adb shell su -c 'cat /proc/1/comm'            # expect: oss-init
+   adb shell su -c 'readlink /proc/1/exe'        # expect: /init (deleted) = oss-init
+   # Android's init should be PID 1 *inside* its namespace, i.e. a non-1 host PID:
+   adb shell su -c 'pgrep -f "^/system/bin/init|init.*second" ; ps -A | grep -w init | head'
+   adb shell su -c 'dmesg | grep oss-init'       # marker: "the real PID 1; containing Android init" + "container reported liveness; supervising"
+   adb shell su -c 'cat /proc/1/ns/pid'          # host pid ns
+   adb shell su -c 'cat /proc/$(pgrep -o -f system/bin/init)/ns/pid'  # different ns id
    ```
-   Also confirm PID 1 is stock init as expected afterward:
-   `adb shell su -c 'cat /proc/1/comm'` → `init`.
-6. **Exercise the Moon fallbacks still work** (regression check, unchanged from
-   stage 1): `autostart.sh skip-once` → reboots to Android; a volume-key press
-   in the window → Android. Then re-enable and confirm Moon again.
+   Pass if `/proc/1/comm` is `oss-init`, the Android init lives in a *different*
+   PID namespace, and `moon.session.ready=1`.
+5. **Confirm no regression** in the contained Android/Moon: Moon UI responsive,
+   touch, display, audio, Wi-Fi, charging (`dumpsys battery` / sysfs), one
+   suspend/resume.
+6. **Exercise the iron-rule paths deliberately** (each should land safely):
+   - *Reboot relay:* `adb reboot` → the phone should actually reboot (our PID 1
+     proxies it). Then `adb reboot download` → should reach Download mode if the
+     relay works; if not, note it and use keys.
+   - *Crash fallback:* kill the contained Android init
+     (`adb shell su -c 'kill -9 $(pgrep -o -f system/bin/init)'`) → the container
+     tears down and oss-init should boot **uncontained** (Moon returns; `dmesg`
+     shows `booting uncontained`; `/proc/1/comm` becomes `init`). This proves the
+     fallback without a reflash.
 
 ## Expected result
-- Boot time and behavior **indistinguishable from today's direct boot**, plus
-  the `oss-pid1` PID-1 marker present. That is a pass: OSS Phone's own init now
-  owns PID 1 with zero behavioral regression.
+Moon on screen with `/proc/1/comm = oss-init` and Android init in its own PID
+namespace, no behavioral regression, and the deliberate crash falling back to a
+normal boot. That is a pass: OSS Phone is the real PID 1 with Android contained.
 
 ## If it fails
-- **Black screen / boot loop / no adb within ~90 s:** the pre-init likely
-  crashed before handoff (risk #2 in DESIGN.md). Rescue: RESCUE.md Level 3
-  (Power+VolDown restart; at black screen hold VolUp+VolDown with USB; VolUp to
-  enter Download) → RESCUE.md Level 2 flash of the known-good
-  `A266MUBU1AYB8-current/boot.img`. Data, Magisk and /data/adb are untouched by
-  a BOOT flash.
-- **Boots plain Android (no Moon), adb works:** the primary handoff failed and
-  the `/init.stock` fallback ran (dmesg will show
-  `oss-pid1: primary init exec failed; falling back to stock Android init`).
-  The phone is safe; restore the known-good BOOT at leisure and investigate the
-  magiskinit handoff before retrying.
-- **Boots Moon but no oss-pid1 marker:** build/flash mismatch — re-verify the
-  flashed partition hash (`adb shell su -c 'sha256sum /dev/block/by-name/boot'`
-  should match the built image) before drawing conclusions.
+- **Black screen / boot loop / no adb within ~90 s:** a container hang (risk #1)
+  or an oss-init crash. Rescue: RESCUE.md Level 3 → flash
+  `images/kernel/boot-oss-mirror-A266MUBU1AYB8.img` (OSS kernel, passthrough) to
+  get a working boot, or the stock-kernel `rollback/…` image.
+- **Boots uncontained (Moon up, `/proc/1/comm = init`):** containment fell back
+  early (see `dmesg | grep oss-init`). The phone is safe and fully working;
+  investigate the containment handoff before retrying. This is the iron rule
+  doing its job, not a failure of the device.
+- **Moon never appears but adb works:** the container booted but wedged, or our
+  PID 1 was SELinux-denied its fallback (risk #2). Reflash the passthrough image
+  in-OS. If useful, rebuild with SELinux forced permissive to isolate.
 
 ## Risk rank for this test
-1. oss-pid1 pre-handoff crash → PID-1 panic → physical Download-mode rescue.
-   Low probability, high effort to recover; **this is why the test is attended.**
-2. Everything else ≈ today's risk; the happy path is byte-identical and the
-   fallback path is a normal Android boot.
+1. Container hang after liveness, before adbd/watchdogd → watchdog reset loop →
+   physical rescue. Low probability, high recovery effort. **Attended only.**
+2. SELinux denies our PID-1 fallback after a late container death → Moon down,
+   maybe-live adb. Medium uncertainty; mitigated by the passthrough fallback
+   image and a permissive test build.
+3. Everything else ≈ today's risk (iron rule → today's boot).
 
-Recommendation: worth running **once, attended**, as it validates real PID-1
-ownership at near-zero behavioral cost. If a bad boot occurs, restore the
-known-good BOOT and keep stage 1 as the shipping default; stage 2's value is
-the groundwork + proof, not a required daily-driver change.
+Recommendation: run attended after Stage A passes. Containment is the real
+stage-2 milestone; if it is not yet stable on-device, keep the OSS-kernel
+passthrough (Stage A) or stage 1 as the shipping default while iterating — the
+groundwork, image, and validated fallback logic are the deliverable either way.
