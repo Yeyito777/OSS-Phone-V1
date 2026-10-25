@@ -6,8 +6,11 @@ BB="$ROOT/busybox.static"
 PERSIST=/data/adb/moon
 BASE="$ROOT/opt/a26-audio"
 RUNTIME=/data/local/tmp/moon-audio
-JAR="$BASE/moon-audio-bridge.jar"
+AUDIOD="$BASE/moon-audiod"
+PERMISSIOND="$BASE/moon-permissiond"
 LOG="$BASE/bridge.log"
+PERMISSION_LOG="$BASE/permissiond.log"
+PERMISSION_PIDFILE="$RUNTIME/permissiond.pid"
 PIDFILE="$RUNTIME/bridge.pid"
 MEDIA_HEARTBEAT="$RUNTIME/browser-media-active"
 
@@ -15,7 +18,14 @@ valid_bridge_pid() {
     pid="$(cat "$PIDFILE" 2>/dev/null || true)"
     case "$pid" in ''|*[!0-9]*) return 1 ;; esac
     [ -r "/proc/$pid/cmdline" ] || return 1
-    tr '\000' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q 'moon.audio.Bridge'
+    tr '\000' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q "^$AUDIOD "
+}
+
+valid_permissiond_pid() {
+    ppid="$(cat "$PERMISSION_PIDFILE" 2>/dev/null || true)"
+    case "$ppid" in ''|*[!0-9]*) return 1 ;; esac
+    [ -r "/proc/$ppid/cmdline" ] || return 1
+    tr '\000' ' ' <"/proc/$ppid/cmdline" 2>/dev/null | grep -q "^$PERMISSIOND "
 }
 
 if valid_bridge_pid && kill -0 "$pid" 2>/dev/null; then
@@ -25,27 +35,35 @@ fi
 rm -f "$PIDFILE" "$MEDIA_HEARTBEAT"
 
 [ -x "$BB" ] || { echo "Moon BusyBox is unavailable" >&2; exit 20; }
-[ -r "$JAR" ] || { echo "Moon audio bridge is unavailable" >&2; exit 21; }
-
-# AudioTrack authorization depends on PackageManager, PermissionManager, and
-# AudioService. This script must complete before the graphics takeover stops
-# zygote/system_server.
-framework_ready=0
-for _ in $($BB seq 1 90); do
-    if service check package 2>/dev/null | grep -q 'found' &&
-       service check audio 2>/dev/null | grep -q 'found' &&
-       [ "$(getprop init.svc.bootanim)" = stopped ]; then
-        framework_ready=1
-        break
-    fi
-    sleep 1
-done
-[ "$framework_ready" = 1 ] || {
-    echo "Android audio authorization services are not ready" >&2
+[ -x "$AUDIOD" ] || { echo "Moon audio daemon is unavailable" >&2; exit 21; }
+[ -x "$PERMISSIOND" ] || { echo "Moon permission service is unavailable" >&2; exit 21; }
+[ -n "$(pidof audioserver 2>/dev/null || true)" ] || {
+    echo "audioserver is not running" >&2
     exit 22
 }
-
 mkdir -p "$RUNTIME" "$BASE"
+
+# AudioFlinger resolves every new track's package through system_server's
+# "permission" service and aborts after a 10 s wait when it is missing. Without
+# the Java framework, register Moon's native stand-in; when the framework is up
+# its real service is used and the stand-in is never started.
+if ! valid_permissiond_pid; then
+    if service check permission 2>/dev/null | grep -q 'not found'; then
+        rm -f "$PERMISSION_PIDFILE"
+        "$BB" nohup "$BB" setsid "$PERMISSIOND" "$PERMISSION_PIDFILE" \
+            >"$PERMISSION_LOG" 2>&1 </dev/null &
+        for _ in $($BB seq 1 25); do
+            valid_permissiond_pid && break
+            "$BB" sleep 0.2
+        done
+        valid_permissiond_pid || {
+            echo "Moon permission service failed to start" >&2
+            cat "$PERMISSION_LOG" >&2 2>/dev/null || true
+            exit 25
+        }
+    fi
+fi
+
 rm -f "$RUNTIME/pcm"
 mknod "$RUNTIME/pcm" p || exit 23
 if [ -r "$PERSIST/volume" ]; then
@@ -60,11 +78,14 @@ chown 1000:1000 "$RUNTIME" "$RUNTIME/pcm" "$RUNTIME/volume"
 chmod 0770 "$RUNTIME"
 chmod 0660 "$RUNTIME/pcm" "$RUNTIME/volume"
 : >"$LOG"
-chown 1000:1000 "$LOG"
 chmod 0640 "$LOG"
 
-"$BB" nohup "$BB" setsid /debug_ramdisk/magisk su 1000 -c \
-    "CLASSPATH=$JAR app_process /system/bin moon.audio.Bridge $RUNTIME/pcm $RUNTIME/volume $PIDFILE $MEDIA_HEARTBEAT" \
+# Runs as root: audioserver exempts service UIDs from AppOps, which is part of
+# system_server too. The music stream's speaker index is the loudness ceiling.
+stream_index="$(sed -n 's/^AUDIO_STREAM_INDEX=//p' "$PERSIST/config" 2>/dev/null | tail -1)"
+case "$stream_index" in ''|*[!0-9]*) stream_index=5 ;; esac
+MOON_AUDIO_STREAM_INDEX="$stream_index" "$BB" nohup "$BB" setsid "$AUDIOD" \
+    "$RUNTIME/pcm" "$RUNTIME/volume" "$PIDFILE" "$MEDIA_HEARTBEAT" \
     >>"$LOG" 2>&1 </dev/null &
 launcher=$!
 

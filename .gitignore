@@ -12,11 +12,13 @@
 /src/*
 !/src/a26-shell/
 !/src/a26-audio-bridge/
+!/src/moon-audiod/
 /src/a26-shell/target/
 
 /scripts/*
 !/scripts/a26-shell/
 !/scripts/device/
+!/scripts/direct-boot/
 /scripts/device/*
 !/scripts/device/90-moon-autostart.sh
 !/scripts/device/moon-boot-supervisor.sh
@@ -32,6 +34,7 @@
 
 /notes/*
 !/notes/a26-shell/
+!/notes/direct-boot/
 /notes/a26-shell/*
 !/notes/a26-shell/README.md
 !/notes/a26-shell/APPLE-KEYBOARD-LAYOUT.md
