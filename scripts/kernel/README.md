@@ -26,7 +26,7 @@ About 12 minutes per kernel on 12 cores. Outputs: `$KROOT/out/<variant>-<source>
 | Config | `configs/A266MUBU1AYB8.config` = the phone's `/proc/config.gz` | Byte-identical to the IKCONFIG extracted from the stock `boot.img` kernel. |
 | Source (official) | `SM-A266M_LA_15_Opensource.zip`, opensource.samsung.com upload 13000, 278 700 980 bytes | Samsung's release for exactly A266MUBU1AYB8. Needs a human to accept the download terms (below). |
 | Source (tonight) | `github.com/physwizz/A266m-V-LA` commit `d569a477`, tree `d779b6c1` | Public GPL re-upload of that release. Its saved defconfig differs from the phone's config only in `LOCALVERSION="-physwizz"` and the whitelist path; we use our own config. |
-| Build environment | in-tree build in a `bwrap` sandbox with the tree at Samsung's path `/home/dpi/qb5_8814/workspace/P4_1716/android/kernel/s5e8825`, `TARGET_BUILD_VARIANT=user`, `LLVM=1 LLVM_IAS=1`, banner `dpi@21DND505`, `Fri Feb 21 20:40:50 KST 2025`, `.scmversion` | That path is baked into the stock config (`CONFIG_UNUSED_KSYMS_WHITELIST`). `TARGET_BUILD_VARIANT=user` selects production DEFEX/MZ/NGKSM code (without it DEFEX builds permissive). |
+| Build environment | in-tree build in a `bwrap` sandbox with the tree at Samsung's path `/home/dpi/qb5_8814/workspace/P4_1716/android/kernel/s5e8825` and the toolchain at `/home/dpi/qb5_8814/workspace/P4_1716/android/prebuilts/clang/host/linux-x86/clang-r416183`, `TARGET_BUILD_VARIANT=user`, `LLVM=1 LLVM_IAS=1`, banner `dpi@21DND505`, `Fri Feb 21 20:40:50 KST 2025`, `.scmversion` | The source path is baked into the stock config (`CONFIG_UNUSED_KSYMS_WHITELIST`). The toolchain path ends up in debug info (compiler `stdarg.h`), hence in ThinLTO hashes and build IDs; it was found by rebuilding `kperfmon.ko` until it matched Samsung's prebuilt byte for byte, build ID included, and makes the output independent of `$KROOT`. `TARGET_BUILD_VARIANT=user` selects production DEFEX/MZ/NGKSM code (without it DEFEX builds permissive). |
 
 ### Getting Samsung's official source (needs a person, ~2 minutes)
 
@@ -58,17 +58,21 @@ beyond doubt.
 | 306 vendor modules (304 vendor_boot + 2 vendor_dlkm): every import resolves, 13 508 vmlinux imports + 306 `module_layout` CRCs match, vermagic matches | `check-kmi.py` | 0 problems | 0 problems |
 | Module signatures | `check-kmi.py` | `CONFIG_MODULE_SIG` off, no module signed, no `sig_enforce` on the phone | same |
 | Functions (unique names, layout immediates masked) | `compare-functions.py` | 55 203 / 55 207 identical (99.99 %; the 4 others are section markers) | 99.79 % (DEFEX gone, PID_NS/devtmpfs added) |
-| Rebuilt in-tree modules vs Samsung's prebuilt `.ko` (after `--strip-debug`) | `compare-builds.py` | 258 / 304 byte-identical; the other 46 differ only in ThinLTO `.llvm.<hash>` promotion names | — |
+| Rebuilt in-tree modules vs Samsung's prebuilt `.ko` (after `--strip-debug`) | `compare-builds.py` | 274 / 304 byte-identical; the other 30 have identical code and differ in ThinLTO `.llvm.<hash>` promotion names | — |
 | Struct layouts (pahole over vmlinux DWARF) | manual, see below | — | no shared struct changed |
-| Whole Image | `compare-builds.py` | same size (34 044 416), same banner, 28 % of bytes differ (layout shift) | — |
+| Whole Image | `compare-builds.py` | same size (34 044 416), same banner, same embedded config, 28 % of bytes differ (function order, see below) | — |
 | BOOT pipeline | `build-all.sh` self-test | the stock kernel through `make-boot-image.sh` reproduces today's flashed BOOT image byte for byte (`3bf29162…`) | — |
 
-Why the Image is not byte-identical although every function is: the published
-tree is not exactly Samsung's build tree (its Kconfig lacks Samsung's internal
-"Block kunit"/"File systems kunit" menus and `CONFIG_SEC_AUTO_INPUT`, so the
-embedded config differs), and ThinLTO promotion names
-(`.llvm.<module hash>`) differ, which reorders symbols. Rerun against the
-official zip in the morning; `fetch-source.sh samsung` prints the differences.
+Why the Image is not byte-identical although every function is: ThinLTO
+names promoted symbols `.llvm.<hash of the object's bitcode>`, and only 96 of
+608 vmlinux objects hash as in Samsung's build, which changes symbol order and
+so every address. The bitcode includes debug info, so this fits small
+non-code differences (e.g. line numbers in widely included headers) between
+the published tree and Samsung's build tree; the tree certainly differs a
+little (its Kconfig lacks `CONFIG_SEC_AUTO_INPUT` and Samsung's "Block kunit" /
+"File systems kunit" menus; the reproduction embeds the phone's config text
+anyway). Rerun against the official zip; `fetch-source.sh samsung` prints the
+differences from the mirror.
 
 ## The OSS variant (`configs/oss-phone.fragment`)
 

@@ -119,5 +119,5 @@ mkdir -p "$out/modules"
 find "$s" -name '*.ko' -exec cp {} "$out/modules/" \;
 (cd "$out" && sha256sum Image vmlinux >SHA256SUMS)
 echo "kernelrelease: $(cat "$out/kernelrelease")"
-strings "$out/Image" | grep -m1 '^Linux version '
+{ strings "$out/Image" | grep -m1 '^Linux version '; } || true  # grep -m1 SIGPIPEs strings
 cat "$out/SHA256SUMS"
