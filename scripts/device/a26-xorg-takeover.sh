@@ -49,6 +49,29 @@ if [ -n "$(pidof system_server 2>/dev/null || true)" ]; then
     exit 31
 fi
 
+# MTP/PTP are FunctionFS functions served by MediaProvider, which just stopped
+# with the framework. With a daemonless function in the configuration the
+# kernel unbinds the whole gadget on the next cable disconnect and only the
+# framework would rebind it, so a replug while Moon runs would lose USB
+# entirely. Keep only adb (and Samsung's kernel-side function) until Android
+# resumes and its UsbDeviceManager reapplies the user's USB mode.
+case "$(getprop sys.usb.config)" in
+    *mtp*|*ptp*)
+        echo "switching USB from $(getprop sys.usb.config) to adb-only"
+        setprop sys.usb.config none
+        for _ in $(seq 1 20); do
+            [ "$(getprop sys.usb.state)" = none ] && break
+            sleep 0.5
+        done
+        setprop sys.usb.config adb
+        for _ in $(seq 1 20); do
+            [ "$(getprop sys.usb.state)" = adb ] && break
+            sleep 0.5
+        done
+        echo "USB state is $(getprop sys.usb.state)"
+        ;;
+esac
+
 /system/bin/stop surfaceflinger
 sleep 2
 /system/bin/stop vendor.hwcomposer-2-4

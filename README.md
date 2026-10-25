@@ -150,6 +150,8 @@ authorized ADB host can bypass it by design.
 - Audio currently targets the built-in speaker through Android's native
   AudioFlinger/HAL services; Bluetooth and USB audio routing are not yet exposed.
 - The native Xorg/DRM takeover environment must be prepared separately.
+- While Moon runs, USB exposes only adb: MTP/PTP file transfer needs Android's
+  MediaProvider, which is stopped with the framework.
 
 ## License
 
