@@ -68,10 +68,10 @@ sandbox() {
     bwrap --ro-bind /usr /usr --ro-bind /etc /etc \
         --symlink usr/lib /lib --symlink usr/lib /lib64 --symlink usr/bin /bin --symlink usr/bin /sbin \
         --proc /proc --dev /dev --tmpfs /tmp \
-        --ro-bind "$CLANG" "$CLANG" \
+        --ro-bind "$CLANG" "$SAMSUNG_CLANG_PATH" \
         --bind "$work/src" "$SAMSUNG_SRC_PATH" --chdir "$SAMSUNG_SRC_PATH" \
         --unshare-net --clearenv \
-        --setenv PATH "$CLANG/bin:/usr/bin" --setenv HOME /tmp --setenv LC_ALL C --setenv TZ UTC \
+        --setenv PATH "$SAMSUNG_CLANG_PATH/bin:/usr/bin" --setenv HOME /tmp --setenv LC_ALL C --setenv TZ UTC \
         "$@"
 }
 
@@ -91,6 +91,17 @@ if [[ "$variant" == stock ]] && grep '^[<>]' "$out/config-vs-stock.diff" | grep 
     echo "Stock config did not survive olddefconfig:" >&2
     cat "$out/config-vs-stock.diff" >&2
     exit 1
+fi
+
+# For the reproduction, embed the phone's config text byte for byte
+# (IKCONFIG, /proc/config.gz). The published tree lacks a few Kconfig entries
+# Samsung's had (SEC_AUTO_INPUT, two kunit menus), so the regenerated .config
+# text differs by those lines although every value is the same; point
+# kernel/config_data at the stock file instead. Build-only, values unchanged.
+if [[ "$variant" == stock ]]; then
+    cp "$STOCK_CONFIG" "$work/src/kernel/stock.config"
+    sed -i 's|^\$(obj)/config_data: \$(KCONFIG_CONFIG) FORCE$|$(obj)/config_data: $(srctree)/kernel/stock.config FORCE|' "$work/src/kernel/Makefile"
+    grep -q 'kernel/stock.config FORCE' "$work/src/kernel/Makefile"
 fi
 
 echo "Building $name ($(nproc) jobs); log: $out/build.log"

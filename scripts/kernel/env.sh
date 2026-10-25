@@ -36,6 +36,12 @@ MIRROR_TREE=d779b6c1f9810bc9a78d75a58f9163ee3b82dc23
 # in a bwrap sandbox with the source mounted here, so nothing is rewritten.
 SAMSUNG_SRC_PATH=/home/dpi/qb5_8814/workspace/P4_1716/android/kernel/s5e8825
 
+# ...and the toolchain lived here: the compiler's own headers (stdarg.h) are
+# referenced by path in the debug info, which feeds ThinLTO module hashes and
+# build IDs. Found by rebuilding kperfmon.ko until it matched Samsung's byte
+# for byte (build ID included).
+SAMSUNG_CLANG_PATH=/home/dpi/qb5_8814/workspace/P4_1716/android/prebuilts/clang/host/linux-x86/clang-r416183
+
 # Stock build identity, reproduced in the banner.
 STOCK_BUILD_USER=dpi
 STOCK_BUILD_HOST=21DND505
