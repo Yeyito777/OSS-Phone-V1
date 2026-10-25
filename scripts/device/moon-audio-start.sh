@@ -28,12 +28,6 @@ valid_permissiond_pid() {
     tr '\000' ' ' <"/proc/$ppid/cmdline" 2>/dev/null | grep -q "^$PERMISSIOND "
 }
 
-if valid_bridge_pid && kill -0 "$pid" 2>/dev/null; then
-    echo "moon audio bridge already running pid=$pid"
-    exit 0
-fi
-rm -f "$PIDFILE" "$MEDIA_HEARTBEAT"
-
 [ -x "$BB" ] || { echo "Moon BusyBox is unavailable" >&2; exit 20; }
 [ -x "$AUDIOD" ] || { echo "Moon audio daemon is unavailable" >&2; exit 21; }
 [ -x "$PERMISSIOND" ] || { echo "Moon permission service is unavailable" >&2; exit 21; }
@@ -44,25 +38,30 @@ rm -f "$PIDFILE" "$MEDIA_HEARTBEAT"
 mkdir -p "$RUNTIME" "$BASE"
 
 # AudioFlinger resolves every new track's package through system_server's
-# "permission" service and aborts after a 10 s wait when it is missing. Without
-# the Java framework, register Moon's native stand-in; when the framework is up
-# its real service is used and the stand-in is never started.
-if ! valid_permissiond_pid; then
-    if service check permission 2>/dev/null | grep -q 'not found'; then
-        rm -f "$PERMISSION_PIDFILE"
-        "$BB" nohup "$BB" setsid "$PERMISSIOND" "$PERMISSION_PIDFILE" \
-            >"$PERMISSION_LOG" 2>&1 </dev/null &
-        for _ in $($BB seq 1 25); do
-            valid_permissiond_pid && break
-            "$BB" sleep 0.2
-        done
-        valid_permissiond_pid || {
-            echo "Moon permission service failed to start" >&2
-            cat "$PERMISSION_LOG" >&2 2>/dev/null || true
-            exit 25
-        }
-    fi
+# "permission" service and aborts audioserver after a 10 s wait when it is
+# missing. Without the Java framework, register Moon's native stand-in (it
+# replaces a stale registration of a stopped system_server); while the
+# framework runs, its real service is used instead.
+if [ -z "$(pidof system_server 2>/dev/null || true)" ] && ! valid_permissiond_pid; then
+    rm -f "$PERMISSION_PIDFILE"
+    "$BB" nohup "$BB" setsid "$PERMISSIOND" "$PERMISSION_PIDFILE" \
+        >"$PERMISSION_LOG" 2>&1 </dev/null &
+    for _ in $($BB seq 1 25); do
+        valid_permissiond_pid && break
+        "$BB" sleep 0.2
+    done
+    valid_permissiond_pid || {
+        echo "Moon permission service failed to start" >&2
+        cat "$PERMISSION_LOG" >&2 2>/dev/null || true
+        exit 25
+    }
 fi
+
+if valid_bridge_pid && kill -0 "$pid" 2>/dev/null; then
+    echo "moon audio bridge already running pid=$pid"
+    exit 0
+fi
+rm -f "$PIDFILE" "$MEDIA_HEARTBEAT"
 
 rm -f "$RUNTIME/pcm"
 mknod "$RUNTIME/pcm" p || exit 23

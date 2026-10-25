@@ -5,11 +5,13 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$PROJECT_ROOT/scripts/a26-shell/common.sh"
 SERIAL="$(a26_resolve_serial)"
 
-"$PROJECT_ROOT/scripts/a26-shell/build-audio-bridge.sh"
-AUDIO_JAR="$PROJECT_ROOT/images/a26-audio-bridge/moon-audio-bridge.jar"
+AUDIOD_DIR="$PROJECT_ROOT/images/moon-audiod"
+[[ -x "$AUDIOD_DIR/moon-audiod" && -x "$AUDIOD_DIR/moon-permissiond" ]] ||
+    "$PROJECT_ROOT/scripts/a26-shell/build-audiod.sh"
 
 for script in \
     "$PROJECT_ROOT/scripts/device/moon-boot-supervisor.sh" \
+    "$PROJECT_ROOT/scripts/device/moon-direct-policy.sh" \
     "$PROJECT_ROOT/scripts/device/moon-audio-start.sh" \
     "$PROJECT_ROOT/scripts/device/moon-audio-stop.sh" \
     "$PROJECT_ROOT/scripts/device/moon-suspend-cycle.sh" \
@@ -34,8 +36,12 @@ adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-audio-stop.sh" \
     /data/local/tmp/moon-audio-stop.sh >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-suspend-cycle.sh" \
     /data/local/tmp/moon-suspend-cycle.sh >/dev/null
-adb -s "$SERIAL" push "$AUDIO_JAR" \
-    /data/local/tmp/moon-audio-bridge.jar >/dev/null
+adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-direct-policy.sh" \
+    /data/local/tmp/moon-direct-policy.sh >/dev/null
+adb -s "$SERIAL" push "$AUDIOD_DIR/moon-audiod" \
+    /data/local/tmp/moon-audiod >/dev/null
+adb -s "$SERIAL" push "$AUDIOD_DIR/moon-permissiond" \
+    /data/local/tmp/moon-permissiond >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/a26-enter-chroot.sh" \
     /data/local/tmp/a26-enter-chroot.sh.new >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/a26-xorg-takeover.sh" \
@@ -65,8 +71,12 @@ cp /data/local/tmp/moon-audio-stop.sh \
     /data/adb/moon/moon-audio-stop.sh.new
 cp /data/local/tmp/moon-suspend-cycle.sh \
     /data/adb/moon/moon-suspend-cycle.sh.new
-cp /data/local/tmp/moon-audio-bridge.jar \
-    /data/local/a26-linux/opt/a26-audio/moon-audio-bridge.jar.new
+cp /data/local/tmp/moon-direct-policy.sh \
+    /data/adb/moon/moon-direct-policy.sh.new
+cp /data/local/tmp/moon-audiod \
+    /data/local/a26-linux/opt/a26-audio/moon-audiod.new
+cp /data/local/tmp/moon-permissiond \
+    /data/local/a26-linux/opt/a26-audio/moon-permissiond.new
 cp /data/local/tmp/a26-enter-chroot.sh.new \
     /data/local/a26-linux/a26-enter-chroot.sh.new
 cp /data/local/tmp/a26-xorg-takeover.sh.new \
@@ -84,7 +94,9 @@ chown 0:0 \
     /data/adb/moon/moon-audio-start.sh.new \
     /data/adb/moon/moon-audio-stop.sh.new \
     /data/adb/moon/moon-suspend-cycle.sh.new \
-    /data/local/a26-linux/opt/a26-audio/moon-audio-bridge.jar.new \
+    /data/adb/moon/moon-direct-policy.sh.new \
+    /data/local/a26-linux/opt/a26-audio/moon-audiod.new \
+    /data/local/a26-linux/opt/a26-audio/moon-permissiond.new \
     /data/local/a26-linux/a26-enter-chroot.sh.new \
     /data/local/tmp/a26-xorg-takeover.sh \
     /data/local/tmp/a26-xorg-safety-watchdog.sh \
@@ -94,8 +106,11 @@ chmod 0700 /data/adb/moon/moon-boot-supervisor.sh.new
 chmod 0700 \
     /data/adb/moon/moon-audio-start.sh.new \
     /data/adb/moon/moon-audio-stop.sh.new \
-    /data/adb/moon/moon-suspend-cycle.sh.new
-chmod 0644 /data/local/a26-linux/opt/a26-audio/moon-audio-bridge.jar.new
+    /data/adb/moon/moon-suspend-cycle.sh.new \
+    /data/adb/moon/moon-direct-policy.sh.new
+chmod 0755 \
+    /data/local/a26-linux/opt/a26-audio/moon-audiod.new \
+    /data/local/a26-linux/opt/a26-audio/moon-permissiond.new
 chmod 0755 /data/local/a26-linux/a26-enter-chroot.sh.new
 chmod 0755 \
     /data/adb/service.d/90-moon-autostart.sh.new \
@@ -114,8 +129,12 @@ mv -f /data/adb/moon/moon-audio-stop.sh.new \
     /data/adb/moon/moon-audio-stop.sh
 mv -f /data/adb/moon/moon-suspend-cycle.sh.new \
     /data/adb/moon/moon-suspend-cycle.sh
-mv -f /data/local/a26-linux/opt/a26-audio/moon-audio-bridge.jar.new \
-    /data/local/a26-linux/opt/a26-audio/moon-audio-bridge.jar
+mv -f /data/adb/moon/moon-direct-policy.sh.new \
+    /data/adb/moon/moon-direct-policy.sh
+mv -f /data/local/a26-linux/opt/a26-audio/moon-audiod.new \
+    /data/local/a26-linux/opt/a26-audio/moon-audiod
+mv -f /data/local/a26-linux/opt/a26-audio/moon-permissiond.new \
+    /data/local/a26-linux/opt/a26-audio/moon-permissiond
 mv -f /data/local/a26-linux/a26-enter-chroot.sh.new \
     /data/local/a26-linux/a26-enter-chroot.sh
 
@@ -125,6 +144,9 @@ MIN_START_BATTERY=20
 LOW_BATTERY_FALLBACK=8
 MAX_START_FAILURES=3
 OVERRIDE_WINDOW_SECONDS=8
+DIRECT_BOOT=1
+DIRECT_OVERRIDE_SECONDS=3
+AUDIO_STREAM_INDEX=5
 EOF
     chown 0:0 /data/adb/moon/config
     chmod 0600 /data/adb/moon/config
@@ -137,7 +159,9 @@ rm -f \
     /data/local/tmp/moon-audio-start.sh \
     /data/local/tmp/moon-audio-stop.sh \
     /data/local/tmp/moon-suspend-cycle.sh \
-    /data/local/tmp/moon-audio-bridge.jar \
+    /data/local/tmp/moon-direct-policy.sh \
+    /data/local/tmp/moon-audiod \
+    /data/local/tmp/moon-permissiond \
     /data/local/tmp/a26-enter-chroot.sh.new \
     /data/local/tmp/a26-xorg-takeover.sh.new \
     /data/local/tmp/a26-xorg-safety-watchdog.sh.new \
@@ -150,8 +174,11 @@ ls -lZ \
     /data/adb/moon/moon-audio-start.sh \
     /data/adb/moon/moon-audio-stop.sh \
     /data/adb/moon/moon-suspend-cycle.sh \
-    /data/local/a26-linux/opt/a26-audio/moon-audio-bridge.jar \
+    /data/adb/moon/moon-direct-policy.sh \
+    /data/local/a26-linux/opt/a26-audio/moon-audiod \
+    /data/local/a26-linux/opt/a26-audio/moon-permissiond \
     /data/adb/moon/config
 '\'''
 
-echo 'Installed and enabled autonomous Moon boot under Magisk service.d.'
+echo 'Installed and enabled autonomous Moon boot: direct boot when the boot image'
+echo 'carries scripts/direct-boot, otherwise the Magisk service.d takeover.'

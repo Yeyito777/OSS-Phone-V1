@@ -35,7 +35,9 @@ key policy, and a root-only Unix-socket control interface over ADB.
 
 ```text
 src/a26-shell/          Rust window-manager crate
-src/a26-audio-bridge/   Minimal Android AudioTrack bridge source
+src/moon-audiod/        Native AAudio sink and "permission" stand-in (no framework)
+src/a26-audio-bridge/   Former Android AudioTrack bridge source
+scripts/direct-boot/    Boot-ramdisk overlay: power-on straight into Moon
 scripts/a26-shell/      build, install, lifecycle, IPC, and test helpers
 notes/a26-shell/        curated screenshots and design verification
 ```
@@ -116,9 +118,13 @@ scripts/a26-shell/install-autostart.sh
 scripts/a26-shell/autostart.sh status
 ```
 
-The Magisk `service.d` entry waits for Android/vendor initialization and data
-decryption, pre-authorizes Moon's AudioTrack bridge, then performs the proven DRM
-handoff, verifies Xorg locally, starts Moon, and monitors the session without a
+With the direct-boot BOOT image (`scripts/direct-boot/`), Android's init still
+brings the hardware up but the Java framework never starts: Moon is on screen
+about half a minute after power-on, and pressing a volume key while the boot
+animation shows starts normal Android instead. Without that image, the Magisk
+`service.d` entry waits for Android to finish booting, suspends the framework,
+then performs the same proven DRM handoff. Either way the supervisor verifies
+Xorg locally, starts native audio and Moon, and monitors the session without a
 host computer. Android remains active
 instead when the preceding boot was a kernel panic, required hardware is
 missing, startup repeatedly fails, or the battery is too low. At runtime Moon
@@ -159,8 +165,9 @@ authorized ADB host can bypass it by design.
   a general manifest/discovery protocol is the next launcher milestone.
 - Touch taps and one-finger swipes work; multitouch/pinch policy is not yet
   implemented.
-- Audio currently targets the built-in speaker through Android's native
-  AudioFlinger/HAL services; Bluetooth and USB audio routing are not yet exposed.
+- Audio targets the built-in speaker through Android's native AudioFlinger/HAL
+  services via AAudio (no Java framework); Bluetooth and USB audio routing are
+  not yet exposed.
 - The native Xorg/DRM takeover environment must be prepared separately.
 - While Moon runs, USB exposes only adb: MTP/PTP file transfer needs Android's
   MediaProvider, which is stopped with the framework.

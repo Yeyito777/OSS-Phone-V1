@@ -1,5 +1,13 @@
 #!/system/bin/sh
+# Moon's session supervisor. Two entry points:
+#   (no argument)  legacy: Magisk service.d after Android fully booted; suspends
+#                  the Java framework, then takes over the display
+#   --direct       direct boot: init service moon-session (boot ramdisk) when
+#                  moon.boot.mode=moon; the framework was never started
 set -u
+
+DIRECT=0
+[ "${1:-}" != --direct ] || DIRECT=1
 
 ROOT=/data/local/a26-linux
 BB="$ROOT/busybox.static"
@@ -64,14 +72,22 @@ echo "$boot_id" >"$LOCK/boot-id"
 cleanup_lock() { rm -rf "$LOCK"; }
 trap cleanup_lock EXIT HUP INT TERM
 
-log "supervisor start boot_id=$boot_id reason=$(getprop ro.boot.bootreason)"
+log "supervisor start boot_id=$boot_id reason=$(getprop ro.boot.bootreason) direct=$DIRECT"
 
-[ ! -e "$PERSIST/disabled" ] || { log 'autostart disabled'; exit 0; }
+if [ "$DIRECT" = 0 ]; then
+    # With the direct-boot ramdisk, its policy already decided this boot.
+    boot_mode="$(getprop moon.boot.mode)"
+    [ -z "$boot_mode" ] || {
+        log "direct boot owns this boot (moon.boot.mode=$boot_mode)"
+        exit 0
+    }
+    [ ! -e "$PERSIST/disabled" ] || { log 'autostart disabled'; exit 0; }
 
-if [ -e "$PERSIST/skip-once" ]; then
-    rm -f "$PERSIST/skip-once"
-    log 'consumed skip-once; leaving Android active'
-    exit 0
+    if [ -e "$PERSIST/skip-once" ]; then
+        rm -f "$PERSIST/skip-once"
+        log 'consumed skip-once; leaving Android active'
+        exit 0
+    fi
 fi
 
 previous_attempt="$(cat "$PERSIST/last-attempt-boot-id" 2>/dev/null || true)"
@@ -87,12 +103,82 @@ LOW_BATTERY_FALLBACK="$(config_uint LOW_BATTERY_FALLBACK 8)"
 MAX_START_FAILURES="$(config_uint MAX_START_FAILURES 3)"
 OVERRIDE_WINDOW_SECONDS="$(config_uint OVERRIDE_WINDOW_SECONDS 8)"
 
+DIRECT_OVERRIDE_SECONDS="$(config_uint DIRECT_OVERRIDE_SECONDS 3)"
+
 failures="$(read_uint "$PERSIST/start-failures" 0)"
-if [ "$failures" -ge "$MAX_START_FAILURES" ]; then
+if [ "$DIRECT" = 0 ] && [ "$failures" -ge "$MAX_START_FAILURES" ]; then
     log "failure limit reached ($failures/$MAX_START_FAILURES); leaving Android active"
     exit 0
 fi
 
+# Hand a direct boot to Android exactly as a normal boot would have continued:
+# the framework services were stopped right after zygote-start and
+# SurfaceFlinger/the composer are still running.
+start_android_framework() {
+    setprop moon.boot.mode android
+    write_uint "$PERSIST/start-failures" "$((failures > 0 ? failures - 1 : 0))"
+    /system/bin/start zygote
+    /system/bin/start zygote_secondary
+}
+
+if [ "$DIRECT" = 1 ]; then
+    # Physical escape hatch: either volume key from now until shortly after the
+    # boot animation appears starts Android instead. Not after a deep-suspend
+    # resume, whose wake source can be a volume key.
+    override_log="$RUNTIME/volume-override.$$"
+    event_pid=''
+    rm -f "$override_log"
+    case "$(getprop ro.boot.bootreason)" in
+        *moon-suspend-resume*) ;;
+        *)
+            if [ "$DIRECT_OVERRIDE_SECONDS" -gt 0 ]; then
+                for _ in $($BB seq 1 50); do
+                    [ -c /dev/input/event0 ] && break
+                    "$BB" sleep 0.1
+                done
+                /system/bin/getevent -ql /dev/input/event0 >"$override_log" 2>&1 &
+                event_pid=$!
+            fi
+            ;;
+    esac
+    volume_pressed() {
+        [ -n "$event_pid" ] && grep -Eq 'KEY_VOLUME(UP|DOWN)[[:space:]]+DOWN' "$override_log" 2>/dev/null
+    }
+
+    # The composer and SurfaceFlinger initialize the panel; the boot animation
+    # starting means SurfaceFlinger finished. Xorg then takes over the display
+    # exactly as after a full Android boot.
+    ready=0
+    sf_ticks=0
+    shown_ticks=0
+    for _ in $($BB seq 1 600); do
+        if volume_pressed; then
+            kill "$event_pid" 2>/dev/null || true
+            rm -f "$override_log"
+            log 'volume-key override requested; starting the Android framework'
+            start_android_framework
+            exit 0
+        fi
+        if [ "$(getprop init.svc.surfaceflinger)" = running ] &&
+           [ -c /dev/dri/card0 ] && [ -c /dev/input/event0 ] &&
+           [ -x "$ROOT/a26-enter-chroot.sh" ]; then
+            sf_ticks=$((sf_ticks + 1))
+            # 100 ms ticks; proceed without an animation after 5 s.
+            if [ "$(getprop init.svc.bootanim)" = running ] || [ "$sf_ticks" -ge 50 ]; then
+                shown_ticks=$((shown_ticks + 1))
+                if [ "$shown_ticks" -ge $((DIRECT_OVERRIDE_SECONDS * 10)) ]; then
+                    ready=1
+                    break
+                fi
+            fi
+        fi
+        "$BB" sleep 0.1
+    done
+    [ -z "$event_pid" ] || kill "$event_pid" 2>/dev/null || true
+    rm -f "$override_log"
+    [ "$ready" = 1 ] || { log 'SurfaceFlinger/display bootstrap timed out'; exit 20; }
+    log "display bootstrap ready; boot animation=$(getprop init.svc.bootanim)"
+else
 # Magisk service.d runs before Android has necessarily finished initializing
 # Samsung's vendor services. Let Android initialize/decrypt everything first.
 ready=0
@@ -155,6 +241,7 @@ if [ "$capacity" -lt "$MIN_START_BATTERY" ]; then
         capacity="$(read_uint /sys/class/power_supply/battery/capacity 100)"
     done
 fi
+fi
 
 for required in \
     "$BB" \
@@ -163,6 +250,8 @@ for required in \
     "$ROOT/opt/a26-shell/bin/a26-shellctl" \
     "$PERSIST/moon-audio-start.sh" \
     "$PERSIST/moon-audio-stop.sh" \
+    "$ROOT/opt/a26-audio/moon-audiod" \
+    "$ROOT/opt/a26-audio/moon-permissiond" \
     /data/local/tmp/a26-xorg-takeover.sh \
     /data/local/tmp/a26-xorg-safety-watchdog.sh \
     /data/local/tmp/a26-android-graphics-restore.sh \
@@ -173,20 +262,11 @@ do
         exit 21
     }
 done
-[ -r "$ROOT/opt/a26-audio/moon-audio-bridge.jar" ] || {
-    log 'required audio bridge JAR is unreadable'
-    exit 21
-}
-
-if ! /system/bin/sh "$PERSIST/moon-audio-start.sh"; then
-    log 'audio bridge did not become ready; leaving Android active'
-    /system/bin/sh "$PERSIST/moon-audio-stop.sh" 2>/dev/null || true
-    exit 22
+# The direct-boot policy already counted this attempt before zygote-start.
+if [ "$DIRECT" = 0 ]; then
+    failures=$((failures + 1))
+    write_uint "$PERSIST/start-failures" "$failures"
 fi
-log "audio bridge ready pid=$(cat /data/local/tmp/moon-audio/bridge.pid 2>/dev/null || true)"
-
-failures=$((failures + 1))
-write_uint "$PERSIST/start-failures" "$failures"
 token="moon-${boot_id%%-*}-$failures"
 rm -f "$ROOT/root/xorg-session.status"
 rm -rf "$XORG_STATE/restore.lock"
@@ -215,6 +295,15 @@ if [ "$xorg_ready" != 1 ]; then
 fi
 echo "$token" >"$XORG_STATE/keep-token"
 log "Xorg ready pid=$(pidof Xorg 2>/dev/null || true); safety token committed locally"
+
+# Native audio (AAudio plus Moon's "permission" stand-in) needs no framework;
+# start it once the framework is gone so the stand-in is registered. Moon reads
+# the volume file it creates at startup. Moon still runs without audio.
+if /system/bin/sh "$PERSIST/moon-audio-start.sh"; then
+    log "audio ready pid=$(cat /data/local/tmp/moon-audio/bridge.pid 2>/dev/null || true)"
+else
+    log 'native audio did not become ready; continuing without audio'
+fi
 
 start_moon() {
     rm -f "$ROOT/run/a26-shell/control.sock"
@@ -356,6 +445,17 @@ write_uint "$PERSIST/start-failures" 0
 echo "$boot_id" >"$PERSIST/last-success-boot-id"
 chmod 0600 "$PERSIST/last-success-boot-id"
 log 'Moon is the active default session'
+if [ "$DIRECT" = 1 ]; then
+    setprop moon.session.ready 1
+    # No framework will ever report boot completion. Report it for the vendor
+    # actions that wait for it (battery driver, zram, thermal, lmkd), and so
+    # init limits critical-process crash counting to its normal time window.
+    if [ "$(getprop sys.boot_completed)" != 1 ]; then
+        setprop sys.boot_completed 1
+        setprop dev.bootcomplete 1
+        log 'reported boot completion for the native session'
+    fi
+fi
 
 shell_unhealthy=0
 local_recoveries=0

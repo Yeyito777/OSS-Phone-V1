@@ -1,0 +1,57 @@
+# OSS-Phone-V1 direct boot: start Moon instead of Android's Java framework.
+#
+# Magisk's magiskinit appends this file to init.rc and replaces ${MAGISKTMP}
+# with its tmpfs (/debug_ramdisk), where overlay.d/sbin/* is installed. Every
+# step fails toward stock Android: moon.boot.mode only becomes "moon" when the
+# policy on /data says so, and without it nothing below changes the boot.
+
+# Decide before zygote-start. The policy lives on /data so it can be updated
+# without reflashing; the ramdisk wrapper bounds it with a timeout.
+on post-fs-data
+    exec u:r:magisk:s0 root root -- /system/bin/sh ${MAGISKTMP}/moon-boot-mode.sh
+
+# zygote-start runs "start zygote" unconditionally. Stopping the two services
+# right after their fork, long before zygote can spawn system_server, leaves
+# them disabled, so later class_start main skips them; starting them again is
+# exactly how Moon hands the phone back to Android.
+on zygote-start && property:moon.boot.mode=moon
+    stop zygote
+    stop zygote_secondary
+
+on property:moon.boot.mode=moon
+    start moon-session
+
+# MTP/PTP are FunctionFS functions served by MediaProvider, which never runs
+# in Moon mode; with one in the configuration the gadget cannot bind at all.
+# Keep adb (the rescue channel) by switching to adb-only before it binds.
+on property:sys.usb.config=mtp,adb && property:moon.boot.mode=moon
+    setprop sys.usb.config adb
+on property:sys.usb.config=mtp && property:moon.boot.mode=moon
+    setprop sys.usb.config adb
+on property:sys.usb.config=ptp,adb && property:moon.boot.mode=moon
+    setprop sys.usb.config adb
+on property:sys.usb.config=ptp && property:moon.boot.mode=moon
+    setprop sys.usb.config adb
+on property:sys.usb.config=mtp,conn_gadget && property:moon.boot.mode=moon
+    setprop sys.usb.config adb
+on property:sys.usb.config=mtp,conn_gadget,adb && property:moon.boot.mode=moon
+    setprop sys.usb.config adb
+
+# If the session service dies while Moon still owns the boot, give the phone
+# back to Android even when the wrapper itself could not.
+on property:init.svc.moon-session=stopped && property:moon.boot.mode=moon
+    start moon-fallback
+
+service moon-session /system/bin/sh ${MAGISKTMP}/moon-session.sh
+    user root
+    group root
+    seclabel u:r:magisk:s0
+    disabled
+    oneshot
+
+service moon-fallback /system/bin/sh ${MAGISKTMP}/moon-fallback.sh service-stopped
+    user root
+    group root
+    seclabel u:r:magisk:s0
+    disabled
+    oneshot

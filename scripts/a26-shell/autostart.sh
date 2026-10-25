@@ -16,6 +16,8 @@ echo "last_success_boot_id=$(cat /data/adb/moon/last-success-boot-id 2>/dev/null
 echo "current_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
 echo "Xorg=$(pidof Xorg 2>/dev/null || true)"
 echo "Moon=$(pidof a26-shell 2>/dev/null || true)"
+echo "boot_mode=$(getprop moon.boot.mode) session_ready=$(getprop moon.session.ready)"
+tail -20 /data/adb/moon/direct-boot.log 2>/dev/null || true
 tail -80 /data/adb/moon/boot.log 2>/dev/null || true
 '\'''
         ;;

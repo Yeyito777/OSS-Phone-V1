@@ -72,6 +72,8 @@ case "$(getprop sys.usb.config)" in
         ;;
 esac
 
+# A direct boot gets here with the boot animation still playing.
+/system/bin/stop bootanim
 /system/bin/stop surfaceflinger
 sleep 2
 /system/bin/stop vendor.hwcomposer-2-4

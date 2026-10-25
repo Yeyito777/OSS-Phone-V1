@@ -102,6 +102,10 @@ echo "ExynosHWCServiceTW=$(pidof vendor.samsung_slsi.hardware.ExynosHWCServiceTW
 # same-boot system_server restart counter first: an intentional Linux/Android
 # handoff must not accumulate toward another PlatformReset recovery prompt.
 /debug_ramdisk/magisk resetprop sys.rescue_boot_count 0 2>/dev/null || true
+/debug_ramdisk/magisk resetprop crashrecovery.rescue_boot_count 0 2>/dev/null || true
+# On a direct boot this hands the boot to Android for good; the boot ramdisk's
+# session wrapper must not run its own fallback afterwards.
+[ "$(getprop moon.boot.mode)" != moon ] || setprop moon.boot.mode android
 echo "rescue_boot_count_before_zygote=$(getprop sys.rescue_boot_count)"
 /system/bin/start zygote 2>/dev/null || true
 sleep 1
