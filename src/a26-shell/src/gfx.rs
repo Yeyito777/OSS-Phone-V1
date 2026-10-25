@@ -211,18 +211,6 @@ impl Canvas {
         }
     }
 
-    /// Copies rows `y0..y1` from another canvas of the same width.
-    pub fn copy_rows_from(&mut self, other: &Canvas, y0: i32, y1: i32) {
-        if other.width != self.width {
-            return;
-        }
-        let y0 = y0.clamp(0, self.height.min(other.height));
-        let y1 = y1.clamp(y0, self.height.min(other.height));
-        let a = (y0 * self.width) as usize;
-        let b = (y1 * self.width) as usize;
-        self.pixels[a..b].copy_from_slice(&other.pixels[a..b]);
-    }
-
     #[inline]
     fn put(&mut self, x: i32, y: i32, color: Rgb, alpha: u32) {
         if alpha == 0 || !self.visible(x, y) {
@@ -555,15 +543,15 @@ impl Canvas {
 #[inline]
 fn over(dst: u32, src: u32, alpha: u32) -> u32 {
     // Premultiplied source-over with an additional global alpha.
-    let sa = (src >> 24) * alpha >> 8;
+    let sa = ((src >> 24) * alpha) >> 8;
     if sa == 0 {
         return dst;
     }
     let inverse = 256 - (sa + (sa >> 7));
     let scale = |shift: u32| {
-        let s = (src >> shift & 0xff) * alpha >> 8;
+        let s = ((src >> shift & 0xff) * alpha) >> 8;
         let d = dst >> shift & 0xff;
-        (s + (d * inverse >> 8)).min(255) << shift
+        (s + ((d * inverse) >> 8)).min(255) << shift
     };
     scale(16) | scale(8) | scale(0)
 }
@@ -674,7 +662,22 @@ impl Path {
         self.close();
     }
 
-    fn rasterize(&self) -> Option<(i32, i32, i32, i32, Vec<u8>)> {
+    /// Appends a rounded rectangle (clockwise in screen space).
+    pub fn rounded_rect(&mut self, rect: RectF, radius: f32) {
+        let r = radius.clamp(0.0, rect.w.min(rect.h) / 2.0);
+        let (x0, y0, x1, y1) = (rect.x, rect.y, rect.x + rect.w, rect.y + rect.h);
+        let half_pi = std::f32::consts::FRAC_PI_2;
+        let pi = std::f32::consts::PI;
+        self.move_to(x0 + r, y0);
+        self.arc(x1 - r, y0 + r, r, -half_pi, 0.0);
+        self.arc(x1 - r, y1 - r, r, 0.0, half_pi);
+        self.arc(x0 + r, y1 - r, r, half_pi, pi);
+        self.arc(x0 + r, y0 + r, r, pi, pi + half_pi);
+        self.close();
+    }
+
+    /// Coverage mask of the path: origin x, y, width, height, and 8-bit mask.
+    pub fn rasterize(&self) -> Option<(i32, i32, i32, i32, Vec<u8>)> {
         let mut segments = self.segments.clone();
         if let (Some(start), Some(current)) = (self.start, self.current)
             && start != current
@@ -790,14 +793,6 @@ pub fn ease_out(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(3)
 }
 
-/// A lightly under-damped spring-like ease (overshoots ~3%) for zooms.
-pub fn ease_spring(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    let c1 = 1.2;
-    let c3 = c1 + 1.0;
-    1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -845,7 +840,5 @@ mod tests {
     fn easing_curves_hit_endpoints() {
         assert_eq!(ease_out(0.0), 0.0);
         assert_eq!(ease_out(1.0), 1.0);
-        assert!((ease_spring(1.0) - 1.0).abs() < 1e-6);
-        assert!(ease_spring(0.0).abs() < 1e-6);
     }
 }

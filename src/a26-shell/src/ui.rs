@@ -30,10 +30,8 @@ pub const SECONDARY_ALPHA: f32 = 0.6;
 pub const BLUE: Rgb = 0x0a84ff;
 pub const GREEN: Rgb = 0x30d158;
 pub const RED: Rgb = 0xff453a;
-pub const YELLOW: Rgb = 0xffd60a;
 pub const CARD: Rgb = 0x1c1c1e;
 pub const CARD_RAISED: Rgb = 0x2c2c2e;
-pub const FILL_GRAY: Rgb = 0x3a3a3c;
 
 const ICON_SOURCE_SIZE: i32 = 220;
 const ICON_SOURCE_BYTES: usize = (ICON_SOURCE_SIZE * ICON_SOURCE_SIZE * 4) as usize;
@@ -79,7 +77,6 @@ pub const VOLUME_HUD: RectF = RectF::new(938.0, 470.0, 112.0, 392.0);
 pub enum KeypadAction {
     Digit(u8),
     Backspace,
-    Submit,
     Cancel,
 }
 
@@ -250,8 +247,8 @@ fn darken(source: &Canvas, amount: f32) -> Canvas {
     let mut canvas = Canvas::new(source.width, source.height);
     let keep = ((1.0 - amount) * 256.0) as u32;
     for (out, pixel) in canvas.pixels.iter_mut().zip(&source.pixels) {
-        let rb = ((pixel & 0x00ff_00ff) * keep >> 8) & 0x00ff_00ff;
-        let g = ((pixel & 0x0000_ff00) * keep >> 8) & 0x0000_ff00;
+        let rb = (((pixel & 0x00ff_00ff) * keep) >> 8) & 0x00ff_00ff;
+        let g = (((pixel & 0x0000_ff00) * keep) >> 8) & 0x0000_ff00;
         *out = rb | g;
     }
     canvas
@@ -264,9 +261,6 @@ struct HomeKey {
 }
 
 pub struct Renderer {
-    pub window: Window,
-    pub width: u16,
-    pub height: u16,
     /// Screen row at which the shell window currently begins.
     pub window_top: i32,
     pub twenty_four_hour: bool,
@@ -296,9 +290,6 @@ impl Renderer {
         let wallpaper = wallpaper(w, h);
         let dimmed_wallpaper = darken(&wallpaper, 0.42);
         Ok(Self {
-            window,
-            width,
-            height,
             window_top: 0,
             twenty_four_hour,
             pin_length,
@@ -523,6 +514,15 @@ impl Renderer {
                 self.canvas.fill_rrect(HOME_INDICATOR, 7.0, WHITE, 0.92);
             }
         }
+        // The lock screen's big clock replaces the status-bar time.
+        let status = if state.lock_face == LockFace::Clock {
+            StatusInfo {
+                time: String::new(),
+                ..status
+            }
+        } else {
+            status
+        };
         draw_status_bar(&mut self.canvas, &status, None);
     }
 
@@ -1128,11 +1128,7 @@ mod tests {
         draw_status_bar(&mut canvas, &status, Some(BLACK));
         let below = &canvas.pixels[(status_bar::HEIGHT as usize) * 1080..];
         assert!(below.iter().all(|pixel| *pixel == 0x123456));
-        assert!(
-            canvas.pixels[..1080 * 124]
-                .iter()
-                .any(|pixel| *pixel == WHITE)
-        );
+        assert!(canvas.pixels[..1080 * 124].contains(&WHITE));
     }
 
     #[test]

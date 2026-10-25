@@ -205,7 +205,7 @@ pub fn draw_centered(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, dead_code)]
 pub fn draw_right(
     canvas: &mut Canvas,
     text: &str,
@@ -241,6 +241,7 @@ pub fn centered_baseline(center_y: f32, weight: Weight, size: f32) -> f32 {
 }
 
 /// Shortens `text` with an ellipsis so it fits in `max_width`.
+#[allow(dead_code)]
 pub fn fit(text: &str, weight: Weight, size: f32, max_width: f32) -> String {
     if measure(text, weight, size) <= max_width {
         return text.to_owned();
@@ -278,7 +279,7 @@ mod tests {
             1.0,
         );
         assert!(width > 30.0);
-        assert!(canvas.pixels.iter().any(|pixel| *pixel == 0xffffff));
+        assert!(canvas.pixels.contains(&0xffffff));
     }
 
     #[test]

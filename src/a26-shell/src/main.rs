@@ -146,7 +146,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let shell_window = conn.generate_id()?;
     let window_aux = CreateWindowAux::new()
-        .background_pixel(0x0b1020)
+        // No background: exposed areas keep their old pixels until Moon copies
+        // its frame back, instead of flashing a solid fill for a frame.
+        .background_pixmap(x11rb::NONE)
         .override_redirect(1)
         .event_mask(
             EventMask::EXPOSURE
@@ -184,9 +186,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         b"moon-shell",
     )?;
 
-    let keyboard_geometry = KeyboardGeometry::new(width, height);
-    let mut keyboard_surface =
-        KeyboardSurface::create(&conn, root, screen.root_depth, keyboard_geometry)?;
     // Resolve the SHAPE extension now: an extension's first use otherwise
     // costs a QueryExtension reply wait, which the event loop must never do.
     let shape_available = x11rb::connection::RequestConnection::extension_information(
@@ -194,12 +193,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         x11rb::protocol::shape::X11_EXTENSION_NAME,
     )?
     .is_some();
+    let keyboard_geometry = KeyboardGeometry::new(width, height);
+    let mut keyboard_surface = KeyboardSurface::create(
+        &conn,
+        root,
+        screen.root_depth,
+        keyboard_geometry,
+        shape_available,
+    )?;
     let mut volume_surface =
         VolumeSurface::create(&conn, root, screen.root_depth, shape_available)?;
     let mut status_bar_surface = StatusBarSurface::create(&conn, root, screen.root_depth, width)?;
     conn.map_window(shell_window)?;
     conn.xfixes_hide_cursor(shell_window)?.check()?;
     conn.xfixes_hide_cursor(keyboard_surface.window)?.check()?;
+    if let Some(popup) = keyboard_surface.popup_window() {
+        conn.xfixes_hide_cursor(popup)?.check()?;
+    }
     conn.xfixes_hide_cursor(volume_surface.window)?.check()?;
     conn.xfixes_hide_cursor(status_bar_surface.window)?
         .check()?;
@@ -334,6 +344,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 root,
                 shell_window,
                 keyboard_surface.window,
+                keyboard_surface.popup_window().unwrap_or(x11rb::NONE),
                 volume_surface.window,
                 status_bar_surface.window,
                 (width, height),
@@ -886,6 +897,7 @@ fn handle_x_event(
     root: u32,
     shell_window: u32,
     keyboard_window: u32,
+    popup_window: u32,
     volume_window: u32,
     status_bar_window: u32,
     dimensions: (u16, u16),
@@ -1130,6 +1142,7 @@ fn handle_x_event(
         Event::MapNotify(event)
             if event.window != shell_window
                 && event.window != keyboard_window
+                && event.window != popup_window
                 && event.window != volume_window
                 && event.window != status_bar_window =>
         {
@@ -1145,6 +1158,7 @@ fn handle_x_event(
         Event::ConfigureNotify(event)
             if event.window != shell_window
                 && event.window != keyboard_window
+                && event.window != popup_window
                 && event.window != volume_window
                 && event.window != status_bar_window =>
         {
@@ -1158,13 +1172,17 @@ fn handle_x_event(
             }
         }
         Event::DestroyNotify(event) => {
-            if event.window != volume_window && event.window != status_bar_window {
+            if event.window != volume_window
+                && event.window != status_bar_window
+                && event.window != popup_window
+            {
                 apps.remove_window(event.window);
                 state.replace_managed_windows(apps.active_windows());
             }
         }
         Event::UnmapNotify(event) => {
             if event.window != keyboard_window
+                && event.window != popup_window
                 && event.window != volume_window
                 && event.window != status_bar_window
             {
@@ -1754,6 +1772,18 @@ fn pointer_end(
         state.last_action = "swipe_up_background".into();
         return;
     }
+    // A horizontal swipe along the bottom edge jumps to the other app, as on
+    // iPhone.
+    let switch_swipe = state.view.is_app()
+        && bottom_start
+        && dx.abs() >= 300
+        && dy.abs() <= 220
+        && dx.abs() >= dy.abs() * 2
+        && elapsed <= Duration::from_millis(1000);
+    if switch_swipe {
+        state.switch_app();
+        return;
+    }
     if state.view == View::Locked && elapsed <= Duration::from_millis(1400) {
         // An upward swipe anywhere reveals the passcode keypad; a downward
         // swipe puts it away again.
@@ -1841,9 +1871,6 @@ fn handle_tap(
             Some(KeypadAction::Digit(digit)) => state.input_digit(digit, config),
             Some(KeypadAction::Backspace) => state.backspace_pin(),
             Some(KeypadAction::Cancel) => state.cancel_passcode(),
-            Some(KeypadAction::Submit) => {
-                state.submit_pin(config);
-            }
             None => state.last_action = "lock_tap_outside".into(),
         },
         View::Launcher => match ui::launcher_app_at(x, y) {

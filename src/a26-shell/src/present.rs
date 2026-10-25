@@ -68,11 +68,6 @@ impl Presenter {
         })
     }
 
-    /// Forgets what the server holds, forcing the next frame to upload fully.
-    pub fn invalidate(&mut self) {
-        self.valid = false;
-    }
-
     /// Uploads `canvas` and copies the damaged areas to the window, whose
     /// origin corresponds to canvas row `window_y`. Returns the bounding box
     /// of the damage.

@@ -410,6 +410,17 @@ impl ShellState {
         }
     }
 
+    /// Switches straight to the other app (bottom-edge horizontal swipe).
+    pub fn switch_app(&mut self) {
+        let other = match self.view {
+            View::System => AppId::Browser,
+            View::Browser => AppId::System,
+            View::Locked | View::Launcher => return,
+        };
+        self.begin_launch(other);
+        self.last_action = "swipe_switch_app".into();
+    }
+
     /// Reveals the passcode keypad over the lock-screen clock.
     pub fn show_passcode(&mut self) {
         if self.screen_awake && self.view == View::Locked && self.lock_face != LockFace::Passcode {
@@ -577,12 +588,6 @@ impl ShellState {
         self.launch.filter(|_| self.app_launching())
     }
 
-    pub fn app_launch_elapsed(&self) -> Duration {
-        self.launch()
-            .map(|launch| launch.started.elapsed())
-            .unwrap_or_default()
-    }
-
     pub fn note_app_window_mapped(&mut self) {
         let view = self.view;
         if let Some(launch) = self.launch.as_mut()
@@ -656,7 +661,10 @@ impl ShellState {
 
     pub fn tick(&mut self) {
         let now = Instant::now();
-        let _ = self.is_lockout_active();
+        if self.is_lockout_active() && self.view == View::Locked {
+            // Repaint the "Try again in N s" countdown.
+            self.redraw = true;
+        }
         if self.view == View::Locked
             && self.lock_face == LockFace::Passcode
             && now.duration_since(self.last_lock_input) >= PASSCODE_IDLE_TIMEOUT
@@ -691,8 +699,16 @@ impl ShellState {
     pub fn next_deadline(&self, now: Instant) -> Option<Instant> {
         let passcode_timeout = (self.view == View::Locked && self.lock_face == LockFace::Passcode)
             .then(|| self.last_lock_input + PASSCODE_IDLE_TIMEOUT);
+        let lockout_second = self
+            .lockout_until
+            .filter(|until| *until > now)
+            .map(|until| {
+                let remaining = until.duration_since(now);
+                now + Duration::from_nanos(u64::from(remaining.subsec_nanos()) + 1_000_000)
+            });
         [
             self.lockout_until,
+            lockout_second,
             self.volume_overlay_until,
             self.reveal_at(),
             passcode_timeout,
@@ -856,6 +872,20 @@ mod tests {
         state.closing.as_mut().unwrap().started -= CLOSE_ANIMATION;
         state.tick();
         assert!(state.closing.is_none());
+    }
+
+    #[test]
+    fn bottom_swipe_switches_between_apps() {
+        let mut state = ShellState::new(false, 50);
+        state.launch_system();
+        state.finish_app_launch();
+        state.switch_app();
+        assert_eq!(state.view, View::Browser);
+        assert!(state.app_launching());
+        assert!(state.closing.is_none());
+        state.home();
+        state.switch_app();
+        assert_eq!(state.view, View::Launcher);
     }
 
     #[test]

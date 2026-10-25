@@ -2,6 +2,8 @@ use std::error::Error;
 
 use serde::Serialize;
 use x11rb::connection::Connection;
+use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
+use x11rb::protocol::xproto::{ClipOrdering, Rectangle};
 use x11rb::protocol::xproto::{
     ConfigureWindowAux, ConnectionExt as _, CreateWindowAux, EventMask, InputFocus,
     KEY_PRESS_EVENT, KEY_RELEASE_EVENT, Keycode, Keysym, PropMode, StackMode, Window, WindowClass,
@@ -21,6 +23,8 @@ const LETTER_KEY: Rgb = 0x5a5a5e;
 const FUNCTION_KEY: Rgb = 0x38383b;
 const PRESSED_LETTER_KEY: Rgb = 0x8a8a8f;
 const KEY_RADIUS: f32 = 15.0;
+/// Callouts are a step lighter than the keys so they read above the rows.
+const POPUP_KEY: Rgb = 0x707075;
 
 // Apple does not publish fixed software-keyboard frames. These dimensions use
 // the standard 390-point iPhone portrait keyboard as a proportional reference
@@ -180,6 +184,11 @@ impl KeyboardState {
             self.pressed_key_indices.remove(position);
             self.request_redraw();
         }
+    }
+
+    /// The most recently pressed key still held down.
+    pub fn latest_pressed(&self) -> Option<usize> {
+        self.pressed_key_indices.last().copied()
     }
 
     pub fn is_key_pressed(&self, index: usize) -> bool {
@@ -669,6 +678,161 @@ pub struct KeyboardSurface {
     presenter: Presenter,
     geometry: KeyboardGeometry,
     mapped: bool,
+    popup: Option<KeyPopup>,
+}
+
+/// The enlarged key callout shown above a held character key. It is a
+/// separate shaped window because top-row callouts rise above the keyboard
+/// over the app.
+pub struct KeyPopup {
+    pub window: Window,
+    canvas: Canvas,
+    presenter: Presenter,
+    shown: Option<(i16, i16, String)>,
+}
+
+const POPUP_MAX_WIDTH: u16 = 240;
+const POPUP_MAX_HEIGHT: u16 = 360;
+const POPUP_SIDE: f32 = 26.0;
+const POPUP_GAP: f32 = 12.0;
+
+impl KeyPopup {
+    fn create<C: Connection>(conn: &C, root: Window, depth: u8) -> Result<Self, Box<dyn Error>> {
+        let window = conn.generate_id()?;
+        conn.create_window(
+            COPY_DEPTH_FROM_PARENT,
+            window,
+            root,
+            0,
+            0,
+            POPUP_MAX_WIDTH,
+            POPUP_MAX_HEIGHT,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new()
+                .background_pixel(POPUP_KEY)
+                .override_redirect(1)
+                .event_mask(EventMask::EXPOSURE),
+        )?;
+        Ok(Self {
+            window,
+            canvas: Canvas::new(i32::from(POPUP_MAX_WIDTH), i32::from(POPUP_MAX_HEIGHT)),
+            presenter: Presenter::create(conn, window, depth, POPUP_MAX_WIDTH, POPUP_MAX_HEIGHT)?,
+            shown: None,
+        })
+    }
+
+    fn hide<C: Connection>(&mut self, conn: &C) -> Result<(), Box<dyn Error>> {
+        if self.shown.take().is_some() {
+            conn.unmap_window(self.window)?;
+        }
+        Ok(())
+    }
+
+    /// Shows the callout for `key`, whose rectangle is in root coordinates.
+    fn show<C: Connection>(
+        &mut self,
+        conn: &C,
+        key: RectF,
+        label: &str,
+        screen_width: f32,
+    ) -> Result<(), Box<dyn Error>> {
+        let id = (key.x as i16, key.y as i16, label.to_owned());
+        if self.shown.as_ref() == Some(&id) {
+            return Ok(());
+        }
+        let bubble_w = (key.w + 2.0 * POPUP_SIDE).min(f32::from(POPUP_MAX_WIDTH));
+        let bubble_h = (key.h * 1.12).round();
+        let height = (bubble_h + POPUP_GAP + key.h).min(f32::from(POPUP_MAX_HEIGHT));
+        let x0 = (key.x - POPUP_SIDE).clamp(0.0, (screen_width - bubble_w).max(0.0));
+        let y0 = key.y + key.h - height;
+        let local_key = RectF::new(key.x - x0, height - key.h, key.w, key.h);
+        let mut path = Path::new();
+        path.rounded_rect(RectF::new(0.0, 0.0, bubble_w, bubble_h), 24.0);
+        path.polygon(&[
+            (0.0, bubble_h - 26.0),
+            (bubble_w, bubble_h - 26.0),
+            (local_key.x + local_key.w, local_key.y + 14.0),
+            (local_key.x, local_key.y + 14.0),
+        ]);
+        path.rounded_rect(local_key, KEY_RADIUS);
+        self.canvas.clear(POPUP_KEY);
+        text::draw_centered(
+            &mut self.canvas,
+            label,
+            bubble_w / 2.0,
+            if label.chars().all(|c| c.is_ascii_lowercase()) {
+                bubble_h / 2.0 + 30.0
+            } else {
+                text::centered_baseline(bubble_h / 2.0 + 4.0, Weight::Regular, 96.0)
+            },
+            Weight::Regular,
+            96.0,
+            WHITE,
+            1.0,
+        );
+        let spans = path
+            .rasterize()
+            .map(|(ox, oy, w, h, mask)| mask_spans(ox, oy, w, h, &mask))
+            .unwrap_or_default();
+        conn.configure_window(
+            self.window,
+            &ConfigureWindowAux::new()
+                .x(x0.round() as i32)
+                .y(y0.round() as i32)
+                .width(bubble_w.round() as u32)
+                .height(height.round() as u32)
+                .stack_mode(StackMode::ABOVE),
+        )?;
+        conn.shape_rectangles(
+            SO::SET,
+            SK::BOUNDING,
+            ClipOrdering::Y_SORTED,
+            self.window,
+            0,
+            0,
+            &spans,
+        )?;
+        self.presenter.present(conn, &self.canvas, 0)?;
+        if self.shown.is_none() {
+            conn.map_window(self.window)?;
+        }
+        self.presenter.expose(conn, 0)?;
+        self.shown = Some(id);
+        Ok(())
+    }
+
+    fn destroy<C: Connection>(&self, conn: &C) {
+        let _ = conn.destroy_window(self.window);
+        self.presenter.destroy(conn);
+    }
+}
+
+/// Row spans of the pixels at least half covered by a mask.
+fn mask_spans(ox: i32, oy: i32, width: i32, height: i32, mask: &[u8]) -> Vec<Rectangle> {
+    let mut spans = Vec::new();
+    for y in 0..height {
+        let row = &mask[(y * width) as usize..((y + 1) * width) as usize];
+        let mut x = 0;
+        while x < width {
+            if row[x as usize] < 128 {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < width && row[x as usize] >= 128 {
+                x += 1;
+            }
+            spans.push(Rectangle {
+                x: (ox + start) as i16,
+                y: (oy + y) as i16,
+                width: (x - start) as u16,
+                height: 1,
+            });
+        }
+    }
+    spans
 }
 
 impl KeyboardSurface {
@@ -677,7 +841,13 @@ impl KeyboardSurface {
         root: Window,
         root_depth: u8,
         geometry: KeyboardGeometry,
+        shape_available: bool,
     ) -> Result<Self, Box<dyn Error>> {
+        let popup = if shape_available {
+            Some(KeyPopup::create(conn, root, root_depth)?)
+        } else {
+            None
+        };
         let window = conn.generate_id()?;
         conn.create_window(
             COPY_DEPTH_FROM_PARENT,
@@ -718,7 +888,45 @@ impl KeyboardSurface {
             presenter,
             geometry,
             mapped: false,
+            popup,
         })
+    }
+
+    pub fn popup_window(&self) -> Option<Window> {
+        self.popup.as_ref().map(|popup| popup.window)
+    }
+
+    fn sync_popup<C: Connection>(
+        &mut self,
+        conn: &C,
+        state: &KeyboardState,
+    ) -> Result<(), Box<dyn Error>> {
+        let Some(popup) = self.popup.as_mut() else {
+            return Ok(());
+        };
+        let keys = self.geometry.keys(state);
+        let letter_width = keys
+            .iter()
+            .find(|key| matches!(key.action, KeyAction::Character(c) if c.is_ascii_alphanumeric()))
+            .map(|key| key.rect.width)
+            .unwrap_or(0);
+        let target = state
+            .latest_pressed()
+            .filter(|_| self.mapped && state.layout() != KeyboardLayout::NumberPad)
+            .and_then(|index| keys.get(index))
+            .filter(|key| {
+                matches!(key.action, KeyAction::Character(_))
+                    && u32::from(key.rect.width) * 4 <= u32::from(letter_width) * 5
+            });
+        match target {
+            Some(key) => {
+                let mut rect = key.rect.rect_f();
+                rect.y += f32::from(self.geometry.window_y);
+                let label = display_label(key, state);
+                popup.show(conn, rect, &label, f32::from(self.geometry.screen_width))
+            }
+            None => popup.hide(conn),
+        }
     }
 
     pub fn sync<C: Connection>(
@@ -729,6 +937,9 @@ impl KeyboardSurface {
     ) -> Result<(), Box<dyn Error>> {
         let should_map = state.is_visible() && active_app.is_some();
         if !should_map {
+            if let Some(popup) = self.popup.as_mut() {
+                popup.hide(conn)?;
+            }
             if self.mapped {
                 conn.unmap_window(self.window)?;
                 self.mapped = false;
@@ -760,12 +971,21 @@ impl KeyboardSurface {
                 self.window,
                 &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
             )?;
+            if let Some(popup) = self.popup.as_ref().filter(|popup| popup.shown.is_some()) {
+                conn.configure_window(
+                    popup.window,
+                    &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+                )?;
+            }
             state.clear_raise();
         }
-        Ok(())
+        self.sync_popup(conn, state)
     }
 
     pub fn destroy<C: Connection>(&self, conn: &C) {
+        if let Some(popup) = &self.popup {
+            popup.destroy(conn);
+        }
         let _ = conn.destroy_window(self.window);
         self.presenter.destroy(conn);
     }
