@@ -2,9 +2,15 @@
 
 **Do not flash unattended.** This boots OSS Phone's own `oss-init` as the real
 PID 1 and runs Android in a PID + mount namespace. The iron rule makes every
-failure fall back to today's boot, but one narrow case (a container hang after
-liveness but before adbd/watchdogd) can need a physical Download-mode rescue.
-Run only with the device lead present and the rescue kit ready.
+failure fall back to a clean uncontained boot in the same boot, but one narrow
+case (a container hang after the liveness marker but before adbd) can still need
+a physical Download-mode rescue. Run only with the device lead present and the
+rescue kit ready.
+
+> This is the **v3** image `eaeb4494…`. The first build `4d27b69b…` boot-looped
+> (a relay tmpfs broke Android's SwitchRoot in both the contained init and the
+> fallback). **Do not flash `4d27b69b`.** v3 mounts nothing and its fallback runs
+> from a pristine namespace; see `V2-BOOTLOOP-ROOTCAUSE.md`.
 
 This test **layers on the kernel agent's plan** (`images/kernel/TEST-PLAN.md`).
 Do that one first: it proves the OSS kernel itself boots with the prebuilt
@@ -20,7 +26,7 @@ modules. Only then test stage-2 containment on top of it.
     stock kernel, today's shipping boot. The ultimate rollback.
 - Stage-2 image present:
   `images/oss-stage2/boot-oss-stage2-A266MUBU1AYB8.img`
-  sha256 `4d27b69bed59fd075f00963d19b29d630307cf1a247d3193832cd381bcac62f3`.
+  sha256 `eaeb4494567f10459bc91f6c3eb156709f56bb066da0913bc307940b303c17e2`.
 
 ## What the user must do physically
 - Stay at the phone the whole test. If it stops responding, hold **Power +
@@ -44,7 +50,7 @@ If Stage A fails, stop — stage 2 cannot be more stable than its kernel.
 ## Stage B — stage-2 containment
 1. **Verify the image:**
    `shasum -a 256 images/oss-stage2/boot-oss-stage2-A266MUBU1AYB8.img` =
-   `4d27b69b…`.
+   `eaeb4494…`.
 2. **Flash.** The image carries the OSS kernel, so a kernel change from whatever
    is installed is expected — use the device lead's in-OS script with the kernel
    flag (it backs up and read-back-verifies):
@@ -64,7 +70,7 @@ If Stage A fails, stop — stage 2 cannot be more stable than its kernel.
    adb shell su -c 'readlink /proc/1/exe'        # expect: /init (deleted) = oss-init
    # Android's init should be PID 1 *inside* its namespace, i.e. a non-1 host PID:
    adb shell su -c 'pgrep -f "^/system/bin/init|init.*second" ; ps -A | grep -w init | head'
-   adb shell su -c 'dmesg | grep oss-init'       # marker: "the real PID 1; containing Android init" + "container reported liveness; supervising"
+   adb shell su -c 'dmesg | grep oss-init'       # markers: "the real PID 1; containing Android init" + "container reached second stage; supervising"
    adb shell su -c 'cat /proc/1/ns/pid'          # host pid ns
    adb shell su -c 'cat /proc/$(pgrep -o -f system/bin/init)/ns/pid'  # different ns id
    ```
@@ -73,15 +79,19 @@ If Stage A fails, stop — stage 2 cannot be more stable than its kernel.
 5. **Confirm no regression** in the contained Android/Moon: Moon UI responsive,
    touch, display, audio, Wi-Fi, charging (`dumpsys battery` / sysfs), one
    suspend/resume.
-6. **Exercise the iron-rule paths deliberately** (each should land safely):
-   - *Reboot relay:* `adb reboot` → the phone should actually reboot (our PID 1
-     proxies it). Then `adb reboot download` → should reach Download mode if the
-     relay works; if not, note it and use keys.
-   - *Crash fallback:* kill the contained Android init
+6. **Exercise the iron-rule fallback deliberately** (should land safely):
+   - *Crash → uncontained fallback:* kill the contained Android init
      (`adb shell su -c 'kill -9 $(pgrep -o -f system/bin/init)'`) → the container
-     tears down and oss-init should boot **uncontained** (Moon returns; `dmesg`
-     shows `booting uncontained`; `/proc/1/comm` becomes `init`). This proves the
-     fallback without a reflash.
+     tears down and oss-init should boot **uncontained** in the same boot (Moon
+     returns; `dmesg` shows `container exited; booting uncontained`;
+     `/proc/1/comm` becomes `init`). This proves the fallback without a reflash,
+     and is also the **escape hatch**: it drops to a plain uncontained boot you
+     can reflash from.
+   - *Reboot note:* in containment mode a software `adb reboot` does **not**
+     reboot — it tears down the container, and oss-init answers with an
+     uncontained boot (the escape hatch above). To actually power-cycle or reach
+     Download mode, use the physical key combo (RESCUE.md). v3 intentionally has
+     no reboot relay; this is documented, not a bug.
 
 ## Expected result
 Moon on screen with `/proc/1/comm = oss-init` and Android init in its own PID

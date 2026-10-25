@@ -12,7 +12,7 @@
 #   - decompresses the Magisk stock-init backup to /init.stock (fallback),
 #   - compiles scripts/native-init/oss-init.c statically for aarch64 as /init
 #     (the real PID 1 / host supervisor),
-#   - adds overlay.d/oss-contain.rc (liveness + reboot relay for the container).
+#   - adds overlay.d/oss-contain.rc (one kernel-log liveness marker; no mount).
 # AVB hash footer is re-added with the project key; top-level vbmeta stays
 # verification-disabled, so it boots on the unlocked device like the base.
 #

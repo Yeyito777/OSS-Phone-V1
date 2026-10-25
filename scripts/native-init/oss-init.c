@@ -1,34 +1,38 @@
-/* OSS-Phone-V1 stage-2 init ("oss-init") -- the real containment step.
+/* OSS-Phone-V1 stage-2 init ("oss-init") -- containment, v3.
  *
  * On the OSS Phone kernel (CONFIG_PID_NS=y, CONFIG_DEVTMPFS=y, DEFEX removed)
  * this binary is the ramdisk /init, so the kernel execs it as the REAL PID 1
- * and it STAYS PID 1 for the life of the system. Android's entire init (first
- * and second stage) is run as its child inside a new PID + mount namespace, so
- * Android init sees getpid()==1 in its own namespace and performs Samsung's
- * full, proven hardware bring-up unchanged -- 306 modules, ueventd/coldboot,
- * first-stage mounts, SELinux policy load, the property service, firmware,
- * adbd/USB, charging, watchdogd petting /dev/watchdog0 -- while OSS Phone owns
- * the real init seat. This is the Halium-style "our init PID 1, Android
- * contained" architecture, reduced to exactly what is safe to run today: the
- * contained Android still drives all the hardware and still brings Moon up via
- * the existing direct-boot overlay; what changed is who is PID 1.
+ * and it stays PID 1. Android's entire init (first + second stage, via the
+ * existing magiskinit -> stock-init -> Moon stack) runs as its child inside a
+ * new PID + mount namespace, so Android sees getpid()==1 in its namespace and
+ * performs Samsung's full, proven bring-up unchanged. OSS Phone owns the real
+ * init seat; Android is contained.
  *
- * THE IRON RULE: any failure in our path must leave the phone booting exactly
- * as it does today. This is enforced at every layer:
- *   - Setup failure (clone/mount) -> we exec the stock stack as the real PID 1
- *     (identical to today's boot, no containment).
- *   - The container dies without an intentional reboot (a crash, or an early
- *     failure before it ran anything) -> we exec the stock stack as the real
- *     PID 1 (a fresh, uncontained boot; no reboot loop).
- *   - The container hangs before it signals liveness -> we kill it and exec the
- *     stock stack as the real PID 1.
- *   - The container asks for a real reboot/shutdown -> we perform it for real
- *     (PID-namespace reboot(2) only tears the namespace down, so PID 1 must).
+ * --- Why v3 (the v2 boot loop) ---
+ * v2 mounted a tmpfs relay at /oss-run in oss-init's own mount namespace before
+ * cloning. Android's first-stage init SwitchRoot moves EVERY mount under / into
+ * the new (read-only) system root; it could not create /system/oss-run, so
+ * `Unable to move mount at 'oss-run'` -> LOG(FATAL) -> InitFatalReboot. That
+ * killed the CONTAINED init, and because the /oss-run mount lived in oss-init's
+ * namespace it was inherited by the uncontained fallback too, which hit the
+ * exact same SwitchRoot failure as the real PID 1 -> real reboot -> loop with
+ * no USB. Two lessons, both fixed here:
+ *   1. oss-init must add NO mount that survives into the handoff. v3 mounts
+ *      nothing. Liveness is observed through the global kernel log (/dev/kmsg),
+ *      which needs no mount and is visible across namespaces.
+ *   2. The fallback must run from a PRISTINE namespace. Because the container is
+ *      cloned with CLONE_NEWNS, everything it mounts lives in ITS namespace and
+ *      is torn down by the kernel when it dies; oss-init's own namespace stays
+ *      exactly as the kernel handed it over, so re-exec'ing the stock stack is a
+ *      clean, uncontained boot -- and it stays in THIS boot (no reboot), so a
+ *      containment failure can never become a reset loop.
  *
- * Fallback execs use file descriptors opened at startup and run with
- * execveat(AT_EMPTY_PATH): Android's first-stage FreeRamdisk() unlinks the
- * shared initramfs files after switch_root, so a path-based exec could fail,
- * but an open fd survives the unlink.
+ * --- The iron rule: oss-init can never exit or return ---
+ * There is no reachable `return` or `_exit` in the PID-1 (parent) path. Every
+ * path ends either in an exec of the stock stack or, if even that fails, in an
+ * infinite loop that re-tries the exec and then issues a real reboot. The only
+ * `_exit` is in the cloned child (a separate process), whose death the parent
+ * observes and answers with the uncontained fallback.
  *
  * Keep this tiny, static and syscall-minimal: a crash here is a PID-1 crash.
  */
@@ -39,11 +43,9 @@
 #include <fcntl.h>
 #include <sched.h>
 #include <signal.h>
-#include <stdint.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
-#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -52,12 +54,14 @@
 
 extern char **environ;
 
-#define PRIMARY_INIT "/init.magisk" /* magiskinit -> stock init -> Moon        */
-#define STOCK_INIT "/init.stock"    /* byte-exact stock Android init (fallback)*/
-#define RELAY_DIR "/oss-run"        /* tmpfs shared with the container          */
-#define RELAY_ALIVE RELAY_DIR "/alive"
-#define RELAY_POWERCTL RELAY_DIR "/powerctl"
-#define LIVENESS_DEADLINE_MS 90000  /* kill+fallback if no liveness by here     */
+#define PRIMARY_INIT "/init.magisk" /* magiskinit -> stock init -> Moon */
+#define STOCK_INIT "/init.stock"    /* byte-exact stock Android init     */
+/* The contained second-stage init emits this to the global kernel log (see
+ * overlay.d/oss-contain.rc). Seeing it means the container is past first-stage
+ * SwitchRoot and watchdogd is starting, so the early-hang breaker can stand
+ * down. The string must match the overlay rc exactly. */
+#define LIVENESS_MARKER "OSSPHONE_CONTAIN_LIVE"
+#define LIVENESS_DEADLINE_MS 60000 /* kill+fallback if no liveness by here */
 #define POLL_MS 200
 
 static void kmsg(const char *msg) {
@@ -78,130 +82,111 @@ static void sleep_ms(long ms) {
     while (nanosleep(&ts, &ts) < 0 && errno == EINTR) {}
 }
 
-/* exec a held init fd as the real PID 1: this is "boot exactly like today". */
-static void exec_fd(int fd, char **argv) {
-    if (fd >= 0) {
-        syscall(SYS_execveat, fd, "", argv, environ, AT_EMPTY_PATH);
-    }
-}
-
-/* Last-resort: exec the stock stack as the real PID 1 and never return. */
-static void fallback_boot(int fd_magisk, int fd_stock, char **argv) {
-    exec_fd(fd_magisk, argv);
-    (void)execve(PRIMARY_INIT, argv, environ); /* in case the fd path failed */
-    exec_fd(fd_stock, argv);
-    (void)execve(STOCK_INIT, argv, environ);
-    kmsg("<3>oss-init: FATAL no init to hand off to; waiting for watchdog reset\n");
-    for (;;) pause();
-}
-
-/* Perform the real reboot/shutdown the contained Android asked for. The vendor
- * restart handler (exynos/sec reboot) is registered globally by modules the
- * container loaded, so reboot(2) from the initial namespace reaches it. */
-static void do_real_powerctl(const char *req) {
-    sync();
-    if (strncmp(req, "shutdown", 8) == 0) {
-        reboot(LINUX_REBOOT_CMD_POWER_OFF);
-    } else {
-        /* Android's sys.powerctl is "reboot[,reason]"; the reason is the
-         * reboot(2) arg ("bootloader", "download", "recovery", ...). */
-        const char *comma = strchr(req, ',');
-        const char *reason = comma ? comma + 1 : "";
+/* Boot the stock stack as the REAL PID 1 and NEVER return. This is "boot
+ * exactly like today, uncontained". It runs from a pristine namespace (oss-init
+ * mounted nothing; the dead container's mounts were in its own namespace), so
+ * first-stage mounts and SwitchRoot are clean. Tries the held fds first (they
+ * survive Android's FreeRamdisk unlinking the initramfs), then the paths, then
+ * -- only if nothing can be exec'd -- reboots, forever. */
+static void boot_uncontained(int fd_magisk, int fd_stock, char **argv) {
+    for (;;) {
+        if (fd_magisk >= 0)
+            syscall(SYS_execveat, fd_magisk, "", argv, environ, AT_EMPTY_PATH);
+        (void)execve(PRIMARY_INIT, argv, environ);
+        if (fd_stock >= 0)
+            syscall(SYS_execveat, fd_stock, "", argv, environ, AT_EMPTY_PATH);
+        (void)execve(STOCK_INIT, argv, environ);
+        kmsg("<3>oss-init: no init to exec; rebooting to a fresh boot\n");
+        sync();
         syscall(SYS_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
-                LINUX_REBOOT_CMD_RESTART2, reason);
+                LINUX_REBOOT_CMD_RESTART, NULL);
+        sleep_ms(1000); /* if reboot somehow returns, retry everything */
     }
-    kmsg("<3>oss-init: real reboot syscall returned; waiting for watchdog\n");
-    for (;;) pause();
 }
 
-/* Read a small relay file; returns length (0 if absent/empty/error). */
-static int read_relay(const char *path, char *buf, int cap) {
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return 0;
-    int n = (int)read(fd, buf, cap - 1);
-    (void)close(fd);
-    if (n < 0) n = 0;
-    buf[n] = '\0';
-    /* trim trailing whitespace/newline */
-    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == ' ' || buf[n - 1] == '\t')) {
-        buf[--n] = '\0';
+/* Drain available /dev/kmsg records (opened O_NONBLOCK) and report whether the
+ * liveness marker has appeared. Reads are across the whole kernel log; EPIPE
+ * (ring overrun) just means some records were skipped -- keep going. */
+static int saw_liveness(int kfd) {
+    if (kfd < 0) return 0;
+    char buf[1024];
+    for (;;) {
+        ssize_t n = read(kfd, buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            if (strstr(buf, LIVENESS_MARKER)) return 1;
+            continue;
+        }
+        if (n < 0 && errno == EPIPE) continue; /* ring overran; resync */
+        return 0;                              /* EAGAIN / EOF: nothing more now */
     }
-    return n;
+}
+
+/* Reap, watch for early liveness, and answer any container exit with the
+ * uncontained fallback. NEVER returns. */
+static void supervise(pid_t child, int fd_magisk, int fd_stock, int kfd, char **argv) {
+    long deadline = now_ms() + LIVENESS_DEADLINE_MS;
+    int alive_seen = 0;
+    for (;;) {
+        int status;
+        pid_t r = waitpid(-1, &status, WNOHANG);
+        if (r == child || (r < 0 && errno == ECHILD)) {
+            /* The container is gone (reaped, or no children remain at all). */
+            kmsg("<4>oss-init: container exited; booting uncontained\n");
+            boot_uncontained(fd_magisk, fd_stock, argv); /* never returns */
+        }
+        if (r > 0) continue; /* reaped an orphan; keep going */
+
+        if (!alive_seen && kfd >= 0) {
+            if (saw_liveness(kfd)) {
+                alive_seen = 1;
+                kmsg("<6>oss-init: container reached second stage; supervising\n");
+            } else if (now_ms() > deadline) {
+                kmsg("<4>oss-init: no liveness by deadline; killing and booting uncontained\n");
+                kill(child, SIGKILL);
+                (void)waitpid(child, &status, 0);
+                boot_uncontained(fd_magisk, fd_stock, argv); /* never returns */
+            }
+        }
+        sleep_ms(POLL_MS);
+    }
 }
 
 int main(int argc, char **argv) {
     (void)argc;
     kmsg("<6>oss-init: OSS-Phone init is the real PID 1; containing Android init\n");
 
-    /* Hold fds to both fallback inits so the iron rule survives FreeRamdisk. */
+    /* Held fds so the fallback survives Android's FreeRamdisk. */
     int fd_magisk = open(PRIMARY_INIT, O_RDONLY | O_CLOEXEC);
     int fd_stock = open(STOCK_INIT, O_RDONLY | O_CLOEXEC);
-
-    /* Relay tmpfs shared (same superblock) with the container, for liveness and
-     * the reboot target. Best-effort: if it fails we degrade safely (no hang
-     * breaker, reboots become a fresh uncontained boot instead). */
-    int relay_ok = 0;
-    (void)mkdir(RELAY_DIR, 0755);
-    if (mount("tmpfs", RELAY_DIR, "tmpfs", 0, "mode=0755") == 0) {
-        relay_ok = 1;
-    } else {
-        kmsg("<4>oss-init: relay tmpfs mount failed; reboot relay/hang-breaker disabled\n");
-    }
+    /* Read side of the global kernel log, for liveness (no mount needed). */
+    int kfd = open("/dev/kmsg", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 
     /* Create the container: Android init as PID 1 of a new PID + mount ns.
-     * Raw clone with a NULL stack behaves like fork (no CLONE_VM) but places
-     * the child in the new namespaces; parent's namespaces are unchanged. */
+     * Raw clone with a NULL stack is fork-like (no CLONE_VM). On the stock
+     * kernel (no PID_NS) this returns EPERM and we fall through to an
+     * uncontained boot, so the image is still safe there. */
     long pid = syscall(SYS_clone,
                        (long)(CLONE_NEWPID | CLONE_NEWNS | SIGCHLD),
                        0L, 0L, 0L, 0L);
-    if (pid < 0) {
-        kmsg("<4>oss-init: clone(NEWPID|NEWNS) failed; booting uncontained (as today)\n");
-        fallback_boot(fd_magisk, fd_stock, argv); /* iron rule */
-    }
 
     if (pid == 0) {
-        /* Container PID 1. Keep our mount changes from propagating back to the
-         * host, then run the exact stock stack; it does all the bring-up. */
+        /* Container PID 1. Keep our mount changes from propagating to the host,
+         * then run the exact stock stack; it does all the bring-up. Everything
+         * it mounts stays in THIS namespace and is freed when it dies. */
         (void)mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL);
         (void)execve(PRIMARY_INIT, argv, environ);
         (void)execve(STOCK_INIT, argv, environ);
-        /* Could not exec Android at all: die so the parent falls back cleanly. */
-        _exit(127);
+        _exit(127); /* could not exec Android; parent falls back cleanly */
     }
 
-    /* --- Real PID 1 (host supervisor) ---
-     * Reap, hold the namespace, break an early hang, proxy reboots, and honour
-     * the iron rule on any unexpected container death. */
-    long deadline = now_ms() + LIVENESS_DEADLINE_MS;
-    int alive_seen = 0;
-    for (;;) {
-        int status;
-        pid_t r = waitpid(-1, &status, WNOHANG);
-        if (r == (pid_t)pid) {
-            /* The container exited. Intentional reboot => powerctl was written;
-             * anything else (crash / early bail) => fall back to today's boot. */
-            char req[64];
-            if (relay_ok && read_relay(RELAY_POWERCTL, req, sizeof(req)) > 0) {
-                kmsg("<6>oss-init: container requested powerctl; performing real reboot\n");
-                do_real_powerctl(req);
-            }
-            kmsg("<4>oss-init: container exited without a reboot request; booting uncontained\n");
-            fallback_boot(fd_magisk, fd_stock, argv); /* iron rule */
-        }
-        if (r > 0) continue; /* reaped an orphan zombie; keep going */
-
-        /* r == 0: nobody exited. Watch for early liveness / hang. */
-        if (relay_ok && !alive_seen) {
-            if (access(RELAY_ALIVE, F_OK) == 0) {
-                alive_seen = 1;
-                kmsg("<6>oss-init: container reported liveness; supervising\n");
-            } else if (now_ms() > deadline) {
-                kmsg("<4>oss-init: container never signalled liveness; killing and booting uncontained\n");
-                kill((pid_t)pid, SIGKILL);
-                (void)waitpid((pid_t)pid, &status, 0);
-                fallback_boot(fd_magisk, fd_stock, argv); /* iron rule */
-            }
-        }
-        sleep_ms(POLL_MS);
+    if (pid > 0) {
+        supervise((pid_t)pid, fd_magisk, fd_stock, kfd, argv); /* never returns */
     }
+
+    /* clone failed (e.g. stock kernel without PID_NS): nothing was dirtied, so
+     * boot the stock stack uncontained -- exactly today's boot. */
+    kmsg("<4>oss-init: clone(NEWPID|NEWNS) failed; booting uncontained\n");
+    boot_uncontained(fd_magisk, fd_stock, argv); /* never returns */
+    return 0; /* unreachable; present only to satisfy the compiler */
 }

@@ -22,14 +22,23 @@ as its child inside a **new PID + mount namespace**, so Android init sees
 `getpid()==1` in its own namespace and performs Samsung's full, proven hardware
 bring-up unchanged. OSS Phone owns the real init seat; Android is contained.
 
-The **iron rule** holds at every layer: any failure in our path leaves the
-phone booting exactly as today (setup failure → exec the stock stack as real
-PID 1; container crash / early death → fresh uncontained boot; container hang →
-kill + uncontained boot; intentional reboot → performed for real). The four
-paths were validated under real Linux PID+mount namespaces on whale (§5.5). The
-image is built and **not flashed**; the on-device unknowns (SELinux enforcement
-on our PID 1, full Android boot as a namespaced init, relay survival across
-switch_root) are what the attended morning test resolves.
+The **iron rule** holds at every layer: any failure leaves the phone booting as
+today (setup failure, container crash/early-death, or container hang → a clean
+**uncontained** boot in the same boot). It is structurally impossible for
+oss-init to exit/return.
+
+> **v2 boot-looped; v3 is the fix.** The first containment build (`4d27b69b…`)
+> mounted a tmpfs relay at `/oss-run`, which broke Android's SwitchRoot (it
+> moves every mount into the read-only system root) and FATAL-looped — in both
+> the contained init and the uncontained fallback, because the mount lived in
+> oss-init's own namespace. v3 (`eaeb4494…`) mounts **nothing** (liveness now
+> rides the global kernel log), and its fallback runs from a pristine namespace
+> (the container's mounts are `CLONE_NEWNS`-isolated and freed on death). Full
+> write-up: `notes/stage2/V2-BOOTLOOP-ROOTCAUSE.md`. The paths were validated
+> under real Linux PID+mount namespaces on whale, including a switch_root-style
+> mount-move proof (§5.5). The image is built and **not flashed**; the on-device
+> unknowns (SELinux on our PID 1, full Android boot as a namespaced init) are
+> what the attended morning test resolves.
 
 ## 1. What PID 1 does today (stage 1), from evidence
 
@@ -117,7 +126,7 @@ safe to build and test now, and is the correct seam for stage 3.
 /init.magisk   → magiskinit  (contained-primary: today's Magisk + Moon stack)
 /init.stock    → stock init  (contained/host fallback)
 /overlay.d/moon-direct-boot.rc + sbin/…   (unchanged)
-/overlay.d/oss-contain.rc                 (NEW: liveness + reboot relay)
+/overlay.d/oss-contain.rc                 (NEW: one kernel-log liveness marker)
 kernel, everything else → unchanged (verified byte-for-byte at build time)
 ```
 Source `scripts/native-init/oss-init.c`; overlay
@@ -127,62 +136,77 @@ Source `scripts/native-init/oss-init.c`; overlay
 ### 5.2 Boot flow
 1. Bootloader → OSS kernel → kernel execs ramdisk `/init` = **oss-init as the
    real PID 1**.
-2. oss-init writes a `/dev/kmsg` marker, opens held fds to `/init.magisk` and
-   `/init.stock` (so the fallback survives Android's `FreeRamdisk`), and mounts
-   a tmpfs at `/oss-run` (shared superblock with the container, for the relay).
+2. oss-init writes a `/dev/kmsg` marker and opens held fds to `/init.magisk`,
+   `/init.stock`, and `/dev/kmsg` (read, for liveness). **It mounts nothing** —
+   anything it left mounted would break Android's SwitchRoot (this was the v2
+   bug; see V2-BOOTLOOP-ROOTCAUSE.md).
 3. `clone(CLONE_NEWPID | CLONE_NEWNS | SIGCHLD)` creates the container. The
    child is **PID 1 of a new PID + mount namespace**; it makes its mounts
    private and `execve("/init.magisk", argv, environ)` — the exact stock stack.
    Android does the full bring-up (modules, ueventd, SELinux, property service,
    firmware, adbd/USB, charging, watchdogd) and starts Moon, all as today, all
    inside the namespace.
-4. The parent (`oss-init`, real PID 1) supervises: reaps, watches the relay for
-   liveness, and handles container exit.
+4. The contained second-stage init writes a one-line marker to the **global
+   kernel log** (`overlay.d/oss-contain.rc`). oss-init (real PID 1) reads
+   `/dev/kmsg` — visible across namespaces, no mount — and takes the marker to
+   mean "past first-stage SwitchRoot, watchdogd starting" (so its early-hang
+   breaker stands down). It then supervises and handles container exit.
 
-### 5.3 The iron rule, at every layer
-- **Setup fails** (`clone`/`mount` error): exec the stock stack as the real
-  PID 1 → identical to today's boot, no containment.
-- **Container dies without a reboot request** (crash, or early bail — relay
-  `powerctl` empty): exec the stock stack as the real PID 1 → a fresh
-  **uncontained** boot. The dead container's mount namespace is auto-cleaned by
-  the kernel; loaded modules remain (insmod EEXIST is tolerated), so this is a
-  warm re-init. No reboot loop.
-- **Container hangs before liveness** (no `/oss-run/alive` within 90 s): kill the
-  container, then exec the stock stack as the real PID 1.
-- **Container asks for a real reboot/shutdown** (`sys.powerctl` → relay
-  `/oss-run/powerctl`): perform it for real. `reboot(2)` from a child PID
-  namespace only tears that namespace down, so PID 1 must do the real reboot;
-  the relay carries the target (`bootloader`, `download`, `recovery`, poweroff).
+### 5.3 The iron rule — oss-init can never exit, and the fallback is clean
+There is **no reachable `return`/`_exit` on the PID-1 path.** Every path ends in
+an exec of the stock stack, or (only if even that fails) an infinite loop that
+re-tries the exec and then issues a real `reboot(2)`. The one `_exit(127)` is in
+the cloned child (a separate process); the parent observes that death and falls
+back. The fallback is always a **re-exec of the stock stack in oss-init's own
+namespace** (not a reboot): it stays in THIS boot and goes uncontained, so a
+containment failure can never become a reset loop.
+
+- **Setup fails** (`clone` error, e.g. a kernel without PID_NS): nothing was
+  dirtied → boot the stock stack uncontained = today's boot.
+- **Container dies** (crash, early bail, or SwitchRoot failure): boot the stock
+  stack uncontained. The dead container's mount namespace is auto-cleaned by the
+  kernel, so oss-init's namespace is **pristine** (proven in §5.5); loaded
+  modules remain (insmod EEXIST is tolerated) — a clean warm re-init. No loop.
+- **Container hangs before liveness** (no kernel-log marker within 60 s): kill
+  the container, then boot the stock stack uncontained.
 - Fallback execs use the **held fds** via `execveat(AT_EMPTY_PATH)`, so they work
   even after Android's `FreeRamdisk` unlinks the shared initramfs files.
 
+Reboot/shutdown fidelity is intentionally dropped in v3 (no relay): a reboot
+requested inside the contained Android tears down the namespace, which oss-init
+answers with an uncontained boot rather than a real reboot. This is a safe,
+documented limitation of the containment mode and also the escape hatch — one
+`adb reboot` from contained Moon drops to a working uncontained boot for
+reflashing. A mount-free kernel-log reboot relay can be added later.
+
 ### 5.4 Required behaviors — all preserved
 - **Watchdog keepalive:** unchanged. watchdogd runs inside the container and
-  pets `/dev/watchdog0` exactly as today (DEVTMPFS/ueventd create the node in
-  the container's `/dev`). oss-init never pets it, so a genuine hang still
-  self-resets instead of being masked.
+  pets `/dev/watchdog0` exactly as today. oss-init never pets it, so a genuine
+  hang still self-resets instead of being masked.
 - **Module order / firmware / USB-adb / charging:** unchanged — the contained
   Android does all of it.
-- **Safe fallback to the exact stock init:** built into every failure layer.
+- **Safe fallback to the exact stock init:** structural (§5.3), from a pristine
+  namespace, never a reboot loop.
 
 ### 5.5 Validation (on whale, real Linux PID+mount namespaces)
-A native build of `oss-init.c` (paths redirected to test stand-ins, 2 s
-deadline) was run under `unshare -Urmpf`:
-- **healthy** (container writes `alive`, stays up) → `container reported
-  liveness; supervising`, no fallback. ✓
-- **crash** (container exits early, no `powerctl`) → `container exited without a
-  reboot request; booting uncontained` → fallback re-exec reaches a stable
-  boot. ✓
-- **hang** (no `alive` by the deadline) → `container never signalled liveness;
-  killing and booting uncontained`. ✓
-- **reboot** (container writes `powerctl=reboot,download` then exits) → reboot
-  branch taken with the correct target, not fallback. ✓ (reboot syscall stubbed
-  in the test so it never rebooted the host).
+A native build of `oss-init.c` (init paths and the `/dev/kmsg` reader redirected
+to test stand-ins, 3 s deadline) was run under `unshare -Urmpf`:
+- **healthy** (container emits the kernel-log marker, stays up) → `container
+  reached second stage; supervising`, no fallback. ✓
+- **crash** (container exits early, no marker) → `container exited; booting
+  uncontained` → fallback re-exec reaches a stable boot. ✓ **And the pristine-ns
+  proof:** that container mounted two tmpfs and did an `MS_MOVE`
+  (switch_root-style) before dying; the fallback saw **0** of those mounts in
+  oss-init's namespace (2 inside the container, 0 in the parent) — exactly the
+  property that fixes the v2 SwitchRoot loop. ✓
+- **hang** (no marker by the deadline) → `no liveness by deadline; killing and
+  booting uncontained`. ✓
 
 Build-time checks (in `build-stage2-image.sh`) confirm the kernel is
 byte-identical to `8c0461ee`, `/init` is our supervisor, `/init.magisk` is the
 base magiskinit byte-for-byte, the Moon overlay files are unchanged,
-`/init.stock` is the decompressed backup, and the relay rc is present.
+`/init.stock` is the decompressed backup, and the relay rc is present. An
+independent unpack confirmed **no `oss-run` anywhere** in the ramdisk.
 
 ### 5.6 `oss-pid1` — the safe stepping stone (kept)
 `scripts/native-init/oss-pid1.c` + `build-boot-image.sh` remain: a pre-init that
@@ -204,39 +228,50 @@ real device + OSS kernel can confirm:
    (Magisk/moon policy) to isolate it.
 2. **Android completing a full boot as a namespaced PID 1** on this device
    (property service, binder, servicemanager, ueventd coldboot, switch_root all
-   inside the ns). Expected to work (Android init only needs `getpid()==1`,
-   which holds), but unproven here.
-3. **Relay tmpfs surviving switch_root** so liveness/reboot work. If it does
-   not, oss-init degrades safely (treats exits as crashes → uncontained boot).
+   inside the ns). The v2 log shows it already passes first-stage (dm/erofs
+   mounts, vbmeta, up to SwitchRoot) as a namespaced init — encouraging — but a
+   full boot to Moon is unproven here.
+3. **Re-exec after a *fully booted* container later dies.** The fallback is
+   proven clean for an early death (pristine namespace). After a complete boot,
+   global state (SELinux policy loaded, modules, binder) is dirtier; a re-exec
+   then may not fully re-init (e.g. a second policy load). This only matters
+   when a container that already booted dies later; such a state almost always
+   has adb up for an in-OS reflash. Not a reset loop either way (re-exec stays
+   in-boot).
 
 ## 7. Risk ranking (honest)
 
-1. **Container hangs after liveness but before adbd/watchdogd** (narrow window):
-   no watchdog pet, no adb → hardware watchdog resets → loop → physical
-   Download-mode rescue. Low probability (adbd and watchdogd are both early),
-   high effort to recover. **This is why the test is attended.**
+1. **Container hangs after the liveness marker but before adbd** (narrow
+   window): oss-init's hang-breaker has already stood down, and if adb is not
+   yet up the only recovery is the hardware watchdog resetting → one reset, then
+   the image boots again and re-attempts containment. Low probability (adbd is
+   early, and the marker is at the very start of second stage), but it is the
+   one case that could still need the physical rescue. **This is why the test is
+   attended.** (A deterministic early failure, by contrast, falls back to an
+   uncontained boot in the same boot — no reset.)
 2. **SELinux denies our PID 1 the fallback exec** after a late container death:
-   would leave Moon down with possibly-live adb → in-OS reflash, else physical
-   rescue. Medium uncertainty; mitigated by the permissive-SELinux test variant.
-3. **oss-init crashes before clone**: PID-1 panic. Low probability (static,
-   ~190 lines, namespace logic validated), mitigated by held-fd fallback and by
-   `oss-pid1` as a bisection artifact.
+   would leave Moon down with likely-live adb → in-OS reflash. Medium
+   uncertainty; mitigated by the permissive-SELinux test variant.
+3. **oss-init crashes before/at clone**: PID-1 panic. Low probability (static,
+   ~190 lines, every path validated under real namespaces), mitigated by
+   held-fd fallback and by `oss-pid1` as a bisection artifact.
 4. **Everything else** ≈ today's risk: on any containment failure the iron rule
-   yields today's boot.
+   yields a clean uncontained boot in the same boot.
 
 No A/B slot and no hands during unattended runs ⇒ **do not flash unattended.**
 Test attended, OSS kernel (passthrough) first, then stage 2 (§ TEST-PLAN.md).
 
 ## 8. Artifacts
 
-- `scripts/native-init/oss-init.c` — the containing PID-1 supervisor.
-- `scripts/native-init/overlay.d/oss-contain.rc` — liveness + reboot relay.
+- `scripts/native-init/oss-init.c` — the containing PID-1 supervisor (v3).
+- `scripts/native-init/overlay.d/oss-contain.rc` — one kernel-log liveness marker.
 - `scripts/native-init/build-stage2-image.sh` — reproducible builder (OSS base).
 - `scripts/native-init/oss-pid1.c`, `build-boot-image.sh` — the stepping stone.
+- `notes/stage2/V2-BOOTLOOP-ROOTCAUSE.md` — the v2 failure write-up.
 - Built, **unflashed** image (git-ignored):
   `images/oss-stage2/boot-oss-stage2-A266MUBU1AYB8.img`
-  sha256 `4d27b69bed59fd075f00963d19b29d630307cf1a247d3193832cd381bcac62f3`
-  (base `8c0461ee…`; also on whale
-  `~/Workspace/research/linux-galaxy-a26/images/oss-stage2/`).
+  sha256 `eaeb4494567f10459bc91f6c3eb156709f56bb066da0913bc307940b303c17e2`
+  (base `8c0461ee…`; built on whale `~/oss-kernel/out/s2/`). Supersedes the
+  boot-looping v2 image `4d27b69b…` — **do not flash `4d27b69b`.**
 - `notes/stage2/TEST-PLAN.md` — attended morning test, layered on the kernel
   agent's tests.

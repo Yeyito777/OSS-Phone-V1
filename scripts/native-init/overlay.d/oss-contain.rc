@@ -1,22 +1,21 @@
-# OSS-Phone-V1 stage-2 containment relay.
+# OSS-Phone-V1 stage-2 containment liveness marker.
 #
 # Appended to init.rc by magiskinit and run by the CONTAINED Android init
-# (inside its PID + mount namespace). It talks to the host PID 1 (oss-init)
-# through the shared /oss-run tmpfs oss-init mounted before cloning:
+# (inside its PID + mount namespace). It writes one marker to the global kernel
+# log as soon as the container reaches second stage. oss-init (the real PID 1)
+# reads /dev/kmsg -- which is global and visible across namespaces, and needs no
+# mount -- and takes the marker to mean "the container is past first-stage
+# SwitchRoot and watchdogd is starting", so its early-hang breaker stands down.
 #
-#   /oss-run/alive     written as soon as the container's init runs, so the
-#                      host can tell a healthy (if slow) boot from a wedged one
-#                      and only break a genuine early hang.
-#   /oss-run/powerctl  the reboot/shutdown request, so the host can perform the
-#                      real power transition (reboot(2) from a child PID
-#                      namespace only tears the namespace down).
+# This deliberately adds NO mount: v2's shared /oss-run tmpfs broke Android's
+# SwitchRoot (which moves every mount under / into the read-only system root)
+# and caused the boot loop. A kernel-log write is mount-free and cannot affect
+# SwitchRoot.
 #
-# If /oss-run is absent (relay disabled, e.g. mount failed on the host) these
-# writes are harmless no-ops and the host degrades to the safe default: a
-# container death becomes a fresh uncontained boot.
+# The marker string must match LIVENESS_MARKER in oss-init.c exactly.
 
 on early-init
-    write /oss-run/alive 1
+    write /dev/kmsg OSSPHONE_CONTAIN_LIVE
 
-on property:sys.powerctl=*
-    write /oss-run/powerctl ${sys.powerctl}
+on init
+    write /dev/kmsg OSSPHONE_CONTAIN_LIVE

@@ -13,17 +13,25 @@ stock-init → Moon stack) as its child in a **new PID + mount namespace**, so
 Android sees `getpid()==1` in its namespace and does the full hardware bring-up
 unchanged. OSS Phone owns the real init seat; Android is contained.
 
-Iron rule, enforced at every layer (validated under real namespaces on whale):
-- setup fails → exec the stock stack as real PID 1 (today's boot)
-- container crash / early death → fresh **uncontained** boot
-- container hang (no liveness in 90 s) → kill + uncontained boot
-- intentional reboot → performed for real (PID-ns `reboot(2)` only tears the ns
-  down, so PID 1 proxies it via the `/oss-run` relay)
+Iron rule — **oss-init can never exit/return**; every path execs the stock stack
+or loops+reboots. The fallback is always a re-exec in oss-init's own (pristine)
+namespace, so a failure stays in THIS boot and goes uncontained — never a reset
+loop. Validated under real namespaces on whale (healthy→supervise;
+crash→uncontained with a switch_root-style mount-move pristine-ns proof;
+hang→kill+uncontained):
+- setup fails (e.g. no PID_NS) → boot stock stack uncontained (today's boot)
+- container crash / early death / SwitchRoot failure → clean uncontained boot
+- container hang (no kernel-log marker in 60 s) → kill + uncontained boot
+
+v3 mounts **nothing** (v2's `/oss-run` tmpfs broke Android's SwitchRoot and
+boot-looped — see `../../notes/stage2/V2-BOOTLOOP-ROOTCAUSE.md`). Liveness rides
+the global kernel log; there is no reboot relay (a contained `adb reboot` drops
+to an uncontained boot — the escape hatch).
 
 | File | Role |
 | --- | --- |
 | `oss-init.c` | the real PID 1 / host supervisor |
-| `overlay.d/oss-contain.rc` | container→host relay: `/oss-run/alive`, `/oss-run/powerctl` |
+| `overlay.d/oss-contain.rc` | one `/dev/kmsg` liveness marker (no mount) |
 | `build-stage2-image.sh` | build on the OSS-kernel image `8c0461ee…` |
 
 ```sh
