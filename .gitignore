@@ -38,6 +38,7 @@
 /notes/*
 !/notes/a26-shell/
 !/notes/direct-boot/
+!/notes/ui-polish/
 /notes/a26-shell/*
 !/notes/a26-shell/README.md
 !/notes/a26-shell/APPLE-KEYBOARD-LAYOUT.md
