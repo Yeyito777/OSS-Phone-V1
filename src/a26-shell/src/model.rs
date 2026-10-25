@@ -447,7 +447,8 @@ impl ShellState {
         self.returning = None;
         self.pending_capture = Some(app);
         self.keyboard.hide();
-        self.active_app_focused = false;
+        // X focus stays with the app under the gesture; if it springs back,
+        // no FocusIn would arrive to restore this flag.
         self.last_action = "home_gesture".into();
         self.redraw = true;
         true

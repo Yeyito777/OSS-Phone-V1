@@ -307,22 +307,58 @@ per frame, so Moon moved composition into the server:
   scaled images re-cover them with what lies beneath instead of using an
   alpha mask (5x slower in pixman). Rounded corners are repaired by drawing
   what lies beneath through small pre-rendered A8 corner masks.
-- **Pacing.** Frames are drawn into one of two buffers and handed to
-  `PresentPixmap` with the damaged region, targeting the vblank after the
-  last completed one. The next frame starts when Present reports the
-  previous one complete, so motion advances exactly once per refresh, and
-  animation time is the predicted scanout time. If Present is unavailable or
-  stops completing (for example while DPMS has the CRTC off), a watchdog
-  falls back to drawing straight into the window on a 120 Hz timer.
-  `MOON_NO_PRESENT=1` forces that fallback.
+- **Damage.** Damage is a set of rectangles, not a bounding box: unscaled
+  layers contribute their content tiles at the old and new positions, and the
+  set is snapped to a 32-pixel grid and coalesced so the server's clip region
+  stays a few clean boxes. Nothing is drawn beneath the topmost opaque card.
+  Layers with many tiles composite one rectangle per connected group of
+  content (one per keypad key), not one request per tile.
+- **Server-side caches.** The keypad's darkened wallpaper and the switcher's
+  darkened home screen are rendered once into pixmaps (two levels each)
+  instead of blending a full-screen dim every frame; switcher cards draw a
+  copy of the snapshot pre-scaled to the card size. Large moving cards use
+  nearest sampling (above 72% of the screen width) and bilinear below.
+- **Pacing.** Frames go to one buffer handed to `PresentPixmap` with the
+  damage region, targeting the vblank after the last completed one; the next
+  frame starts when Present reports completion (so the buffer always holds
+  the previous frame), and animation time is the predicted scanout time. When
+  an animation's frames miss three of the last eight refreshes it is paced
+  at a steady 60 Hz instead of alternating 8/16 ms; every sixth frame probes
+  a single refresh and two on-time probes return it to 120 Hz. If Present is
+  unavailable or stops completing (for example while DPMS has the CRTC off),
+  a watchdog falls back to drawing straight into the window on a 120 Hz
+  timer. `MOON_NO_PRESENT=1` forces that fallback.
 
 All of it remains one-way at runtime; the RENDER formats and Present version
-are queried once before the event loop. `a26-renderbench` measures the
-server-side cost of each RENDER operation Moon uses and the vblank period
-reported by Present. Frame timing is available live: `ctl.sh profile on` logs
-each presented frame (vblank delta, submit-to-scanout latency, damage) to the
-Moon log, and `ctl.sh state` carries the last animation's summary in
-`animation` (frames, missed vblanks, interval and latency mean/p95/max).
+are queried once before the event loop.
+
+Measuring on the device:
+
+- `ctl.sh profile on` logs every presented frame to the Moon log (refreshes
+  since the previous completion, submit-to-scanout time, damage area, and
+  "after idle" for frames that did not follow a completion); `ctl.sh state`
+  carries the last animation's summary in `animation`. Only back-to-back
+  frames count as missed refreshes.
+- `a26-touchpath X0 Y0 X1 Y1 MS [HOLD_MS]` (in the chroot) injects a touch
+  path over the control socket at 120 Hz, so gestures can be measured
+  without a finger; `a26-renderbench` times each RENDER operation Moon uses.
+- `ctl.sh profile skip MASK` stops drawing the frame nodes in a bitmask, to
+  find which one costs a refresh.
+
+Measured on the A26 (OSS kernel, 120 Hz panel, injected 120 Hz touches),
+back-to-back frame interval mean / p95 / max in ms, range over three runs:
+
+| Animation | Before (client-side frames) | Now |
+|---|---|---|
+| Swipe up out of an app | 11.0 / 16.6 / 24.9 (mixed 60–120) | 8.30 / 8.43 / 8.46 (0 missed) to 9.95 / 16.6 / 16.8 |
+| Launch from the dock | 12.9 / 16.9 / 16.9 | 8.30 / 8.54 / 8.58 to 8.60 / 8.59 / 16.6 |
+| App switcher scroll | 16.6 / 16.8 / 16.9 (60 Hz) | 8.41 / 8.55 / 16.6 to 10.1 / 16.6 / 16.9 |
+| Throwing a switcher card | 16.6 (60 Hz) | 8.30 / 8.31 / 8.66, 0 missed |
+| Slow swipe up and hold into the switcher | 16.8 (60 Hz) | 9.7–12.7 mean: 120 Hz with steady 60 Hz stretches |
+| Lock screen drag to the keypad | 16.6 (60 Hz) | 14.5–15.0 mean: about half of the frames paced at 60 Hz |
+
+The cross-fade of the full-screen lock layers is the one transition that
+still exceeds a 120 Hz refresh on this unaccelerated server.
 
 ## Off-device preview
 

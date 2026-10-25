@@ -26,6 +26,8 @@ pub enum Command {
     Home,
     Switcher,
     Profile(bool),
+    /// Diagnostics: skip drawing the frame nodes in this bitmask.
+    ProfileSkip(u64),
     LaunchSystem,
     LaunchBrowser,
     KeyboardShow(KeyboardPurpose),
@@ -157,6 +159,12 @@ fn parse_command(line: &str) -> Result<Command, String> {
         "profile" => match parts.next() {
             Some("on") => Command::Profile(true),
             Some("off") => Command::Profile(false),
+            Some("skip") => Command::ProfileSkip(
+                parts
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or("profile skip requires a node bitmask")?,
+            ),
             _ => return Err("profile requires on or off".into()),
         },
         "power" => Command::Power,

@@ -575,6 +575,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                         ipc::respond::<model::PublicState>(stream, Err(error));
                         continue;
                     }
+                    if let Command::ProfileSkip(mask) = command {
+                        renderer.compositor.skip_nodes = mask;
+                    }
                     if let Command::Profile(enabled) = command {
                         renderer.compositor.set_profile(enabled);
                         profile_frames = enabled;
@@ -2200,7 +2203,7 @@ fn apply_command(
     key_repeat_timing: KeyRepeatTiming,
 ) {
     match command {
-        Command::Ping | Command::State | Command::Profile(_) => {}
+        Command::Ping | Command::State | Command::Profile(_) | Command::ProfileSkip(_) => {}
         Command::Digit(digit) => state.input_digit(digit, config),
         Command::Backspace => state.backspace_pin(),
         Command::Submit => {

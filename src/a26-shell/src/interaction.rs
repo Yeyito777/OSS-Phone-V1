@@ -371,11 +371,10 @@ impl Switcher {
         rect
     }
 
-    pub fn card_alpha(&self, index: usize, now: Instant) -> f32 {
-        let rect = self.card_rect(index, now);
-        let home = switcher_card_rect(index, self.focus(now));
-        let lifted = (home.y - rect.y).max(0.0);
-        (1.0 - lifted / 1400.0).clamp(0.0, 1.0)
+    /// Cards stay opaque while thrown (as on iOS); a faded card would also
+    /// leave the server's fast compositing path.
+    pub fn card_alpha(&self, _index: usize, _now: Instant) -> f32 {
+        1.0
     }
 
     pub fn card_at(&self, x: f32, y: f32, now: Instant) -> Option<usize> {

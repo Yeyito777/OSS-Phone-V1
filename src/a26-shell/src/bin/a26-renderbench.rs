@@ -235,6 +235,40 @@ fn main() -> Result<(), Box<dyn Error>> {
         )?;
         Ok(())
     })?;
+    measure("Render OVER argb layer, 50% alpha, full", &mut || {
+        conn.render_composite(
+            PictOp::OVER,
+            overlay_picture,
+            half,
+            scene_picture,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            width,
+            height,
+        )?;
+        Ok(())
+    })?;
+    measure("Render ADD argb layer, full", &mut || {
+        conn.render_composite(
+            PictOp::ADD,
+            overlay_picture,
+            0u32,
+            scene_picture,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            width,
+            height,
+        )?;
+        Ok(())
+    })?;
     measure("Render OVER rgb layer, 50% alpha, full", &mut || {
         conn.render_composite(
             PictOp::OVER,
@@ -454,6 +488,73 @@ fn main() -> Result<(), Box<dyn Error>> {
         Ok(())
     })?;
 
+    // Xorg CPU per presented frame for a given damage size, with no
+    // rendering: the floor cost of Present's copy and the shadow update.
+    if conn
+        .extension_information(present::X11_EXTENSION_NAME)?
+        .is_some()
+    {
+        conn.present_query_version(1, 2)?.reply()?;
+        let eid = conn.generate_id()?;
+        conn.present_select_input(eid, window, present::EventMask::COMPLETE_NOTIFY)?;
+        let region = conn.generate_id()?;
+        x11rb::protocol::xfixes::ConnectionExt::xfixes_query_version(&conn, 5, 0)?.reply()?;
+        x11rb::protocol::xfixes::ConnectionExt::xfixes_create_region(&conn, region, &[])?;
+        let xorg = xorg_pid();
+        for rows in [2340_u16, 1170, 585] {
+            x11rb::protocol::xfixes::ConnectionExt::xfixes_set_region(
+                &conn,
+                region,
+                &[x11rb::protocol::xproto::Rectangle {
+                    x: 0,
+                    y: 0,
+                    width,
+                    height: rows,
+                }],
+            )?;
+            let cpu0 = xorg.map(process_cpu_ms).unwrap_or(0.0);
+            let start = Instant::now();
+            let frames = 60;
+            let mut misses = 0;
+            let mut last_msc = 0;
+            for serial in 0..frames {
+                conn.present_pixmap(
+                    window,
+                    scene,
+                    serial,
+                    x11rb::NONE,
+                    region,
+                    0,
+                    0,
+                    x11rb::NONE,
+                    x11rb::NONE,
+                    x11rb::NONE,
+                    0,
+                    if last_msc > 0 { last_msc + 1 } else { 0 },
+                    0,
+                    0,
+                    &[],
+                )?;
+                conn.flush()?;
+                loop {
+                    if let Event::PresentCompleteNotify(event) = conn.wait_for_event()? {
+                        if last_msc > 0 && event.msc > last_msc + 1 {
+                            misses += event.msc - last_msc - 1;
+                        }
+                        last_msc = event.msc;
+                        break;
+                    }
+                }
+            }
+            let cpu = xorg.map(process_cpu_ms).unwrap_or(0.0) - cpu0;
+            println!(
+                "Present {width}x{rows} copy: {:.2} ms Xorg CPU/frame, {misses} missed vblanks, {:.2} ms/frame wall",
+                cpu / f64::from(frames),
+                start.elapsed().as_secs_f64() * 1000.0 / f64::from(frames)
+            );
+        }
+    }
+
     // Vblank period through Present NotifyMSC.
     if conn
         .extension_information(present::X11_EXTENSION_NAME)?
@@ -500,4 +601,26 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn sync<C: Connection>(conn: &C) -> Result<(), Box<dyn Error>> {
     conn.get_input_focus()?.reply()?;
     Ok(())
+}
+
+fn xorg_pid() -> Option<u32> {
+    std::fs::read_dir("/proc")
+        .ok()?
+        .flatten()
+        .find_map(|entry| {
+            let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
+            let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+            (comm.trim() == "Xorg").then_some(pid)
+        })
+}
+
+fn process_cpu_ms(pid: u32) -> f64 {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+    let fields: Vec<&str> = stat
+        .rsplit_once(')')
+        .map(|(_, rest)| rest.split_whitespace().collect())
+        .unwrap_or_default();
+    let ticks: f64 = fields.get(11).and_then(|v| v.parse().ok()).unwrap_or(0.0)
+        + fields.get(12).and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    ticks * 10.0
 }

@@ -117,6 +117,15 @@ fn union(a: Option<Damage>, b: Option<Damage>) -> Option<Damage> {
     }
 }
 
+fn rectangle(d: Damage) -> Rectangle {
+    Rectangle {
+        x: d.x0 as i16,
+        y: d.y0 as i16,
+        width: (d.x1 - d.x0) as u16,
+        height: (d.y1 - d.y0) as u16,
+    }
+}
+
 fn area(damage: Option<Damage>) -> i64 {
     damage.map_or(0, |d| i64::from(d.x1 - d.x0) * i64::from(d.y1 - d.y0))
 }
@@ -152,9 +161,17 @@ struct Surface {
     /// Edge pixels extend outward (RepeatPad), which keeps scaled draws on
     /// pixman's fast bilinear paths.
     padded: bool,
-    /// For transparent layers: the bands that hold any visible pixel, so a
-    /// mostly empty full-screen layer composites only its content.
+    /// For transparent layers: the 32-pixel tiles (merged into runs) that
+    /// hold any visible pixel, and their bounding box, so a mostly empty
+    /// full-screen layer composites only its content.
     content: Option<Vec<Damage>>,
+    content_bounds: Option<Damage>,
+    /// The tiles grouped into a few horizontal bands (each with its own
+    /// horizontal extent), for compositing a many-tile layer cheaply.
+    content_bands: Vec<Damage>,
+    /// A copy pre-scaled to (w, h) with bilinear filtering, used instead of
+    /// scaling every frame when a card rests at that size (app switcher).
+    scaled: Option<(u16, u16, Pixmap, render::Picture)>,
 }
 
 struct Buffer {
@@ -171,6 +188,12 @@ struct InFlight {
     sent: Instant,
     damage_area: i64,
     build: Duration,
+    /// Submitted right after the previous frame completed: only then is a
+    /// late completion a missed vblank (otherwise Moon simply had nothing
+    /// new to show).
+    back_to_back: bool,
+    /// Refreshes after the previous completion this frame targeted.
+    target_delta: u64,
 }
 
 /// Timing of presented frames, for `MOON_PROFILE` and on-device tuning.
@@ -178,6 +201,8 @@ struct InFlight {
 pub struct FrameStats {
     pub frames: u32,
     pub missed_vblanks: u64,
+    /// Frames paced at 60 Hz because they did not fit a 120 Hz refresh.
+    pub half_rate_frames: u32,
     pub intervals_ms: Vec<f32>,
     pub latency_ms: Vec<f32>,
 }
@@ -198,8 +223,9 @@ impl FrameStats {
             )
         };
         format!(
-            "{} frames, {} missed vblanks; interval ms {}; submit-to-scanout ms {}",
+            "{} frames ({} paced at 60 Hz), {} missed vblanks; back-to-back interval ms {}; submit-to-scanout ms {}",
             self.frames,
+            self.half_rate_frames,
             self.missed_vblanks,
             stat(&self.intervals_ms),
             stat(&self.latency_ms),
@@ -222,10 +248,11 @@ pub struct Compositor {
     alpha_masks: Vec<render::Picture>,
     corners: Vec<(u16, [render::Picture; 4])>,
     last: Option<Frame>,
-    last_damage: Option<Damage>,
     force_full: bool,
     next_direct_frame: Instant,
     profile: bool,
+    /// Diagnostics (`ctl profile skip MASK`): frame nodes not to draw.
+    pub skip_nodes: u64,
     /// MOON_DEBUG_FRAMES=1 logs every frame's node list.
     debug_frames: bool,
     pub stats: FrameStats,
@@ -239,6 +266,29 @@ struct PresentState {
     last_ust: u64,
     period_us: u64,
     lost: u32,
+    last_complete_at: Option<Instant>,
+    /// Vblanks per frame: 1 (120 Hz), or 2 while an animation's frames do
+    /// not fit a refresh, so motion stays evenly paced instead of
+    /// alternating between one and two refreshes.
+    divisor: u64,
+    /// Late/on-time history of the last back-to-back frames (1 = late).
+    late_history: u8,
+    /// Frames since entering 60 Hz pacing, and consecutive probes (single
+    /// refresh targets) that made it in time.
+    half_rate_count: u32,
+    probe_successes: u8,
+}
+
+impl PresentState {
+    /// Refreshes the next frame targets. At 60 Hz pacing every sixth frame
+    /// probes a single refresh, to return to 120 Hz once frames fit again.
+    fn next_target_delta(&self) -> u64 {
+        if self.divisor == 2 && (self.half_rate_count + 1) % 6 != 0 {
+            2
+        } else {
+            1
+        }
+    }
 }
 
 /// How long a submitted frame may go unconfirmed before Moon assumes Present
@@ -246,6 +296,8 @@ struct PresentState {
 const PRESENT_WATCHDOG: Duration = Duration::from_millis(120);
 /// Frame interval of the timer fallback (120 Hz).
 const DIRECT_FRAME_INTERVAL: Duration = Duration::from_micros(8_333);
+/// A layer with more content tiles than this damages its bounds instead.
+const MAX_TILE_DAMAGE: usize = 1024;
 /// Corner radii with pre-rendered masks.
 const CORNER_RADII: std::ops::RangeInclusive<u16> = 4..=72;
 
@@ -282,7 +334,10 @@ impl Compositor {
         let mut buffers = Vec::new();
         let present = match present_event {
             Some(eid) => {
-                for _ in 0..2 {
+                // One buffer: the next frame starts only after Present has
+                // copied the previous one, so the buffer always holds the
+                // last frame and each frame redraws only what changed.
+                for _ in 0..1 {
                     let pixmap = conn.generate_id()?;
                     conn.create_pixmap(24, pixmap, window, width, height)?;
                     let picture = conn.generate_id()?;
@@ -314,6 +369,11 @@ impl Compositor {
                     last_ust: 0,
                     period_us: 8_333,
                     lost: 0,
+                    last_complete_at: None,
+                    divisor: 1,
+                    late_history: 0,
+                    half_rate_count: 0,
+                    probe_successes: 0,
                 })
             }
             None => None,
@@ -334,10 +394,10 @@ impl Compositor {
             alpha_masks: Vec::new(),
             corners: Vec::new(),
             last: None,
-            last_damage: None,
             force_full: true,
             next_direct_frame: Instant::now(),
             profile,
+            skip_nodes: 0,
             debug_frames: std::env::var_os("MOON_DEBUG_FRAMES").is_some(),
             stats: FrameStats::default(),
         };
@@ -465,6 +525,9 @@ impl Compositor {
             opaque: !transparent,
             padded: false,
             content: None,
+            content_bounds: None,
+            content_bands: Vec::new(),
+            scaled: None,
         }))
     }
 
@@ -483,7 +546,10 @@ impl Compositor {
         };
         let damage = uploader.upload(conn, canvas)?;
         if !surface.opaque && !damage.is_empty() {
-            surface.content = Some(content_bands(canvas));
+            let tiles = content_tiles(canvas);
+            surface.content_bounds = tiles.iter().copied().reduce(Damage::union);
+            surface.content_bands = components_of(&tiles);
+            surface.content = Some(tiles);
         }
         for damage in damage {
             surface.pending = union(surface.pending, Some(damage));
@@ -512,6 +578,9 @@ impl Compositor {
             opaque: true,
             padded: false,
             content: None,
+            content_bounds: None,
+            content_bands: Vec::new(),
+            scaled: None,
         }))
     }
 
@@ -522,6 +591,7 @@ impl Compositor {
         conn: &C,
         id: SurfaceId,
     ) -> Result<(), Box<dyn Error>> {
+        self.drop_prescaled(conn, id);
         let Some(surface) = self.surfaces.get_mut(id.0).and_then(Option::as_mut) else {
             return Err("unknown snapshot".into());
         };
@@ -546,6 +616,7 @@ impl Compositor {
     }
 
     pub fn free<C: Connection>(&mut self, conn: &C, id: SurfaceId) {
+        self.drop_prescaled(conn, id);
         if let Some(surface) = self.surfaces.get_mut(id.0).and_then(Option::take) {
             let _ = conn.render_free_picture(surface.picture);
             match surface.uploader {
@@ -615,7 +686,7 @@ impl Compositor {
                 let period = present.period_us.max(1);
                 // The first vblank after now (frames are submitted right
                 // after a completion, so this is normally last + 1 period).
-                let mut next = present.last_ust + period;
+                let mut next = present.last_ust + period * present.next_target_delta();
                 while next + 500 < now_us {
                     next += period;
                 }
@@ -647,6 +718,8 @@ impl Compositor {
                     .take_if(|in_flight| in_flight.serial == event.serial)
                 {
                     present.lost = 0;
+                    // A copy-mode completion means the pixmap was read.
+                    self.buffers[in_flight.buffer].idle = true;
                     if present.last_msc > 0 && event.msc > present.last_msc {
                         let delta = event.msc - present.last_msc;
                         let interval_us = event.ust.saturating_sub(present.last_ust);
@@ -656,22 +729,53 @@ impl Compositor {
                         }
                         let interval_ms = interval_us as f32 / 1000.0;
                         let latency_ms = in_flight.sent.elapsed().as_secs_f32() * 1000.0;
-                        if interval_ms < 100.0 && self.stats.intervals_ms.len() < 4096 {
+                        if self.stats.latency_ms.len() < 4096 {
                             self.stats.frames += 1;
-                            self.stats.missed_vblanks += delta - 1;
-                            self.stats.intervals_ms.push(interval_ms);
                             self.stats.latency_ms.push(latency_ms);
+                            if in_flight.back_to_back {
+                                self.stats.missed_vblanks +=
+                                    delta.saturating_sub(in_flight.target_delta);
+                                self.stats.intervals_ms.push(interval_ms);
+                                if in_flight.target_delta == 2 {
+                                    self.stats.half_rate_frames += 1;
+                                }
+                            }
                         }
                         if self.profile {
                             eprintln!(
-                                "present msc +{delta} interval {interval_ms:.2} ms submit-to-scanout {latency_ms:.2} ms build {:.2} ms damage {} px",
+                                "present msc +{delta} interval {interval_ms:.2} ms submit-to-scanout {latency_ms:.2} ms build {:.2} ms damage {} px{}",
                                 in_flight.build.as_secs_f64() * 1000.0,
                                 in_flight.damage_area,
+                                if in_flight.back_to_back {
+                                    ""
+                                } else {
+                                    " (after idle)"
+                                },
                             );
+                        }
+                    }
+                    if in_flight.back_to_back && present.last_msc > 0 {
+                        let late = event.msc > present.last_msc + in_flight.target_delta;
+                        if in_flight.target_delta == 1 && present.divisor == 2 {
+                            // A probe at full rate while paced at 60 Hz.
+                            present.probe_successes =
+                                if late { 0 } else { present.probe_successes + 1 };
+                            if present.probe_successes >= 2 {
+                                present.divisor = 1;
+                                present.late_history = 0;
+                            }
+                        } else if present.divisor == 1 {
+                            present.late_history = (present.late_history << 1) | u8::from(late);
+                            if present.late_history.count_ones() >= 3 {
+                                present.divisor = 2;
+                                present.half_rate_count = 0;
+                                present.probe_successes = 0;
+                            }
                         }
                     }
                     present.last_msc = event.msc;
                     present.last_ust = event.ust;
+                    present.last_complete_at = Some(Instant::now());
                 }
                 true
             }
@@ -712,15 +816,20 @@ impl Compositor {
                     .zip(&frame.nodes)
                     .any(|(a, b)| std::mem::discriminant(a) != std::mem::discriminant(b))
         });
-        let mut damage = if self.force_full || structure_changed {
-            Some(full)
+        // Damage is a list of rectangles: for unscaled layers, the content
+        // tiles at their old and new positions. Copies and redraws then
+        // touch only pixels that changed, which on this unaccelerated Xorg
+        // is what a frame costs.
+        let mut damage: Vec<Damage> = Vec::new();
+        if self.force_full || structure_changed {
+            damage.push(full);
         } else {
-            let mut damage = self.pending(frame.base);
+            damage.extend(self.pending(frame.base));
             let last = self.last.as_ref().expect("checked above");
             for (old, new) in last.nodes.iter().zip(&frame.nodes) {
                 if old != new {
-                    damage = union(damage, old.bounds(w, h));
-                    damage = union(damage, new.bounds(w, h));
+                    self.node_damage(old, &mut damage);
+                    self.node_damage(new, &mut damage);
                     continue;
                 }
                 let Node::Image {
@@ -752,15 +861,17 @@ impl Compositor {
                         x1: pending.x1 + dx,
                         y1: pending.y1 + dy,
                     })
-                    .and_then(|d| new.bounds(w, h).and_then(|b| intersect(d, b)))
+                    .and_then(|d| self.node_bounds(new).and_then(|b| intersect(d, b)))
                 } else {
-                    new.bounds(w, h)
+                    self.node_bounds(new)
                 };
-                damage = union(damage, changed);
+                damage.extend(changed);
             }
-            damage
-        };
-        damage = damage.and_then(|d| intersect(d, full));
+        }
+        // Snap to a 32-pixel grid and coalesce: overlapping rectangles at
+        // different offsets would otherwise fragment the server's clip
+        // region into thousands of tiny boxes, each costing setup time.
+        let damage = grid_cells(&damage, w, h);
 
         let (target, buffer_index) = match &self.present {
             Some(_) => {
@@ -776,18 +887,16 @@ impl Compositor {
             }
             None => (self.window_picture, None),
         };
-        // A buffer last drew the frame before the previous one, so it also
-        // needs the previous frame's damage.
-        let redraw = match buffer_index {
-            Some(index) if self.buffers[index].stale => Some(full),
-            Some(_) => union(damage, self.last_damage),
-            None => damage,
+        let rects = match buffer_index {
+            Some(index) if self.buffers[index].stale => vec![full],
+            _ => damage,
         };
-        let Some(redraw) = redraw.and_then(|d| intersect(d, full)) else {
+        let Some(redraw) = rects.iter().copied().reduce(Damage::union) else {
             self.last = Some(frame);
-            self.last_damage = None;
             return Ok(false);
         };
+        let clip: Vec<Rectangle> = rects.iter().map(|d| rectangle(*d)).collect();
+        let damage_area: i64 = rects.iter().map(|d| area(Some(*d))).sum();
 
         if self.debug_frames {
             eprintln!("frame redraw {redraw:?} base {:?}", frame.base);
@@ -795,23 +904,36 @@ impl Compositor {
                 eprintln!("  {node:?}");
             }
         }
-        conn.render_set_picture_clip_rectangles(
-            target,
-            0,
-            0,
-            &[Rectangle {
-                x: redraw.x0 as i16,
-                y: redraw.y0 as i16,
-                width: (redraw.x1 - redraw.x0) as u16,
-                height: (redraw.y1 - redraw.y0) as u16,
-            }],
-        )?;
-        self.draw_base(conn, frame.base, target, redraw, None)?;
+        conn.render_set_picture_clip_rectangles(target, 0, 0, &clip)?;
+        // Nothing beneath the topmost opaque card needs drawing: the base
+        // and earlier nodes are drawn only around its interior.
+        let occluder = (0..frame.nodes.len()).rev().find_map(|index| {
+            self.opaque_interior(&frame.nodes[index])
+                .map(|interior| (index, interior))
+        });
+        let around: Vec<Damage> = match occluder {
+            Some((_, interior)) => subtract(redraw, interior),
+            None => vec![redraw],
+        };
+        for part in &around {
+            self.draw_base(conn, frame.base, target, *part, None)?;
+        }
         for index in 0..frame.nodes.len() {
+            if index < 64 && self.skip_nodes & (1 << index) != 0 {
+                continue;
+            }
             let node = frame.nodes[index];
-            let Some(bounds) = node.bounds(w, h).and_then(|b| intersect(b, redraw)) else {
+            let Some(bounds) = self.node_bounds(&node).and_then(|b| intersect(b, redraw)) else {
                 continue;
             };
+            if occluder.is_some_and(|(top, _)| index < top) {
+                for part in &around {
+                    if let Some(piece) = intersect(bounds, *part) {
+                        self.draw_node(conn, &node, target, piece, None)?;
+                    }
+                }
+                continue;
+            }
             self.draw_node(conn, &node, target, bounds, None)?;
             if let Node::Image {
                 src, dst, alpha, ..
@@ -851,15 +973,19 @@ impl Compositor {
         match (self.present.as_mut(), buffer_index) {
             (Some(present), Some(index)) => {
                 present.serial = present.serial.wrapping_add(1);
-                conn.xfixes_set_region(
-                    present.region,
-                    &[Rectangle {
-                        x: redraw.x0 as i16,
-                        y: redraw.y0 as i16,
-                        width: (redraw.x1 - redraw.x0) as u16,
-                        height: (redraw.y1 - redraw.y0) as u16,
-                    }],
-                )?;
+                let back_to_back = present
+                    .last_complete_at
+                    .is_some_and(|at| Instant::now().duration_since(at) < Duration::from_millis(4));
+                if !back_to_back {
+                    // A new animation starts at full rate again.
+                    present.divisor = 1;
+                    present.late_history = 0;
+                }
+                let target_delta = present.next_target_delta();
+                if present.divisor == 2 {
+                    present.half_rate_count += 1;
+                }
+                conn.xfixes_set_region(present.region, &clip)?;
                 conn.present_pixmap(
                     self.window,
                     self.buffers[index].pixmap,
@@ -876,7 +1002,7 @@ impl Compositor {
                     // already passed (a late frame), the copy happens at once
                     // rather than waiting another refresh.
                     if present.last_msc > 0 {
-                        present.last_msc + 1
+                        present.last_msc + target_delta
                     } else {
                         0
                     },
@@ -887,12 +1013,15 @@ impl Compositor {
                 let buffer = &mut self.buffers[index];
                 buffer.idle = false;
                 buffer.stale = false;
+                let sent = Instant::now();
                 present.in_flight = Some(InFlight {
                     serial: present.serial,
                     buffer: index,
-                    sent: Instant::now(),
-                    damage_area: area(Some(redraw)),
+                    sent,
+                    damage_area,
                     build,
+                    back_to_back,
+                    target_delta,
                 });
             }
             _ => {
@@ -901,7 +1030,7 @@ impl Compositor {
                     eprintln!(
                         "direct frame build {:.2} ms damage {} px",
                         build.as_secs_f64() * 1000.0,
-                        area(Some(redraw))
+                        damage_area
                     );
                 }
             }
@@ -909,8 +1038,238 @@ impl Compositor {
         conn.flush()?;
         self.force_full = false;
         self.last = Some(frame);
-        self.last_damage = damage;
         Ok(true)
+    }
+
+    fn surface(&self, id: SurfaceId) -> Option<&Surface> {
+        self.surfaces.get(id.0).and_then(Option::as_ref)
+    }
+
+    /// The node's screen bounds, shrunk to a layer's content when the layer
+    /// is drawn unscaled.
+    fn node_bounds(&self, node: &Node) -> Option<Damage> {
+        let bounds = node.bounds(i32::from(self.width), i32::from(self.height))?;
+        let Node::Image {
+            surface, src, dst, ..
+        } = *node
+        else {
+            return Some(bounds);
+        };
+        let unscaled = (src.w - dst.w).abs() < 1e-3 && (src.h - dst.h).abs() < 1e-3;
+        match self.surface(surface).and_then(|s| s.content_bounds) {
+            Some(content) if unscaled => {
+                let (dx, dy) = (
+                    (dst.x - src.x).round() as i32,
+                    (dst.y - src.y).round() as i32,
+                );
+                intersect(
+                    Damage {
+                        x0: content.x0 + dx,
+                        y0: content.y0 + dy,
+                        x1: content.x1 + dx,
+                        y1: content.y1 + dy,
+                    },
+                    bounds,
+                )
+            }
+            _ => Some(bounds),
+        }
+    }
+
+    /// Appends what a node covers: its content tiles for an unscaled layer,
+    /// otherwise its bounds.
+    fn node_damage(&self, node: &Node, out: &mut Vec<Damage>) {
+        let Some(bounds) = self.node_bounds(node) else {
+            return;
+        };
+        if let Node::Image {
+            surface,
+            src,
+            dst,
+            alpha,
+            ..
+        } = *node
+            && alpha > 0.0
+            && (src.w - dst.w).abs() < 1e-3
+            && (src.h - dst.h).abs() < 1e-3
+            && let Some(tiles) = self.content(surface)
+            && tiles.len() <= MAX_TILE_DAMAGE
+        {
+            let (dx, dy) = (
+                (dst.x - src.x).round() as i32,
+                (dst.y - src.y).round() as i32,
+            );
+            out.extend(tiles.iter().filter_map(|t| {
+                intersect(
+                    Damage {
+                        x0: t.x0 + dx,
+                        y0: t.y0 + dy,
+                        x1: t.x1 + dx,
+                        y1: t.y1 + dy,
+                    },
+                    bounds,
+                )
+            }));
+            return;
+        }
+        out.push(bounds);
+    }
+
+    /// The whole pixels a node covers opaquely, if it does.
+    fn opaque_interior(&self, node: &Node) -> Option<Damage> {
+        let (dst, alpha) = match *node {
+            Node::Image {
+                surface,
+                dst,
+                alpha,
+                ..
+            } => {
+                if !self.surface(surface).is_some_and(|s| s.opaque) {
+                    return None;
+                }
+                (dst, alpha)
+            }
+            Node::Fill { dst, alpha, .. } => (dst, alpha),
+        };
+        if alpha < 0.999 {
+            return None;
+        }
+        let interior = Damage {
+            x0: dst.x.ceil() as i32,
+            y0: dst.y.ceil() as i32,
+            x1: (dst.x + dst.w).floor() as i32,
+            y1: (dst.y + dst.h).floor() as i32,
+        };
+        (interior.x1 - interior.x0 > 64 && interior.y1 - interior.y0 > 64).then_some(interior)
+    }
+
+    /// Renders a copy of `id` scaled to `width` x `height` (bilinear, once,
+    /// server-side) so cards resting at that size draw without scaling.
+    pub fn prescale<C: Connection>(
+        &mut self,
+        conn: &C,
+        id: SurfaceId,
+        width: u16,
+        height: u16,
+    ) -> Result<(), Box<dyn Error>> {
+        let Some(surface) = self.surface(id) else {
+            return Ok(());
+        };
+        if surface
+            .scaled
+            .is_some_and(|(w, h, _, _)| (w, h) == (width, height))
+        {
+            return Ok(());
+        }
+        let (source_w, source_h, opaque) = (surface.width, surface.height, surface.opaque);
+        let format = if opaque {
+            self.formats.rgb
+        } else {
+            self.formats.argb
+        };
+        let depth = if opaque { 24 } else { 32 };
+        let pixmap = conn.generate_id()?;
+        conn.create_pixmap(depth, pixmap, self.window, width, height)?;
+        let picture = conn.generate_id()?;
+        conn.render_create_picture(picture, pixmap, format, &CreatePictureAux::new())?;
+        let sx = f32::from(source_w) / f32::from(width);
+        let sy = f32::from(source_h) / f32::from(height);
+        let Some(source) = self.set_transform(conn, id, [fixed(sx), 0, fixed(sy), 0], true)? else {
+            return Ok(());
+        };
+        conn.render_composite(
+            PictOp::SRC,
+            source,
+            x11rb::NONE,
+            picture,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            width,
+            height,
+        )?;
+        let surface = self.surfaces[id.0].as_mut().expect("checked above");
+        if let Some((_, _, old_pixmap, old_picture)) =
+            surface.scaled.replace((width, height, pixmap, picture))
+        {
+            conn.render_free_picture(old_picture)?;
+            conn.free_pixmap(old_pixmap)?;
+        }
+        Ok(())
+    }
+
+    fn drop_prescaled<C: Connection>(&mut self, conn: &C, id: SurfaceId) {
+        if let Some(surface) = self.surfaces.get_mut(id.0).and_then(Option::as_mut)
+            && let Some((_, _, pixmap, picture)) = surface.scaled.take()
+        {
+            let _ = conn.render_free_picture(picture);
+            let _ = conn.free_pixmap(pixmap);
+        }
+    }
+
+    /// A server-side copy of `source` darkened by `dim` (0..1), for
+    /// backgrounds that would otherwise need a full-screen blend per frame.
+    pub fn create_dimmed<C: Connection>(
+        &mut self,
+        conn: &C,
+        source: SurfaceId,
+        dim: f32,
+    ) -> Result<SurfaceId, Box<dyn Error>> {
+        let id = self.create_snapshot(conn)?;
+        self.refresh_dimmed(conn, id, source, dim)?;
+        Ok(id)
+    }
+
+    pub fn refresh_dimmed<C: Connection>(
+        &mut self,
+        conn: &C,
+        id: SurfaceId,
+        source: SurfaceId,
+        dim: f32,
+    ) -> Result<(), Box<dyn Error>> {
+        let Some(source) = self.set_transform(conn, source, [0x10000, 0, 0x10000, 0], false)?
+        else {
+            return Ok(());
+        };
+        let Some(surface) = self.surfaces.get_mut(id.0).and_then(Option::as_mut) else {
+            return Ok(());
+        };
+        let (width, height, target) = (surface.width, surface.height, surface.picture);
+        surface.pending = Some(Damage {
+            x0: 0,
+            y0: 0,
+            x1: i32::from(width),
+            y1: i32::from(height),
+        });
+        conn.render_composite(
+            PictOp::SRC,
+            source,
+            x11rb::NONE,
+            target,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            width,
+            height,
+        )?;
+        conn.render_fill_rectangles(
+            PictOp::OVER,
+            target,
+            render_color(0, dim),
+            &[Rectangle {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            }],
+        )?;
+        Ok(())
     }
 
     fn content(&self, id: SurfaceId) -> Option<&Vec<Damage>> {
@@ -1073,8 +1432,33 @@ impl Compositor {
                         smooth,
                     )
                 };
-                let Some(picture) = self.set_transform(conn, surface, transform, bilinear)? else {
-                    return Ok(());
+                // A card resting at a pre-scaled size draws that copy 1:1.
+                let prescaled = self.surface(surface).and_then(|s| {
+                    let full_source = src.x.abs() < 0.5
+                        && src.y.abs() < 0.5
+                        && (src.w - f32::from(s.width)).abs() < 0.5
+                        && (src.h - f32::from(s.height)).abs() < 0.5;
+                    s.scaled.filter(|(w, h, _, _)| {
+                        full_source
+                            && (dst.w - f32::from(*w)).abs() < 1.0
+                            && (dst.h - f32::from(*h)).abs() < 1.0
+                    })
+                });
+                let (picture, src_x, src_y, integral) = match prescaled {
+                    Some((_, _, _, picture)) => (
+                        picture,
+                        area.x0 - dst.x.round() as i32,
+                        area.y0 - dst.y.round() as i32,
+                        true,
+                    ),
+                    None => {
+                        let Some(picture) =
+                            self.set_transform(conn, surface, transform, bilinear)?
+                        else {
+                            return Ok(());
+                        };
+                        (picture, src_x, src_y, integral)
+                    }
                 };
                 // A scaled draw through an alpha mask leaves pixman's fast
                 // paths (5x slower); fades of scaled images are done by
@@ -1091,9 +1475,16 @@ impl Compositor {
                 } else {
                     PictOp::OVER
                 };
-                // An unscaled transparent layer only needs its content bands.
+                // An unscaled transparent layer only needs its content tiles.
                 let bands: Vec<Damage> = match (integral, self.content(surface)) {
-                    (true, Some(bands)) => {
+                    // With many tiles, one composite clipped to the damage
+                    // region is cheaper than a request per tile.
+                    (true, Some(tiles)) => {
+                        let bands = if tiles.len() <= 12 {
+                            tiles
+                        } else {
+                            &self.surface(surface).expect("has content").content_bands
+                        };
                         let (dx, dy) = (
                             (dst.x - src.x).round() as i32,
                             (dst.y - src.y).round() as i32,
@@ -1135,8 +1526,14 @@ impl Compositor {
             }
             Node::Fill { color, .. } => match mask {
                 None => {
+                    // An opaque fill replaces what is beneath (cheaper).
+                    let op = if alpha >= 0.999 {
+                        PictOp::SRC
+                    } else {
+                        PictOp::OVER
+                    };
                     conn.render_fill_rectangles(
-                        PictOp::OVER,
+                        op,
                         target,
                         render_color(color, alpha),
                         &[Rectangle {
@@ -1236,10 +1633,7 @@ impl Compositor {
         let mask = Some((mask, mx, my));
         self.draw_base(conn, frame.base, target, area, mask)?;
         for below in &frame.nodes[..index] {
-            if let Some(below_area) = below
-                .bounds(i32::from(self.width), i32::from(self.height))
-                .and_then(|b| intersect(b, area))
-            {
+            if let Some(below_area) = self.node_bounds(below).and_then(|b| intersect(b, area)) {
                 self.draw_node(conn, below, target, below_area, mask)?;
             }
         }
@@ -1260,33 +1654,203 @@ impl Compositor {
     }
 }
 
-/// Row bands of a premultiplied canvas that contain visible pixels, with the
-/// horizontal extent of each; nearby rows merge into one band.
-fn content_bands(canvas: &Canvas) -> Vec<Damage> {
-    const MERGE_GAP: i32 = 48;
-    let mut bands: Vec<Damage> = Vec::new();
-    for y in 0..canvas.height {
-        let row = &canvas.pixels[(y * canvas.width) as usize..((y + 1) * canvas.width) as usize];
-        let Some(first) = row.iter().position(|p| p >> 24 != 0) else {
-            continue;
-        };
-        let last = row.iter().rposition(|p| p >> 24 != 0).unwrap_or(first);
-        let (x0, x1) = (first as i32, last as i32 + 1);
-        match bands.last_mut() {
-            Some(band) if y - band.y1 <= MERGE_GAP => {
-                band.x0 = band.x0.min(x0);
-                band.x1 = band.x1.max(x1);
-                band.y1 = y + 1;
+/// The 32-pixel tiles of a premultiplied canvas that hold visible pixels,
+/// merged into horizontal runs and then into taller rectangles where runs
+/// repeat on consecutive tile rows.
+fn content_tiles(canvas: &Canvas) -> Vec<Damage> {
+    const TILE: i32 = 32;
+    let (w, h) = (canvas.width, canvas.height);
+    let columns = ((w + TILE - 1) / TILE) as usize;
+    let mut rects: Vec<Damage> = Vec::new();
+    let mut open: Vec<Damage> = Vec::new();
+    let mut occupied = vec![false; columns];
+    let mut ty = 0;
+    while ty < h {
+        let y1 = (ty + TILE).min(h);
+        occupied.fill(false);
+        for y in ty..y1 {
+            let row = &canvas.pixels[(y * w) as usize..((y + 1) * w) as usize];
+            for (column, flag) in occupied.iter_mut().enumerate() {
+                if *flag {
+                    continue;
+                }
+                let x0 = column * TILE as usize;
+                let x1 = (x0 + TILE as usize).min(w as usize);
+                *flag = row[x0..x1].iter().any(|p| p >> 24 != 0);
             }
-            _ => bands.push(Damage {
-                x0,
-                y0: y,
-                x1,
-                y1: y + 1,
-            }),
+        }
+        let mut still_open = Vec::new();
+        let mut column = 0;
+        while column < columns {
+            if !occupied[column] {
+                column += 1;
+                continue;
+            }
+            let start = column;
+            while column < columns && occupied[column] {
+                column += 1;
+            }
+            let (x0, x1) = (start as i32 * TILE, (column as i32 * TILE).min(w));
+            match open
+                .iter()
+                .position(|r| r.x0 == x0 && r.x1 == x1 && r.y1 == ty)
+            {
+                Some(position) => {
+                    let mut grown = open.swap_remove(position);
+                    grown.y1 = y1;
+                    still_open.push(grown);
+                }
+                None => still_open.push(Damage { x0, y0: ty, x1, y1 }),
+            }
+        }
+        rects.append(&mut open);
+        open = still_open;
+        ty = y1;
+    }
+    rects.append(&mut open);
+    rects
+}
+
+/// The 32-pixel grid cells touched by `rects`, as non-overlapping
+/// rectangles (horizontal runs merged down across rows).
+fn grid_cells(rects: &[Damage], width: i32, height: i32) -> Vec<Damage> {
+    const CELL: i32 = 32;
+    let columns = (width + CELL - 1) / CELL;
+    let rows = (height + CELL - 1) / CELL;
+    let mut cells = vec![false; (columns * rows) as usize];
+    for r in rects {
+        let (x0, x1) = (r.x0.max(0) / CELL, (r.x1.min(width) + CELL - 1) / CELL);
+        let (y0, y1) = (r.y0.max(0) / CELL, (r.y1.min(height) + CELL - 1) / CELL);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                cells[(y * columns + x) as usize] = true;
+            }
+        }
+    }
+    let mut out: Vec<Damage> = Vec::new();
+    let mut open: Vec<Damage> = Vec::new();
+    for row in 0..rows {
+        let (top, bottom) = (row * CELL, ((row + 1) * CELL).min(height));
+        let mut still_open = Vec::new();
+        let mut column = 0;
+        while column < columns {
+            if !cells[(row * columns + column) as usize] {
+                column += 1;
+                continue;
+            }
+            let start = column;
+            while column < columns && cells[(row * columns + column) as usize] {
+                column += 1;
+            }
+            let (x0, x1) = (start * CELL, (column * CELL).min(width));
+            match open
+                .iter()
+                .position(|r| r.x0 == x0 && r.x1 == x1 && r.y1 == top)
+            {
+                Some(position) => {
+                    let mut grown = open.swap_remove(position);
+                    grown.y1 = bottom;
+                    still_open.push(grown);
+                }
+                None => still_open.push(Damage {
+                    x0,
+                    y0: top,
+                    x1,
+                    y1: bottom,
+                }),
+            }
+        }
+        out.append(&mut open);
+        open = still_open;
+    }
+    out.append(&mut open);
+    out
+}
+
+/// Bounding boxes of the connected groups of tiles (tiles touching or
+/// within 16 pixels merge), e.g. one per keypad key; when there are many
+/// groups, horizontal bands instead.
+fn components_of(tiles: &[Damage]) -> Vec<Damage> {
+    let mut boxes: Vec<Damage> = tiles.to_vec();
+    let near = |a: &Damage, b: &Damage| {
+        a.x0 <= b.x1 + 16 && b.x0 <= a.x1 + 16 && a.y0 <= b.y1 + 16 && b.y0 <= a.y1 + 16
+    };
+    loop {
+        let mut merged = false;
+        let mut i = 0;
+        while i < boxes.len() {
+            let mut j = i + 1;
+            while j < boxes.len() {
+                if near(&boxes[i], &boxes[j]) {
+                    let other = boxes.swap_remove(j);
+                    boxes[i] = boxes[i].union(other);
+                    merged = true;
+                } else {
+                    j += 1;
+                }
+            }
+            i += 1;
+        }
+        if !merged {
+            break;
+        }
+    }
+    if boxes.len() > 24 {
+        return bands_of(tiles);
+    }
+    boxes
+}
+
+/// Groups tiles into horizontal bands: tiles whose rows lie within 64
+/// pixels of each other merge, taking the union of their extents.
+fn bands_of(tiles: &[Damage]) -> Vec<Damage> {
+    let mut sorted = tiles.to_vec();
+    sorted.sort_by_key(|t| t.y0);
+    let mut bands: Vec<Damage> = Vec::new();
+    for tile in sorted {
+        match bands.last_mut() {
+            Some(band) if tile.y0 <= band.y1 + 64 => *band = band.union(tile),
+            _ => bands.push(tile),
         }
     }
     bands
+}
+
+/// `area` minus `hole`, as up to four rectangles.
+fn subtract(area: Damage, hole: Damage) -> Vec<Damage> {
+    let Some(hole) = intersect(area, hole) else {
+        return vec![area];
+    };
+    let mut parts = Vec::with_capacity(4);
+    if hole.y0 > area.y0 {
+        parts.push(Damage {
+            y1: hole.y0,
+            ..area
+        });
+    }
+    if hole.y1 < area.y1 {
+        parts.push(Damage {
+            y0: hole.y1,
+            ..area
+        });
+    }
+    if hole.x0 > area.x0 {
+        parts.push(Damage {
+            x0: area.x0,
+            y0: hole.y0,
+            x1: hole.x0,
+            y1: hole.y1,
+        });
+    }
+    if hole.x1 < area.x1 {
+        parts.push(Damage {
+            x0: hole.x1,
+            y0: hole.y0,
+            x1: area.x1,
+            y1: hole.y1,
+        });
+    }
+    parts
 }
 
 fn monotonic_micros() -> u64 {
@@ -1330,29 +1894,191 @@ mod tests {
     }
 
     #[test]
-    fn content_bands_skip_empty_rows_and_merge_near_ones() {
-        let mut canvas = Canvas::new(100, 400);
-        canvas.fill_rect(10, 10, 20, 10, 0xffffff, 1.0);
-        canvas.fill_rect(40, 40, 20, 10, 0xffffff, 1.0);
-        canvas.fill_rect(5, 300, 10, 10, 0xffffff, 0.5);
-        let bands = content_bands(&canvas);
+    fn content_tiles_cover_only_occupied_tiles() {
+        let mut canvas = Canvas::new(200, 400);
+        canvas.fill_rect(10, 10, 20, 50, 0xffffff, 1.0);
+        canvas.fill_rect(150, 300, 10, 10, 0xffffff, 0.5);
+        let tiles = content_tiles(&canvas);
         assert_eq!(
-            bands,
+            tiles,
             vec![
                 Damage {
-                    x0: 10,
-                    y0: 10,
-                    x1: 60,
-                    y1: 50
+                    x0: 0,
+                    y0: 0,
+                    x1: 32,
+                    y1: 64
                 },
                 Damage {
-                    x0: 5,
-                    y0: 300,
-                    x1: 15,
-                    y1: 310
+                    x0: 128,
+                    y0: 288,
+                    x1: 160,
+                    y1: 320
                 },
             ]
         );
+    }
+
+    #[test]
+    fn grid_cells_coalesce_overlapping_rectangles() {
+        let rects = [
+            Damage {
+                x0: 5,
+                y0: 5,
+                x1: 60,
+                y1: 40,
+            },
+            Damage {
+                x0: 10,
+                y0: 12,
+                x1: 62,
+                y1: 47,
+            },
+            Damage {
+                x0: 200,
+                y0: 0,
+                x1: 201,
+                y1: 1,
+            },
+        ];
+        assert_eq!(
+            sorted(grid_cells(&rects, 300, 100)),
+            vec![
+                Damage {
+                    x0: 0,
+                    y0: 0,
+                    x1: 64,
+                    y1: 64
+                },
+                Damage {
+                    x0: 192,
+                    y0: 0,
+                    x1: 224,
+                    y1: 32
+                },
+            ]
+        );
+        assert!(grid_cells(&[], 300, 100).is_empty());
+    }
+
+    fn sorted(mut rects: Vec<Damage>) -> Vec<Damage> {
+        rects.sort_by_key(|d| (d.y0, d.x0));
+        rects
+    }
+
+    #[test]
+    fn components_box_each_separate_group() {
+        let tiles = [
+            Damage {
+                x0: 0,
+                y0: 0,
+                x1: 32,
+                y1: 32,
+            },
+            Damage {
+                x0: 32,
+                y0: 0,
+                x1: 64,
+                y1: 32,
+            },
+            Damage {
+                x0: 400,
+                y0: 0,
+                x1: 432,
+                y1: 32,
+            },
+        ];
+        let mut boxes = components_of(&tiles);
+        boxes.sort_by_key(|b| b.x0);
+        assert_eq!(
+            boxes,
+            vec![
+                Damage {
+                    x0: 0,
+                    y0: 0,
+                    x1: 64,
+                    y1: 32
+                },
+                Damage {
+                    x0: 400,
+                    y0: 0,
+                    x1: 432,
+                    y1: 32
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn bands_merge_nearby_rows_only() {
+        let tiles = [
+            Damage {
+                x0: 0,
+                y0: 0,
+                x1: 32,
+                y1: 32,
+            },
+            Damage {
+                x0: 64,
+                y0: 64,
+                x1: 96,
+                y1: 96,
+            },
+            Damage {
+                x0: 0,
+                y0: 500,
+                x1: 32,
+                y1: 532,
+            },
+        ];
+        assert_eq!(
+            bands_of(&tiles),
+            vec![
+                Damage {
+                    x0: 0,
+                    y0: 0,
+                    x1: 96,
+                    y1: 96
+                },
+                Damage {
+                    x0: 0,
+                    y0: 500,
+                    x1: 32,
+                    y1: 532
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn subtract_leaves_the_frame_around_a_hole() {
+        let area = Damage {
+            x0: 0,
+            y0: 0,
+            x1: 100,
+            y1: 100,
+        };
+        let parts = subtract(
+            area,
+            Damage {
+                x0: 20,
+                y0: 30,
+                x1: 80,
+                y1: 90,
+            },
+        );
+        let covered: i64 = parts
+            .iter()
+            .map(|d| i64::from(d.x1 - d.x0) * i64::from(d.y1 - d.y0))
+            .sum();
+        assert_eq!(covered, 100 * 100 - 60 * 60);
+        let far = Damage {
+            x0: 200,
+            y0: 0,
+            x1: 300,
+            y1: 10,
+        };
+        assert_eq!(subtract(area, far), vec![area]);
+        assert!(subtract(area, area).is_empty());
     }
 
     #[test]
@@ -1369,11 +2095,12 @@ mod tests {
         let stats = FrameStats {
             frames: 3,
             missed_vblanks: 1,
+            half_rate_frames: 0,
             intervals_ms: vec![8.3, 8.4, 16.7],
             latency_ms: vec![9.0, 9.5, 10.0],
         };
         let summary = stats.summary();
-        assert!(summary.contains("3 frames, 1 missed"));
+        assert!(summary.contains("3 frames (0 paced at 60 Hz), 1 missed"));
         assert!(summary.contains("max 16.70"));
     }
 }

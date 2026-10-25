@@ -288,14 +288,14 @@ impl<K: PartialEq> Layer<K> {
         compositor: &mut Compositor,
         key: K,
         draw: impl FnOnce(&mut Canvas),
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<bool, Box<dyn Error>> {
         if self.key.as_ref() == Some(&key) {
-            return Ok(());
+            return Ok(false);
         }
         draw(&mut self.canvas);
         compositor.upload(conn, self.id, &self.canvas)?;
         self.key = Some(key);
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -315,6 +315,11 @@ pub struct Renderer {
     pub compositor: Compositor,
     wallpaper: Canvas,
     wall: SurfaceId,
+    /// The wallpaper darkened toward the keypad's dim, in DIM_LEVELS steps.
+    wall_dims: Vec<SurfaceId>,
+    /// The home screen under the app switcher's dim.
+    /// The home screen darkened halfway and fully to the switcher's dim.
+    home_dims: Vec<SurfaceId>,
     home: Layer<HomeKey>,
     clock: Layer<ClockKey>,
     lock_status: Layer<StatusInfo>,
@@ -332,6 +337,7 @@ pub struct Renderer {
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
 /// How much the passcode keypad darkens the wallpaper.
 const DIMMED: f32 = 0.42;
+const DIM_LEVELS: usize = 2;
 const SPINNER_SIZE: i32 = 96;
 const LABEL_W: i32 = 640;
 const LABEL_H: i32 = 96;
@@ -349,6 +355,11 @@ impl Renderer {
         let wallpaper = wallpaper(w, h);
         let wall = compositor.create_layer(conn, width, height, false)?;
         compositor.upload(conn, wall, &wallpaper)?;
+        let mut wall_dims = Vec::with_capacity(DIM_LEVELS);
+        for level in 1..=DIM_LEVELS {
+            let dim = DIMMED * level as f32 / DIM_LEVELS as f32;
+            wall_dims.push(compositor.create_dimmed(conn, wall, dim)?);
+        }
         let icons = [AppIcon::new(AppId::System), AppIcon::new(AppId::Browser)];
         let mut icon_layers = [wall; 2];
         let mut labels = [wall; 2];
@@ -407,6 +418,8 @@ impl Renderer {
             compositor,
             wallpaper,
             wall,
+            wall_dims,
+            home_dims: Vec::new(),
             icons,
             icon_layers,
             labels,
@@ -469,6 +482,16 @@ impl Renderer {
         display_time: Instant,
     ) -> Result<bool, Box<dyn Error>> {
         self.refresh_layers(conn, state, display_time)?;
+        if let Some(switcher) = &state.switcher {
+            // Cards at rest in the switcher draw a pre-scaled copy.
+            let (w, h) = crate::interaction::switcher_card_size();
+            for app in &switcher.apps {
+                if let Some(id) = self.snapshots[app.index()] {
+                    self.compositor
+                        .prescale(conn, id, w.round() as u16, h.round() as u16)?;
+                }
+            }
+        }
         let frame = self.frame(state, display_time);
         self.compositor.compose(conn, frame)
     }
@@ -493,7 +516,7 @@ impl Renderer {
             };
             let wallpaper = &self.wallpaper;
             let icons = &self.icons;
-            self.home.update(conn, compositor, key, |canvas| {
+            let redrawn = self.home.update(conn, compositor, key, |canvas| {
                 canvas.copy_from(wallpaper);
                 draw_calendar_widget(canvas, widget_rect(0), time);
                 draw_battery_widget(canvas, widget_rect(1), state);
@@ -505,6 +528,21 @@ impl Renderer {
                 }
                 draw_status_bar(canvas, &status, None);
             })?;
+            if redrawn || self.home_dims.is_empty() {
+                // The switcher's backdrop: the home screen darkened once,
+                // server-side, instead of blending a dim every frame. The
+                // half level softens the step as the switcher arms.
+                for (index, dim) in [SWITCHER_DIM / 2.0, SWITCHER_DIM].into_iter().enumerate() {
+                    match self.home_dims.get(index) {
+                        Some(id) => compositor.refresh_dimmed(conn, *id, self.home.id, dim)?,
+                        None => self.home_dims.push(compositor.create_dimmed(
+                            conn,
+                            self.home.id,
+                            dim,
+                        )?),
+                    }
+                }
+            }
         }
         if state.view == View::Locked || state.unlock_at.is_some() {
             let cx = SCREEN_W / 2.0;
@@ -692,9 +730,10 @@ impl Renderer {
                 dst: rect,
                 alpha,
                 radius,
-                // Near full size, nearest sampling is indistinguishable and
-                // several times cheaper on the phone's unaccelerated Xorg.
-                smooth: rect.w < SCREEN_W * 0.92,
+                // Bilinear scaling of a large card does not fit a 120 Hz
+                // frame on the unaccelerated server; at this size nearest
+                // sampling is hard to tell apart while the card moves.
+                smooth: rect.w < SCREEN_W * 0.72,
             }),
             CardFace::Splash(app) => {
                 nodes.push(Node::Fill {
@@ -761,14 +800,8 @@ impl Renderer {
             };
         }
         let base = match state.view {
-            View::Locked => {
-                self.lock_nodes(state, t, &mut nodes);
-                self.wall
-            }
-            _ => {
-                self.home_nodes(state, t, &mut nodes);
-                self.home.id
-            }
+            View::Locked => self.lock_nodes(state, t, &mut nodes),
+            _ => self.home_nodes(state, t, &mut nodes),
         };
         let volume_visible = state
             .volume_overlay_until
@@ -794,17 +827,18 @@ impl Renderer {
         Frame { base, nodes }
     }
 
-    fn lock_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) {
+    /// Adds the lock screen's nodes and returns its base surface.
+    fn lock_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) -> SurfaceId {
         let p = state.lock_motion.progress(t);
         let shown = p.clamp(0.0, 1.0);
-        // The keypad's darker wallpaper (a solid fill is far cheaper than
-        // blending a pre-darkened layer).
-        nodes.push(Node::Fill {
-            dst: SCREEN,
-            color: BLACK,
-            alpha: DIMMED * shown,
-            radius: 0.0,
-        });
+        // The keypad's darker wallpaper is one of a few pre-darkened copies,
+        // so the drag never blends a full-screen dim per frame.
+        let level = (shown * DIM_LEVELS as f32).round() as usize;
+        let base = if level == 0 {
+            self.wall
+        } else {
+            self.wall_dims[level - 1]
+        };
         // The clock rises with the finger and fades; the keypad rises into
         // place behind it.
         let clock_alpha = (1.0 - p * 1.7).clamp(0.0, 1.0);
@@ -850,9 +884,11 @@ impl Renderer {
             0.0,
             1.0,
         ));
+        base
     }
 
-    fn home_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) {
+    /// Adds the home screen's nodes and returns its base surface.
+    fn home_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) -> SurfaceId {
         // Unlock: the keypad fades away over the home screen.
         let unlock = state.unlock_at.map_or(0.0, |at| {
             1.0 - gfx::ease_out(
@@ -898,10 +934,13 @@ impl Renderer {
         if let Some(switcher) = &state.switcher {
             let enter = switcher.entrance(t);
             let fade = 1.0 - switcher.exit_progress(t);
+            // At rest the backdrop is the pre-darkened home screen; only the
+            // exit fades a dim over the live one.
+            let base = self.home_base(SWITCHER_DIM * fade);
             nodes.push(Node::Fill {
                 dst: SCREEN,
                 color: BLACK,
-                alpha: SWITCHER_DIM * fade,
+                alpha: 0.0,
                 radius: 0.0,
             });
             for (index, app) in switcher.apps.iter().enumerate() {
@@ -929,14 +968,16 @@ impl Renderer {
                 };
                 self.push_card(nodes, self.card_face(*app), rect, radius, alpha);
             }
-            return;
+            return base;
         }
 
+        let mut base = self.home.id;
         if let Some(gesture) = &state.gesture {
+            base = self.home_base(gesture.backdrop_dim(t));
             nodes.push(Node::Fill {
                 dst: SCREEN,
                 color: BLACK,
-                alpha: gesture.backdrop_dim(t),
+                alpha: 0.0,
                 radius: 0.0,
             });
             self.push_card(
@@ -1000,6 +1041,20 @@ impl Renderer {
                 card.radius(t),
                 alpha,
             );
+        }
+        base
+    }
+
+    /// The home screen pre-darkened to the level nearest `dim`.
+    fn home_base(&self, dim: f32) -> SurfaceId {
+        let level = (dim / SWITCHER_DIM * 2.0).round() as usize;
+        match level {
+            0 => self.home.id,
+            level => self
+                .home_dims
+                .get(level.min(self.home_dims.len()).saturating_sub(1))
+                .copied()
+                .unwrap_or(self.home.id),
         }
     }
 

@@ -9,7 +9,7 @@ source "$PROJECT_ROOT/scripts/a26-shell/common.sh"
 SERIAL="$(a26_resolve_serial)"
 IMAGE="$PROJECT_ROOT/images/a26-shell-0.1.0"
 BIN=/data/local/a26-linux/opt/a26-shell/bin
-NAMES=(a26-shell a26-shellctl a26-shellshot a26-renderbench)
+NAMES=(a26-shell a26-shellctl a26-shellshot a26-renderbench a26-touchpath)
 
 "$PROJECT_ROOT/scripts/a26-shell/build.sh"
 
