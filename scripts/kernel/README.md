@@ -58,7 +58,7 @@ beyond doubt.
 | 306 vendor modules (304 vendor_boot + 2 vendor_dlkm): every import resolves, 13 508 vmlinux imports + 306 `module_layout` CRCs match, vermagic matches | `check-kmi.py` | 0 problems | 0 problems |
 | Module signatures | `check-kmi.py` | `CONFIG_MODULE_SIG` off, no module signed, no `sig_enforce` on the phone | same |
 | Functions (unique names, layout immediates masked) | `compare-functions.py` | 55 203 / 55 207 identical (99.99 %; the 4 others are section markers) | 99.79 % (DEFEX gone, PID_NS/devtmpfs added) |
-| Rebuilt in-tree modules vs Samsung's prebuilt `.ko` (after `--strip-debug`) | `compare-builds.py` | 274 / 304 byte-identical; the other 30 have identical code and differ in ThinLTO `.llvm.<hash>` promotion names | — |
+| Rebuilt in-tree modules vs Samsung's prebuilt `.ko` (after `--strip-debug`) | `compare-builds.py` | 274 / 304 byte-identical; the other 30 have identical code and differ in ThinLTO `.llvm.<hash>` promotion names | the same 274 still byte-identical with PID_NS/devtmpfs (and with USER_NS): the header-tested options change no module code |
 | Struct layouts (pahole over vmlinux DWARF) | manual, see below | — | no shared struct changed |
 | Whole Image | `compare-builds.py` | same size (34 044 416), same banner, same embedded config, 28 % of bytes differ (function order, see below) | — |
 | BOOT pipeline | `build-all.sh` self-test | the stock kernel through `make-boot-image.sh` reproduces today's flashed BOOT image byte for byte (`3bf29162…`) | — |
@@ -73,6 +73,20 @@ little (its Kconfig lacks `CONFIG_SEC_AUTO_INPUT` and Samsung's "Block kunit" /
 "File systems kunit" menus; the reproduction embeds the phone's config text
 anyway). Rerun against the official zip; `fetch-source.sh samsung` prints the
 differences from the mirror.
+
+### Reproducibility and results
+
+Two independent runs (fresh toolchain download, fresh clone, different
+`$KROOT`) give bit-identical outputs. Results of `build-all.sh` on the mirror:
+
+| Variant | Image sha256 | BOOT image sha256 |
+| --- | --- | --- |
+| stock | `72bb8f835539bcc405ae0e9a8f3303098bfe9974f04edfd2e98c9f28b439ee63` | `28f315051de91b205344bf184f3c401f69c445097a1397194843a9b9ed9b30f1` |
+| oss | `6a3dd36a32df426d44b171201866d1c277756fb6b10e7b253ce49386496db4d5` | `8c0461eef2ca07b3d35199149907b40ff5db07fc10b4b92567ef1e3443b15f73` |
+| oss-userns | `92f02d17b32d3ca8c36c7f8d64802fe7550e33a87b96f291b8971fb94b5bfd56` | `061b69234f41e1d5544b906ee72884ae56f907744a433fe4041c2b948348e6ac` |
+
+(Image hashes are before Magisk's hexpatches; BOOT images are built on
+`boot-moon-direct-A266MUBU1AYB8.img`, `3bf29162…`.)
 
 ## The OSS variant (`configs/oss-phone.fragment`)
 
