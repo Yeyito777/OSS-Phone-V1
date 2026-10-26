@@ -8,6 +8,7 @@
 !/src/
 !/scripts/
 !/notes/
+!/docs/
 
 /src/*
 !/src/a26-shell/
