@@ -10,24 +10,50 @@
 //! touches the mode.
 //!
 //! Requests are one-way, as Moon's long-lived connection requires; whether
-//! DPMS is usable is decided once at startup in `main.rs`.
+//! DPMS is usable is decided once at startup in `main.rs`. In GPU mode Xorg
+//! has no display; moon-compositor makes the same CRTC commit instead.
 
 use x11rb::connection::Connection;
 use x11rb::errors::ConnectionError;
 use x11rb::protocol::dpms::{ConnectionExt as _, DPMSMode};
 
+use crate::gpu::SharedLink;
+
 pub struct DisplayPower {
     available: bool,
+    gpu: Option<SharedLink>,
 }
 
 impl DisplayPower {
     pub fn new(available: bool) -> Self {
-        Self { available }
+        Self {
+            available,
+            gpu: None,
+        }
+    }
+
+    pub fn gpu(link: SharedLink) -> Self {
+        Self {
+            available: true,
+            gpu: Some(link),
+        }
+    }
+
+    pub fn describe(&self) -> &'static str {
+        match (&self.gpu, self.available) {
+            (Some(_), _) => "CRTC off through moon-compositor",
+            (None, true) => "DPMS",
+            (None, false) => "backlight only",
+        }
     }
 
     /// Powers the panel and display pipeline down. Xorg's own DPMS timers are
     /// zeroed at startup, so enabling DPMS here only allows the forced level.
     pub fn off<C: Connection>(&self, conn: &C) -> Result<(), ConnectionError> {
+        if let Some(link) = &self.gpu {
+            link.borrow_mut().power(false);
+            return Ok(());
+        }
         if !self.available {
             return Ok(());
         }
@@ -39,6 +65,10 @@ impl DisplayPower {
     /// Powers the panel back up and disables DPMS again, so Xorg can never
     /// blank on its own while Moon believes the screen is awake.
     pub fn on<C: Connection>(&self, conn: &C) -> Result<(), ConnectionError> {
+        if let Some(link) = &self.gpu {
+            link.borrow_mut().power(true);
+            return Ok(());
+        }
         if !self.available {
             return Ok(());
         }

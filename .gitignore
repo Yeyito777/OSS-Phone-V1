@@ -14,6 +14,7 @@
 !/src/a26-shell/
 !/src/a26-audio-bridge/
 !/src/moon-audiod/
+!/src/moon-gpu/
 /src/a26-shell/target/
 
 /scripts/*
@@ -21,6 +22,7 @@
 !/scripts/device/
 !/scripts/direct-boot/
 !/scripts/kernel/
+!/scripts/gpu/
 /scripts/device/*
 !/scripts/device/90-moon-autostart.sh
 !/scripts/device/moon-boot-supervisor.sh
@@ -30,6 +32,7 @@
 !/scripts/device/moon-audio-start.sh
 !/scripts/device/moon-audio-stop.sh
 !/scripts/device/moon-audio-keeper.sh
+!/scripts/device/moon-gpu-session.sh
 !/scripts/device/moon-suspend-cycle.sh
 !/scripts/device/a26-enter-chroot.sh
 !/scripts/device/a26-xorg-takeover.sh
@@ -43,6 +46,7 @@
 !/notes/a26-shell/
 !/notes/direct-boot/
 !/notes/ui-polish/
+!/notes/gpu/
 /notes/a26-shell/*
 !/notes/a26-shell/README.md
 !/notes/a26-shell/APPLE-KEYBOARD-LAYOUT.md

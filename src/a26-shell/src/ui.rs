@@ -354,6 +354,9 @@ pub struct Renderer {
     /// The lock/home split of the previous frame, to start a screen's
     /// background at its level rather than fading into it.
     last_locked: Option<bool>,
+    /// GPU mode: the wallpaper and home screen with an exact dim each,
+    /// instead of rows of darkened copies.
+    gpu_backdrops: [Option<SurfaceId>; 2],
     /// When idle time may draw the next darkened copy.
     next_idle_copy: Instant,
     /// Power and wake fades ramp the panel backlight (no frames are drawn);
@@ -510,6 +513,7 @@ impl Renderer {
             lock_fade: RowFade::new(usize::from(height)),
             home_fade: RowFade::new(usize::from(height)),
             last_locked: None,
+            gpu_backdrops: [None, None],
             next_idle_copy: Instant::now(),
             backlight_fades: false,
             icons,
@@ -1126,6 +1130,28 @@ impl Renderer {
             return Ok(());
         }
         let locked = state.view == View::Locked;
+        if self.compositor.gpu() {
+            let (source, dim) = if locked {
+                (
+                    self.wall,
+                    state.lock_motion.progress(t).clamp(0.0, 1.0) * DIMMED,
+                )
+            } else {
+                (self.home.id, home_dim(state, t))
+            };
+            let slot = usize::from(locked);
+            let id = match self.gpu_backdrops[slot] {
+                Some(id) => id,
+                None => {
+                    let id = self.compositor.create_dimmed(conn, source, dim)?;
+                    self.gpu_backdrops[slot] = Some(id);
+                    id
+                }
+            };
+            self.compositor.set_dim(id, dim);
+            self.last_locked = Some(locked);
+            return Ok(());
+        }
         let (levels, fade, dim) = if locked {
             let shown = state.lock_motion.progress(t).clamp(0.0, 1.0);
             (&mut self.wall_levels, &mut self.lock_fade, shown * DIMMED)
@@ -1166,6 +1192,9 @@ impl Renderer {
 
     /// Background rows still moving toward their target: keep drawing.
     pub fn settling(&self) -> bool {
+        if self.compositor.gpu() {
+            return false;
+        }
         // Only the background on screen; the other one is snapped to its
         // level when its screen next appears.
         match self.last_locked {
@@ -1251,11 +1280,10 @@ impl Renderer {
         let p = state.lock_motion.progress(t);
         // The keypad's darker wallpaper, row by row from pre-darkened
         // copies (see backdrop.rs): no full-screen blend per frame.
-        nodes.push(Self::background_node(
-            &mut self.compositor,
-            &self.wall_levels,
-            &self.lock_fade,
-        ));
+        nodes.push(match self.gpu_backdrops[1] {
+            Some(id) if self.compositor.gpu() => backdrop_node(id),
+            _ => Self::background_node(&mut self.compositor, &self.wall_levels, &self.lock_fade),
+        });
         // The clock rises with the finger and fades out first; then the
         // keypad cascades in a row at a time. Only a row or two change per
         // frame, which keeps the drag within a 120 Hz refresh.
@@ -1313,11 +1341,10 @@ impl Renderer {
     ) -> Option<SurfaceId> {
         // The home screen, darkened (row by row from copies) for unlock,
         // the switcher, and the held home gesture.
-        nodes.push(Self::background_node(
-            &mut self.compositor,
-            &self.home_levels,
-            &self.home_fade,
-        ));
+        nodes.push(match self.gpu_backdrops[0] {
+            Some(id) if self.compositor.gpu() => backdrop_node(id),
+            _ => Self::background_node(&mut self.compositor, &self.home_levels, &self.home_fade),
+        });
         // Unlock: the keypad cascades away over the home screen, bottom row
         // first (the lock swipe's cascade in reverse).
         let unlock = unlock_progress(state, t);
@@ -2038,5 +2065,17 @@ mod bench {
             draw_spinner(&mut canvas, 540.0, 1400.0, 3, 1.0);
             eprintln!("spinner {:?}", t.elapsed());
         }
+    }
+}
+
+/// A full-screen background with an exact dim (GPU mode).
+fn backdrop_node(surface: SurfaceId) -> Node {
+    Node::Image {
+        surface,
+        src: SCREEN,
+        dst: SCREEN,
+        alpha: 1.0,
+        radius: 0.0,
+        smooth: false,
     }
 }

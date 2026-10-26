@@ -1,0 +1,16 @@
+== round 1
+banner in, over home: 44 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.58 max 8.60; submit-to-scanout ms mean 8.29 p95 9.28 max 9.75
+banner out (5 s timeout): 42 frames (0 paced at 60 Hz), 1 missed vblanks; back-to-back interval ms mean 8.52 p95 8.64 max 16.57; submit-to-scanout ms mean 8.10 p95 8.84 max 15.42
+notification centre in: 90 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.31 max 8.33; submit-to-scanout ms mean 8.32 p95 9.00 max 16.81
+notification centre out: 88 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.31 max 8.35; submit-to-scanout ms mean 8.20 p95 9.01 max 11.89
+banner in, over an app: 1 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.28 p95 8.28 max 8.28; submit-to-scanout ms mean 8.04 p95 8.04 max 8.04
+== round 2
+banner in, over home: 45 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.51 max 8.59; submit-to-scanout ms mean 8.26 p95 9.21 max 9.40
+banner out (5 s timeout): 43 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.58 max 8.60; submit-to-scanout ms mean 8.00 p95 9.41 max 9.56
+notification centre in: 87 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.31 max 8.32; submit-to-scanout ms mean 8.24 p95 8.99 max 10.85
+notification centre out: 88 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.30 max 8.32; submit-to-scanout ms mean 8.16 p95 9.08 max 9.21
+banner in, over an app: 60 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.31 max 8.35; submit-to-scanout ms mean 8.22 p95 9.03 max 13.45
+ringing screen from screen-off: 10 frames (0 paced at 60 Hz), 175 missed vblanks; back-to-back interval ms mean 19.03 p95 49.28 max 49.28; submit-to-scanout ms mean 15.55 p95 16.66 max 16.66
+ringing screen dismissed: 10 frames (0 paced at 60 Hz), 175 missed vblanks; back-to-back interval ms mean 19.03 p95 49.28 max 49.28; submit-to-scanout ms mean 15.55 p95 16.66 max 16.66
+ringing screen from screen-off: 12 frames (0 paced at 60 Hz), 320 missed vblanks; back-to-back interval ms mean 19.57 p95 57.75 max 57.75; submit-to-scanout ms mean 15.23 p95 16.44 max 16.44
+ringing screen dismissed: 12 frames (0 paced at 60 Hz), 320 missed vblanks; back-to-back interval ms mean 19.57 p95 57.75 max 57.75; submit-to-scanout ms mean 15.23 p95 16.44 max 16.44

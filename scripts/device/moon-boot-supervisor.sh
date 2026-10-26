@@ -328,8 +328,12 @@ boost_display_server
 start_moon() {
     rm -f "$ROOT/run/a26-shell/control.sock"
     : >"$ROOT/root/a26-shell.log"
+    # GPU mode (moon-gpu-session.sh): Moon draws through moon-compositor.
+    gpu_env=''
+    [ ! -e /data/local/tmp/moon-gpu/active ] ||
+        gpu_env=MOON_GPU_SOCKET=/run/moon-gpu/compositor.sock
     "$BB" nohup "$BB" setsid /system/bin/sh "$ROOT/a26-enter-chroot.sh" \
-        /usr/bin/env DISPLAY=:0 A26_SHELL_CONFIG=/etc/a26-shell/config.json \
+        /usr/bin/env DISPLAY=:0 A26_SHELL_CONFIG=/etc/a26-shell/config.json $gpu_env \
         /opt/a26-shell/bin/a26-shell \
         >>"$ROOT/root/a26-shell.log" 2>&1 </dev/null &
     session_pid=$!
@@ -488,8 +492,35 @@ fi
 shell_unhealthy=0
 local_recoveries=0
 suspend_cycle_seen=0
+gpu_fallback_waits=0
 while :; do
-    sleep 30
+    # Thirty seconds, cut short when the GPU path falls back.
+    for _ in $($BB seq 1 30); do
+        sleep 1
+        [ -e "$XORG_STATE/gpu-fallback" ] && break
+    done
+    # The GPU compositor gave up (moon-gpu-session.sh): the takeover restarts
+    # Xorg on the panel; once it is up, start Moon again on that path.
+    if [ -e "$XORG_STATE/gpu-fallback" ]; then
+        if [ -z "$(pidof Xorg 2>/dev/null || true)" ]; then
+            gpu_fallback_waits=$((gpu_fallback_waits + 1))
+            [ "$gpu_fallback_waits" -lt 60 ] && continue
+            log 'Xorg did not return after the GPU fallback; restoring Android'
+            /system/bin/sh /data/local/tmp/a26-android-graphics-restore.sh
+            break
+        fi
+        rm -f "$XORG_STATE/gpu-fallback"
+        log 'GPU compositor failed; restarting Moon on the software display path'
+        stop_moon_session || true
+        start_moon
+        if wait_for_moon; then
+            shell_unhealthy=0
+            continue
+        fi
+        log 'Moon did not come back on the software path; restoring Android'
+        /system/bin/sh /data/local/tmp/a26-android-graphics-restore.sh
+        break
+    fi
     # A detached, device-namespace helper owns planned deep suspend. During that
     # interval Xorg and Moon intentionally disappear and are replaced. Never
     # mistake that bounded lifecycle transition for a crash or race its clean

@@ -341,6 +341,19 @@ per frame, so Moon moved composition into the server:
 All of it remains one-way at runtime; the RENDER formats and Present version
 are queried once before the event loop.
 
+**GPU mode** (opt-in, `GPU_COMPOSITOR=1`; `notes/gpu/DESIGN.md`). When the
+session starts `moon-compositor` (`src/moon-gpu`), Xorg runs headless on the
+dummy driver and Moon gets `MOON_GPU_SOCKET`. The same `Frame` then goes to
+the compositor instead of XRender (`gpu.rs`): layers live in shared
+dma-heap buffers, a dim is a brightness factor instead of rows of darkened
+copies, app snapshots and switcher cards are copies of the "X mirror" (the
+root, copied by Xorg from DAMAGE into a buffer the compositor shares), and
+the compositor's flip events pace frames instead of Present. While an app is
+in front the compositor shows the mirror by itself. Each frame goes to the
+display planes when it fits, else the GPU draws it (else the CPU). If the
+compositor goes away Moon keeps running and reconnects; the session falls
+back to the XRender path in place when it cannot recover.
+
 Measuring on the device:
 
 - `ctl.sh profile on` logs every presented frame to the Moon log (refreshes

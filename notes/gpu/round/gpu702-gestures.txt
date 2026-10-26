@@ -1,0 +1,16 @@
+== round 1
+launch from home: 61 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.62 max 8.68; submit-to-scanout ms mean 8.16 p95 9.15 max 10.26
+swipe up out of an app: 84 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.39 max 8.45; submit-to-scanout ms mean 8.27 p95 9.02 max 18.09
+slow swipe up and hold into the switcher: 63 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.31 max 8.32; submit-to-scanout ms mean 8.14 p95 9.08 max 9.52
+switcher scroll: 85 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.31 max 8.50; submit-to-scanout ms mean 8.17 p95 8.82 max 9.01
+switcher back: 85 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.31 max 8.41; submit-to-scanout ms mean 8.19 p95 9.03 max 11.17
+== round 2
+launch from home: 61 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.30 max 8.31; submit-to-scanout ms mean 8.20 p95 8.91 max 9.72
+swipe up out of an app: 83 frames (0 paced at 60 Hz), 1 missed vblanks; back-to-back interval ms mean 8.40 p95 8.39 max 16.60; submit-to-scanout ms mean 8.32 p95 9.24 max 13.20
+slow swipe up and hold into the switcher: 64 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.31 max 8.32; submit-to-scanout ms mean 8.15 p95 8.65 max 9.74
+switcher scroll: 85 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.31 max 8.38; submit-to-scanout ms mean 8.19 p95 9.18 max 10.41
+switcher back: 82 frames (0 paced at 60 Hz), 1 missed vblanks; back-to-back interval ms mean 8.40 p95 8.31 max 16.59; submit-to-scanout ms mean 8.25 p95 9.01 max 16.62
+lock screen drag to the keypad: 54 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.32 max 8.35; submit-to-scanout ms mean 8.27 p95 9.22 max 9.49
+keypad back to the clock: 49 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.32 max 8.33; submit-to-scanout ms mean 7.98 p95 9.19 max 9.50
+lock screen drag to the keypad: 53 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.31 max 8.32; submit-to-scanout ms mean 8.21 p95 8.86 max 9.22
+keypad back to the clock: 48 frames (0 paced at 60 Hz), 0 missed vblanks; back-to-back interval ms mean 8.30 p95 8.33 max 8.38; submit-to-scanout ms mean 8.20 p95 9.00 max 9.60
