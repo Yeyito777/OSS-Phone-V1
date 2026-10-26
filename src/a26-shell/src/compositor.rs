@@ -72,6 +72,68 @@ pub enum Node {
     Rows { generation: u32 },
 }
 
+/// When two image nodes differ only in how much of the same unscaled
+/// surface they show (same placement), the regions between their bounds;
+/// everything else on screen is unchanged.
+fn clip_change(old: &Node, new: &Node) -> Option<Vec<Damage>> {
+    let (
+        Node::Image {
+            surface: a_surface,
+            src: a_src,
+            dst: a_dst,
+            alpha: a_alpha,
+            radius: a_radius,
+            smooth: a_smooth,
+        },
+        Node::Image {
+            surface: b_surface,
+            src: b_src,
+            dst: b_dst,
+            alpha: b_alpha,
+            radius: b_radius,
+            smooth: b_smooth,
+        },
+    ) = (*old, *new)
+    else {
+        return None;
+    };
+    let unscaled =
+        |src: RectF, dst: RectF| (src.w - dst.w).abs() < 1e-3 && (src.h - dst.h).abs() < 1e-3;
+    let placement = |src: RectF, dst: RectF| ((dst.x - src.x).round(), (dst.y - src.y).round());
+    if a_surface != b_surface
+        || a_alpha != b_alpha
+        || a_radius != b_radius
+        || a_smooth != b_smooth
+        || a_alpha <= 0.0
+        || a_radius > 0.0
+        || !unscaled(a_src, a_dst)
+        || !unscaled(b_src, b_dst)
+        || placement(a_src, a_dst) != placement(b_src, b_dst)
+    {
+        return None;
+    }
+    let bounds = |dst: RectF| Damage {
+        x0: dst.x.floor() as i32,
+        y0: dst.y.floor() as i32,
+        x1: (dst.x + dst.w).ceil() as i32,
+        y1: (dst.y + dst.h).ceil() as i32,
+    };
+    let (a, b) = (bounds(a_dst), bounds(b_dst));
+    let empty = |d: Damage| d.x1 <= d.x0 || d.y1 <= d.y0;
+    let mut strips = Vec::new();
+    for (area, hole) in [(a, b), (b, a)] {
+        if empty(area) {
+            continue;
+        }
+        if empty(hole) {
+            strips.push(area);
+        } else {
+            strips.extend(subtract(area, hole));
+        }
+    }
+    Some(strips)
+}
+
 /// Appends screen row `y` to a list of row runs, extending the last run
 /// when adjacent.
 fn push_row(runs: &mut Vec<Damage>, width: i32, y: i32) {
@@ -897,44 +959,27 @@ impl Compositor {
                     continue;
                 }
                 if old != new {
+                    // Content uploaded this frame: its old pixels may lie
+                    // outside the surface's new content tiles.
+                    for node in [old, new] {
+                        damage.extend(self.pending_damage(node));
+                    }
+                    if let Some(strips) = clip_change(old, new) {
+                        // Only the image's clip moved (a curtain's edge):
+                        // just what it uncovered or covered changes.
+                        let mut covered = Vec::new();
+                        self.node_damage(old, &mut covered);
+                        self.node_damage(new, &mut covered);
+                        damage.extend(covered.iter().flat_map(|piece| {
+                            strips.iter().filter_map(|strip| intersect(*piece, *strip))
+                        }));
+                        continue;
+                    }
                     self.node_damage(old, &mut damage);
                     self.node_damage(new, &mut damage);
                     continue;
                 }
-                let Node::Image {
-                    surface,
-                    src,
-                    dst,
-                    alpha,
-                    ..
-                } = *new
-                else {
-                    continue;
-                };
-                let Some(pending) = self.pending(surface) else {
-                    continue;
-                };
-                if alpha <= 0.0 {
-                    continue;
-                }
-                let untransformed = (src.w - dst.w).abs() < 1e-3 && (src.h - dst.h).abs() < 1e-3;
-                let changed = if untransformed {
-                    // Only the uploaded part of an unscaled layer changed.
-                    let (dx, dy) = (
-                        (dst.x - src.x).round() as i32,
-                        (dst.y - src.y).round() as i32,
-                    );
-                    Some(Damage {
-                        x0: pending.x0 + dx,
-                        y0: pending.y0 + dy,
-                        x1: pending.x1 + dx,
-                        y1: pending.y1 + dy,
-                    })
-                    .and_then(|d| self.node_bounds(new).and_then(|b| intersect(d, b)))
-                } else {
-                    self.node_bounds(new)
-                };
-                damage.extend(changed);
+                damage.extend(self.pending_damage(new));
             }
         }
         // Snap to a 32-pixel grid and coalesce: overlapping rectangles at
@@ -1158,6 +1203,43 @@ impl Compositor {
             }
             _ => Some(bounds),
         }
+    }
+
+    /// Where a node shows content uploaded since the last frame.
+    fn pending_damage(&self, node: &Node) -> Option<Damage> {
+        let Node::Image {
+            surface,
+            src,
+            dst,
+            alpha,
+            ..
+        } = *node
+        else {
+            return None;
+        };
+        let pending = self.pending(surface)?;
+        if alpha <= 0.0 {
+            return None;
+        }
+        // The node's whole placement, not its content's bounds: the new
+        // content may no longer reach where the old content was.
+        let bounds = node.bounds(i32::from(self.width), i32::from(self.height))?;
+        let untransformed = (src.w - dst.w).abs() < 1e-3 && (src.h - dst.h).abs() < 1e-3;
+        if !untransformed {
+            return Some(bounds);
+        }
+        // Only the uploaded part of an unscaled layer changed.
+        let (dx, dy) = (
+            (dst.x - src.x).round() as i32,
+            (dst.y - src.y).round() as i32,
+        );
+        let moved = Damage {
+            x0: pending.x0 + dx,
+            y0: pending.y0 + dy,
+            x1: pending.x1 + dx,
+            y1: pending.y1 + dy,
+        };
+        intersect(moved, bounds)
     }
 
     /// Appends what a node covers: its content tiles for an unscaled layer,

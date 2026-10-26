@@ -1,6 +1,8 @@
+mod alerts;
 mod apps;
 mod audio;
 mod backdrop;
+mod banner;
 mod clock;
 mod compositor;
 mod config;
@@ -15,6 +17,7 @@ mod lease;
 mod memory;
 mod model;
 mod motion;
+mod notify_client;
 mod present;
 mod status;
 mod status_bar;
@@ -314,6 +317,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut volume_surface =
         VolumeSurface::create(&conn, root, screen.root_depth, shape_available)?;
     let mut status_bar_surface = StatusBarSurface::create(&conn, root, screen.root_depth, width)?;
+    let mut banner_surface =
+        banner::BannerSurface::create(&conn, root, screen.root_depth, shape_available)?;
     conn.map_window(shell_window)?;
     conn.xfixes_hide_cursor(shell_window)?.check()?;
     conn.xfixes_hide_cursor(keyboard_surface.window)?.check()?;
@@ -323,6 +328,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     conn.xfixes_hide_cursor(volume_surface.window)?.check()?;
     conn.xfixes_hide_cursor(status_bar_surface.window)?
         .check()?;
+    conn.xfixes_hide_cursor(banner_surface.window)?.check()?;
     raise_shell(&conn, shell_window)?;
     conn.set_input_focus(InputFocus::PARENT, shell_window, CURRENT_TIME)?;
     conn.flush()?;
@@ -371,6 +377,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         config.pin_length,
     )?;
     let ipc = IpcServer::bind(&config.socket_path)?;
+    // moon-notifyd (MOON_NOTIFY_SOCKET overrides the socket for previews).
+    let mut notifyd = notify_client::NotifyClient::new(
+        env::var_os("MOON_NOTIFY_SOCKET")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(notify_client::DEFAULT_SOCKET)),
+    );
     let audio_volume = match AudioVolume::open("/run/moon-audio/volume") {
         Ok(control) => Some(control),
         Err(error) => {
@@ -498,6 +510,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 keyboard_surface.popup_window().unwrap_or(x11rb::NONE),
                 volume_surface.window,
                 status_bar_surface.window,
+                &mut banner_surface,
                 (width, height),
                 &keyboard_geometry,
                 &config,
@@ -519,8 +532,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Some(device) = power_key.as_mut() {
             match device.poll_presses() {
                 Ok(count) => {
+                    // While an alarm or timer rings the power key snoozes
+                    // or stops it instead.
                     if count > 0 {
-                        state.power_key();
+                        state.alerts_user_input();
+                        if !(state.screen_awake && state.alerts_power_key()) {
+                            state.power_key();
+                        }
                     }
                 }
                 Err(error) => {
@@ -534,6 +552,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             match device.poll() {
                 Ok(keys) => {
                     for key in keys {
+                        state.alerts_user_input();
                         change_volume(
                             &mut state,
                             audio_volume.as_ref(),
@@ -616,6 +635,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
                 Err(error) => ipc::respond::<model::PublicState>(stream, Err(&error)),
             }
+        }
+
+        for incoming in notifyd.service(Instant::now()) {
+            match incoming {
+                notify_client::Incoming::Event(event) => state.notify_event(event),
+                notify_client::Incoming::Failed { cmd, code } => {
+                    eprintln!("moon-notifyd refused {cmd}: {code}");
+                }
+            }
+        }
+        state.notify_connected(notifyd.connected());
+        // A notification that must be seen, or an alarm or timer ringing,
+        // turns the screen on through the same wake as the power key.
+        let wake =
+            std::mem::take(&mut state.alerts.pending_wake) || state.alerts.ringing().is_some();
+        if wake && !state.screen_awake {
+            state.screen_on();
+            state.notify_woke_screen(Instant::now());
+            state.last_action = "notify_wake".into();
         }
 
         repeat_keyboard_if_due(
@@ -750,6 +788,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .volume_overlay_until
                 .is_some_and(|deadline| deadline > Instant::now());
         volume_surface.sync(&conn, volume_visible, state.volume)?;
+        for outgoing in std::mem::take(&mut state.alerts.outbox) {
+            match outgoing {
+                alerts::Outgoing::Dismiss(id) => notifyd.dismiss(&id),
+                alerts::Outgoing::DismissAll => notifyd.dismiss_all(None),
+                alerts::Outgoing::Activate(id) => notifyd.activate(&id),
+                alerts::Outgoing::MarkSeen(ids) => notifyd.mark_seen(&ids),
+                alerts::Outgoing::Ring(kind, id, action) => notifyd.ring_action(kind, &id, action),
+            }
+        }
+
         if Instant::now() >= next_device_status {
             let device_status = status::DeviceStatus::read();
             state.update_device_status(
@@ -823,11 +871,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         // override-redirect surfaces from alternately covering one another.
         let status_bar_visible =
             state.screen_awake && state.view.is_app() && !state.shell_covers_app();
-        status_bar_surface.sync(
+        if status_bar_surface.sync(
             &conn,
             status_bar_visible,
             &StatusInfo::from_state(&state, config.clock_24h),
-        )?;
+        )? {
+            banner_surface.request_raise();
+        }
+        let banner_shown = renderer.banner_window(&state, Instant::now());
+        banner_surface.sync(&conn, banner_shown, |canvas| {
+            renderer.draw_banner_window(canvas, &state);
+        })?;
         // External-app MapRequest/configure operations may be the only X11
         // traffic in this state, so they cannot rely on a shell repaint to
         // flush the connection.
@@ -980,6 +1034,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         if apps.needs_process_poll() {
             deadline = deadline.min(now + FALLBACK_PROCESS_STATUS_INTERVAL);
         }
+        if let Some(notify_deadline) = notifyd.next_deadline() {
+            deadline = deadline.min(notify_deadline.max(now));
+        }
+        if banner_shown.is_some() && state.alerts_animating(now) {
+            // The banner window moves at the panel's refresh rate.
+            deadline = deadline.min(now + Duration::from_micros(8_333));
+        }
         let app_fds = apps.poll_fds();
         wait_for_activity(
             &conn,
@@ -987,6 +1048,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             power_key.as_ref(),
             volume_keys.as_ref(),
             &app_fds,
+            notifyd.poll_fd(),
             deadline.saturating_duration_since(now),
         )?;
     }
@@ -1009,6 +1071,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     keyboard_surface.destroy(&conn);
     volume_surface.destroy(&conn);
     status_bar_surface.destroy(&conn);
+    banner_surface.destroy(&conn);
     renderer.destroy(&conn);
     let _ = conn.flush();
     eprintln!("a26-shell stopping");
@@ -1125,9 +1188,10 @@ fn wait_for_activity(
     power_key: Option<&PowerKey>,
     volume_keys: Option<&VolumeKeys>,
     app_fds: &[RawFd],
+    notify: Option<(RawFd, bool)>,
     timeout: Duration,
 ) -> io::Result<()> {
-    let mut descriptors = Vec::with_capacity(4 + app_fds.len());
+    let mut descriptors = Vec::with_capacity(5 + app_fds.len());
     let mut add = |fd: RawFd| {
         descriptors.push(libc::pollfd {
             fd,
@@ -1145,6 +1209,17 @@ fn wait_for_activity(
     }
     for fd in app_fds {
         add(*fd);
+    }
+    if let Some((fd, writing)) = notify {
+        descriptors.push(libc::pollfd {
+            fd,
+            events: if writing {
+                libc::POLLIN | libc::POLLOUT
+            } else {
+                libc::POLLIN
+            },
+            revents: 0,
+        });
     }
 
     let timeout_ms = duration_to_poll_timeout(timeout);
@@ -1182,6 +1257,7 @@ fn handle_x_event(
     popup_window: u32,
     volume_window: u32,
     status_bar_window: u32,
+    banner_surface: &mut banner::BannerSurface,
     dimensions: (u16, u16),
     keyboard_geometry: &KeyboardGeometry,
     config: &Config,
@@ -1194,6 +1270,7 @@ fn handle_x_event(
     key_repeat_timing: KeyRepeatTiming,
 ) -> Result<(), Box<dyn Error>> {
     let (width, height) = dimensions;
+    let banner_window = banner_surface.window;
     match event {
         Event::XinputRawTouchBegin(event) => {
             let x = raw_axis(&event, 0, width.saturating_sub(1));
@@ -1292,6 +1369,9 @@ fn handle_x_event(
         Event::Expose(event) if event.window == status_bar_window => {
             status_bar_surface.request_redraw();
         }
+        Event::Expose(event) if event.window == banner_window => {
+            banner_surface.request_redraw();
+        }
         Event::ButtonPress(event) if event.event == shell_window => {
             if state.pointer.is_none() && raw_touch.keyboard_contacts.is_empty() {
                 if let Some(action) = pointer_begin(
@@ -1333,6 +1413,7 @@ fn handle_x_event(
                 && event.window != keyboard_window
                 && event.window != volume_window
                 && event.window != status_bar_window
+                && event.window != banner_window
             {
                 // A MapRequest is handled inside the current app lifecycle. Do
                 // not synchronously query WM_TRANSIENT_FOR on Moon's long-lived
@@ -1432,7 +1513,8 @@ fn handle_x_event(
                 && event.window != keyboard_window
                 && event.window != popup_window
                 && event.window != volume_window
-                && event.window != status_bar_window =>
+                && event.window != status_bar_window
+                && event.window != banner_window =>
         {
             if apps.note_mapped(event.window) {
                 state.keyboard.request_raise();
@@ -1448,7 +1530,8 @@ fn handle_x_event(
                 && event.window != keyboard_window
                 && event.window != popup_window
                 && event.window != volume_window
-                && event.window != status_bar_window =>
+                && event.window != status_bar_window
+                && event.window != banner_window =>
         {
             if apps
                 .owner_of(event.window)
@@ -1463,6 +1546,7 @@ fn handle_x_event(
             if event.window != volume_window
                 && event.window != status_bar_window
                 && event.window != popup_window
+                && event.window != banner_window
             {
                 apps.remove_window(event.window);
                 state.replace_managed_windows(apps.active_windows());
@@ -1473,6 +1557,7 @@ fn handle_x_event(
                 && event.window != popup_window
                 && event.window != volume_window
                 && event.window != status_bar_window
+                && event.window != banner_window
             {
                 apps.note_unmapped(event.window);
                 state.replace_managed_windows(apps.active_windows());
@@ -1638,6 +1723,7 @@ fn pointer_begin(
     if !state.screen_awake {
         return None;
     }
+    state.alerts_user_input();
     if let Some(previous) = state.pointer.take()
         && previous.keyboard_pressed
         && let Some(index) = previous.keyboard_key_index
@@ -1645,6 +1731,12 @@ fn pointer_begin(
         state.keyboard.release_key_index(index);
     }
     let (pointer, action) = new_pointer_gesture(state, keyboard_geometry, x, y, repeat_timing);
+    if !pointer.keyboard_owned && state.alerts_pointer_begin(f32::from(x), f32::from(y)) {
+        // A banner, the notification centre, or the ringing screen.
+        state.pointer = Some(pointer);
+        state.last_action = "pointer_begin".into();
+        return None;
+    }
     if pointer.keyboard_pressed
         && let Some(index) = pointer.keyboard_key_index
     {
@@ -1720,6 +1812,15 @@ fn pointer_move(
     x: i16,
     y: i16,
 ) {
+    if state.alerts_touch_active() {
+        state.alerts_pointer_move(f32::from(x), f32::from(y));
+        if let Some(pointer) = state.pointer.as_mut() {
+            pointer.last_x = x;
+            pointer.last_y = y;
+            pointer.last_activity = Instant::now();
+        }
+        return;
+    }
     if let Some(pointer) = state.pointer.as_ref()
         && !pointer.keyboard_owned
     {
@@ -2054,6 +2155,10 @@ fn pointer_end(
         finish_keyboard_pointer(conn, state, pointer, keyboard_geometry, key_injector);
         return;
     }
+    if state.alerts_touch_active() {
+        state.alerts_pointer_end(f32::from(x), f32::from(y));
+        return;
+    }
     let dx = i32::from(pointer.last_x) - i32::from(pointer.start_x);
     let dy = i32::from(pointer.last_y) - i32::from(pointer.start_y);
     if state.gesture.is_some() {
@@ -2171,7 +2276,11 @@ fn handle_tap(
         return;
     }
     match state.view {
-        View::Locked if state.lock_face == LockFace::Clock => state.show_passcode(),
+        View::Locked if state.lock_face == LockFace::Clock => {
+            // A notification tapped here opens once unlocked.
+            state.lock_list_tap(f32::from(x), f32::from(y));
+            state.show_passcode();
+        }
         View::Locked => match ui::keypad_action_at(x, y, !state.pin_input.is_empty()) {
             Some(KeypadAction::Digit(digit)) => state.input_digit(digit, config),
             Some(KeypadAction::Backspace) => state.backspace_pin(),

@@ -82,18 +82,19 @@ impl StatusBarSurface {
         }
     }
 
+    /// Returns true when the bar was restacked above everything.
     pub fn sync<C: Connection>(
         &mut self,
         conn: &C,
         visible: bool,
         status: &StatusInfo,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<bool, Box<dyn Error>> {
         if !visible {
             if self.mapped {
                 conn.unmap_window(self.window)?;
                 self.mapped = false;
             }
-            return Ok(());
+            return Ok(false);
         }
 
         let newly_mapped = !self.mapped;
@@ -122,7 +123,7 @@ impl StatusBarSurface {
             }
             self.redraw = false;
         }
-        Ok(())
+        Ok(newly_mapped || needs_present)
     }
 
     pub fn destroy<C: Connection>(&self, conn: &C) {

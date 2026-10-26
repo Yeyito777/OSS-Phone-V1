@@ -208,6 +208,8 @@ pub struct ShellState {
     pub pending_switcher: bool,
     /// The shell window was exposed and must be recopied from its pixmap.
     pub shell_exposed: bool,
+    /// Notifications, alarms and timers on screen (alerts.rs).
+    pub alerts: crate::alerts::Alerts,
     active_app_focused: bool,
     launch: Option<Launch>,
 }
@@ -236,6 +238,7 @@ pub struct PublicState {
     pub apps: Vec<PublicAppState>,
     pub keyboard: PublicKeyboardState,
     pub suspend: PublicSuspendState,
+    pub alerts: crate::alerts::PublicAlerts,
     /// Frame timing of the last finished animation (see `profile on`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub animation: Option<String>,
@@ -283,6 +286,7 @@ impl ShellState {
             pending_reveal: false,
             pending_switcher: false,
             shell_exposed: false,
+            alerts: Default::default(),
             active_app_focused: false,
             launch: None,
         }
@@ -326,6 +330,7 @@ impl ShellState {
             apps,
             keyboard: self.keyboard.public(),
             suspend,
+            alerts: self.alerts_public(),
             animation: None,
         }
     }
@@ -348,6 +353,7 @@ impl ShellState {
         self.pin_error_at = None;
         self.active_app_focused = false;
         self.cancel_app_launch();
+        self.alerts_cancel_touch();
         self.last_action = "lock".into();
         self.redraw = true;
     }
@@ -805,6 +811,7 @@ impl ShellState {
             self.failed_attempts = 0;
             self.lockout_until = None;
             self.last_action = "unlock".into();
+            self.alerts_unlocked();
         } else {
             self.failed_attempts = self.failed_attempts.saturating_add(1);
             self.pin_error_at = Some(Instant::now());
@@ -957,7 +964,8 @@ impl ShellState {
                 || self.returning.is_some()
                 || self
                     .fade
-                    .is_some_and(|fade| fade.out && !self.backlight_fades))
+                    .is_some_and(|fade| fade.out && !self.backlight_fades)
+                || self.alerts_cover_app(Instant::now()))
     }
 
     pub fn finish_app_launch(&mut self) {
@@ -1006,10 +1014,12 @@ impl ShellState {
             || self.fade.is_some()
             || shaking
             || unlocking
+            || self.alerts_animating(now)
     }
 
     pub fn tick(&mut self) {
         let now = Instant::now();
+        self.alerts_tick(now);
         if self.is_lockout_active() && self.view == View::Locked {
             // Repaint the "Try again in N s" countdown.
             self.redraw = true;
@@ -1105,6 +1115,7 @@ impl ShellState {
             passcode_timeout,
             self.gesture.as_ref().and_then(HomeGesture::hold_deadline),
             self.fade.map(|fade| fade.deadline()),
+            self.alerts_deadline(),
         ]
         .into_iter()
         .flatten()

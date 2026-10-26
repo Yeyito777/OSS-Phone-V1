@@ -12,6 +12,7 @@ use std::time::Instant;
 
 use x11rb::connection::Connection;
 
+use crate::alerts::{self, CARD_W, CARD_X, Icons, RingInfo};
 use crate::backdrop::{self, DimLevels, LEVEL_STEP, RowFade, level_dims};
 use crate::clock::LocalTime;
 use crate::compositor::{Compositor, Frame, Node, SurfaceId};
@@ -78,12 +79,14 @@ pub enum KeypadAction {
 }
 
 /// Everything the status bar shows; surfaces repaint only when it changes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StatusInfo {
     pub time: String,
     pub wifi_connected: bool,
     pub battery_percent: Option<u8>,
     pub battery_charging: bool,
+    /// An alarm is set (the status bar shows a small alarm clock).
+    pub alarm_set: bool,
 }
 
 impl StatusInfo {
@@ -93,9 +96,31 @@ impl StatusInfo {
             wifi_connected: state.wifi_connected,
             battery_percent: state.battery_percent.map(|value| value.min(100)),
             battery_charging: state.battery_charging,
+            alarm_set: state.alerts.store.alarm_set(),
         }
     }
 }
+
+/// The app icons notifications show, by app id.
+struct IconSet<'a>(&'a [AppIcon; 2]);
+
+impl Icons for IconSet<'_> {
+    fn icon(&self, app: &str) -> Option<&Image> {
+        AppId::parse(app).map(|app| &self.0[app.index()].large)
+    }
+}
+
+/// A layer key for content that is cheaper to hash than to compare.
+fn key_of(value: &impl std::hash::Hash) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Banner and swiped-card layers draw the card this far down, leaving room
+/// for its shadow.
+const CARD_LAYER_INSET: f32 = 20.0;
 
 fn load_icon(variable: &str, default: &str) -> Option<Image> {
     let path = std::env::var_os(variable).unwrap_or_else(|| default.into());
@@ -347,6 +372,13 @@ pub struct Renderer {
     labels: [SurfaceId; 2],
     snapshots: [Option<SurfaceId>; 2],
     fade_snapshot: Option<SurfaceId>,
+    /// Notifications and alarms (see alerts.rs).
+    banner: Layer<u64>,
+    banner_height: f32,
+    lock_list: Layer<u64>,
+    centre: Layer<u64>,
+    centre_card: Layer<u64>,
+    ring: Layer<u64>,
 }
 
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
@@ -452,6 +484,24 @@ impl Renderer {
                 true,
             )?,
             spinner: Layer::new(conn, &mut compositor, SPINNER_SIZE, SPINNER_SIZE, true)?,
+            banner: Layer::new(
+                conn,
+                &mut compositor,
+                w,
+                alerts::BANNER_LAYER_H as i32,
+                true,
+            )?,
+            banner_height: 0.0,
+            lock_list: Layer::new(conn, &mut compositor, w, alerts::LOCK_LIST_H as i32, true)?,
+            centre: Layer::new(conn, &mut compositor, w, h, true)?,
+            centre_card: Layer::new(
+                conn,
+                &mut compositor,
+                w,
+                alerts::BANNER_LAYER_H as i32,
+                true,
+            )?,
+            ring: Layer::new(conn, &mut compositor, w, h, true)?,
             compositor,
             wallpaper,
             wall,
@@ -538,6 +588,12 @@ impl Renderer {
             }
         }
         self.update_background(conn, state, display_time)?;
+        if state.alerts.ringing().is_some() || state.alerts.centre.visible(display_time) {
+            // Their background: the darkest wallpaper copy.
+            let max = self.wall_levels.max_level();
+            self.wall_levels
+                .ensure(conn, &mut self.compositor, max..=max)?;
+        }
         let frame = self.frame(state, display_time);
         self.compositor.compose(conn, frame)
     }
@@ -725,6 +781,8 @@ impl Renderer {
                 }
             })?;
         }
+        self.refresh_alert_layers(conn, state, &status)?;
+        let compositor = &mut self.compositor;
         let volume = state.volume;
         self.volume.update(conn, compositor, volume, |canvas| {
             canvas.clear(0);
@@ -743,6 +801,198 @@ impl Renderer {
             })?;
         }
         Ok(())
+    }
+
+    /// Banner, lock-screen list, centre and ringing-screen artwork.
+    fn refresh_alert_layers<C: Connection>(
+        &mut self,
+        conn: &C,
+        state: &ShellState,
+        status: &StatusInfo,
+    ) -> Result<(), Box<dyn Error>> {
+        let compositor = &mut self.compositor;
+        let icons = IconSet(&self.icons);
+        let now = crate::clock::unix_now();
+        let minute = now / 60;
+        let store = &state.alerts.store;
+        if let Some(notification) = state
+            .alerts
+            .banner
+            .as_ref()
+            .and_then(|banner| store.notification(&banner.id))
+        {
+            self.banner_height = alerts::card_height(notification);
+            let height = self.banner_height;
+            self.banner.update(
+                conn,
+                compositor,
+                key_of(&(notification, minute)),
+                |canvas| {
+                    canvas.clear(0);
+                    let rect = RectF::new(CARD_X, CARD_LAYER_INSET, CARD_W, height);
+                    alerts::draw_card(canvas, rect, notification, now, &icons, false);
+                },
+            )?;
+        }
+        if state.view == View::Locked {
+            let unseen = state.alerts.unseen();
+            self.lock_list
+                .update(conn, compositor, key_of(&(&unseen, minute)), |canvas| {
+                    alerts::draw_lock_list(canvas, &unseen, now, &icons);
+                })?;
+        }
+        let centre = &state.alerts.centre;
+        if centre.visible(Instant::now()) {
+            let skip = centre.swipe.as_ref().map(|swipe| swipe.id.as_str());
+            let key = key_of(&(&store.notifications, minute, centre.clear_armed, skip));
+            let key = key_of(&(key, status));
+            self.centre.update(conn, compositor, key, |canvas| {
+                alerts::draw_centre(
+                    canvas,
+                    store,
+                    skip,
+                    centre.clear_armed,
+                    now,
+                    &status.time,
+                    &icons,
+                );
+                draw_status_bar(canvas, status, None);
+            })?;
+            if let Some(swipe) = &centre.swipe
+                && let Some(notification) = store.notification(&swipe.id)
+            {
+                let height = swipe.rect.h;
+                self.centre_card.update(
+                    conn,
+                    compositor,
+                    key_of(&(notification, minute)),
+                    |canvas| {
+                        canvas.clear(0);
+                        let rect = RectF::new(CARD_X, CARD_LAYER_INSET, CARD_W, height);
+                        alerts::draw_card(canvas, rect, notification, now, &icons, false);
+                    },
+                )?;
+            }
+        }
+        if let Some(ring) = state.alerts.ringing() {
+            let info = RingInfo::from_store(store, ring);
+            let time = LocalTime::now().time_text(self.twenty_four_hour);
+            let pressed = state.alerts.ring_pressed;
+            let key = key_of(&format!("{info:?}{time}{pressed:?}"));
+            self.ring.update(conn, compositor, key, |canvas| {
+                alerts::draw_ring_screen(canvas, &info, &time, pressed);
+                draw_status_bar(
+                    canvas,
+                    &StatusInfo {
+                        time: time.clone(),
+                        ..status.clone()
+                    },
+                    None,
+                );
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Notification centre, ringing screen and banner nodes, always the same
+    /// number of them so showing or hiding one never restructures a frame.
+    fn alert_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) {
+        let deep = self.wall_levels.surface(self.wall_levels.max_level());
+        let clipped = |surface, top: f32, bottom: f32, alpha: f32| {
+            let rect = RectF::new(0.0, top, SCREEN_W, (bottom - top).max(0.0));
+            Node::Image {
+                surface,
+                src: rect,
+                dst: rect,
+                alpha: if rect.h > 0.0 { alpha } else { 0.0 },
+                radius: 0.0,
+                smooth: false,
+            }
+        };
+        // The centre: a curtain whose content stays put while its edge
+        // moves, so a frame redraws only the strip the edge crossed.
+        let centre = &state.alerts.centre;
+        let edge = centre.edge(t).round();
+        nodes.push(clipped(deep, 0.0, edge, 1.0));
+        nodes.push(clipped(self.centre.id, 0.0, edge, 1.0));
+        let swipe = centre.swipe.as_ref().filter(|_| edge > 0.0);
+        nodes.push(Node::Image {
+            surface: self.centre_card.id,
+            src: RectF::new(0.0, 0.0, SCREEN_W, alerts::BANNER_LAYER_H),
+            dst: RectF::new(
+                swipe.map_or(0.0, |s| s.offset(t).round()),
+                swipe.map_or(0.0, |s| s.rect.y - CARD_LAYER_INSET),
+                SCREEN_W,
+                alerts::BANNER_LAYER_H,
+            ),
+            alpha: swipe.map_or(0.0, |s| {
+                (1.0 - s.offset(t).abs() / SCREEN_W * 0.6).clamp(0.0, 1.0)
+            }),
+            radius: 0.0,
+            smooth: false,
+        });
+        // The ringing screen rises from the bottom the same way.
+        let rise = state.alerts.ring_rise(t);
+        let top = (SCREEN_H * (1.0 - rise)).round();
+        let ringing = state.alerts.ringing().is_some();
+        let alpha = if ringing { 1.0 } else { 0.0 };
+        nodes.push(clipped(deep, top, SCREEN_H, alpha));
+        nodes.push(clipped(self.ring.id, top, SCREEN_H, alpha));
+        // Banners: drawn here unless they float over an app in their own
+        // window (main.rs).
+        let banner = state
+            .alerts
+            .banner
+            .as_ref()
+            .filter(|_| !banner_in_window(state));
+        nodes.push(Node::Image {
+            surface: self.banner.id,
+            src: RectF::new(0.0, 0.0, SCREEN_W, alerts::BANNER_LAYER_H),
+            dst: RectF::new(
+                0.0,
+                banner.map_or(0.0, |b| (b.y(t) - CARD_LAYER_INSET).round()),
+                SCREEN_W,
+                alerts::BANNER_LAYER_H,
+            ),
+            alpha: if banner.is_some() && !ringing {
+                1.0
+            } else {
+                0.0
+            },
+            radius: 0.0,
+            smooth: false,
+        });
+    }
+
+    /// The banner over an app (its own window, see banner.rs): its top,
+    /// card height, and a key for its content; None when not shown.
+    pub fn banner_window(&self, state: &ShellState, now: Instant) -> Option<(i32, f32, u64)> {
+        if !banner_in_window(state) || state.alerts.ringing().is_some() {
+            return None;
+        }
+        let banner = state.alerts.banner.as_ref()?;
+        let notification = state.alerts.store.notification(&banner.id)?;
+        let minute = crate::clock::unix_now() / 60;
+        Some((
+            banner.y(now).round() as i32,
+            alerts::card_height(notification),
+            key_of(&(notification, minute)),
+        ))
+    }
+
+    /// Draws the banner window's card: solid, at its top-left corner.
+    pub fn draw_banner_window(&self, canvas: &mut Canvas, state: &ShellState) {
+        let Some(notification) = state
+            .alerts
+            .banner
+            .as_ref()
+            .and_then(|banner| state.alerts.store.notification(&banner.id))
+        else {
+            return;
+        };
+        let rect = RectF::new(0.0, 0.0, CARD_W, alerts::card_height(notification));
+        let now = crate::clock::unix_now();
+        alerts::draw_card(canvas, rect, notification, now, &IconSet(&self.icons), true);
     }
 
     fn card_face(&self, app: AppId) -> CardFace {
@@ -953,10 +1203,20 @@ impl Renderer {
                 nodes,
             };
         }
-        let base = match state.view {
-            View::Locked => self.lock_nodes(state, t, &mut nodes),
-            _ => self.home_nodes(state, t, &mut nodes),
+        // The centre or the ringing screen over an app: the app's snapshot
+        // lies beneath them.
+        let app_beneath = AppId::from_view(state.view).filter(|_| {
+            state.alerts_cover_app(t)
+                && state.launch().is_none()
+                && state.gesture.is_none()
+                && state.returning.is_none()
+        });
+        let base = match (app_beneath, state.view) {
+            (Some(app), _) => Some(self.snapshots[app.index()].unwrap_or(self.wall)),
+            (None, View::Locked) => self.lock_nodes(state, t, &mut nodes),
+            (None, _) => self.home_nodes(state, t, &mut nodes),
         };
+        self.alert_nodes(state, t, &mut nodes);
         let volume_visible = state
             .volume_overlay_until
             .is_some_and(|deadline| deadline > t);
@@ -1008,6 +1268,21 @@ impl Renderer {
             -p * 520.0,
             clock_alpha,
         ));
+        // Notifications under the clock fade out first (a list fading is
+        // costly; this keeps it to the swipe's first few frames).
+        let list_alpha = if state.alerts.unseen().is_empty() {
+            0.0
+        } else {
+            (1.0 - p * 5.0).clamp(0.0, 1.0)
+        };
+        nodes.push(Node::Image {
+            surface: self.lock_list.id,
+            src: RectF::new(0.0, 0.0, SCREEN_W, alerts::LOCK_LIST_H),
+            dst: RectF::new(0.0, alerts::LOCK_LIST_TOP, SCREEN_W, alerts::LOCK_LIST_H),
+            alpha: (list_alpha * 255.0).round() / 255.0,
+            radius: 0.0,
+            smooth: false,
+        });
         let shake = state
             .pin_error_at
             .map(|at| {
@@ -1377,6 +1652,15 @@ pub fn draw_status_bar(canvas: &mut Canvas, status: &StatusInfo, background: Opt
         cy + 15.0,
         status.wifi_connected,
     );
+    if status.alarm_set {
+        alerts::draw_status_alarm(canvas, (right - 92.0 - 46.0 - 78.0, cy), WHITE);
+    }
+}
+
+/// A banner over an app floats in its own small window (the app is not
+/// Moon's to draw); everywhere else the shell composes it.
+pub fn banner_in_window(state: &ShellState) -> bool {
+    state.screen_awake && state.view.is_app() && !state.shell_covers_app()
 }
 
 /// iOS-style battery: a gray body, a level fill, and the percentage inside
@@ -1691,6 +1975,7 @@ mod tests {
             wifi_connected: true,
             battery_percent: Some(100),
             battery_charging: true,
+            alarm_set: true,
         };
         draw_status_bar(&mut canvas, &status, Some(BLACK));
         let below = &canvas.pixels[(status_bar::HEIGHT as usize) * 1080..];
@@ -1744,6 +2029,7 @@ mod bench {
                 wifi_connected: true,
                 battery_percent: Some(80),
                 battery_charging: false,
+                alarm_set: false,
             };
             let t = Instant::now();
             draw_status_bar(&mut canvas, &status, None);

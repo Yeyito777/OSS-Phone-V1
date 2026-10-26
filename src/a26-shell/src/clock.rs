@@ -44,12 +44,14 @@ const MONTHS: [&str; 12] = [
 
 impl LocalTime {
     pub fn now() -> Self {
+        Self::at(unix_now())
+    }
+
+    /// The local time of a Unix timestamp (seconds).
+    pub fn at(seconds: i64) -> Self {
         // time_t is 64-bit on every Moon target (aarch64 musl, x86-64).
         #[allow(deprecated)]
-        let seconds = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0) as libc::time_t;
+        let seconds = seconds as libc::time_t;
         // SAFETY: `tm` is plain data; localtime_r only writes through the
         // valid pointers given and is thread-safe.
         let mut tm: libc::tm = unsafe { std::mem::zeroed() };
@@ -102,6 +104,14 @@ impl LocalTime {
     pub fn month_name(self) -> &'static str {
         MONTHS[usize::from(self.month - 1)]
     }
+}
+
+/// Wall-clock Unix seconds.
+pub fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// The monotonic instant at which the wall-clock minute next changes.
