@@ -38,6 +38,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <math.h>
 #include <poll.h>
 #include <signal.h>
@@ -65,7 +66,7 @@
 #define IDLE_WAKE_MS 20000
 #define WATCHDOG_S 60
 
-static volatile sig_atomic_t quit, shot, toggle_profile, toggle_planes, wb_shot;
+static volatile sig_atomic_t quit, shot, toggle_profile, toggle_planes, wb_shot, probe;
 static void on_signal(int s) {
     if (s == SIGUSR1)
         shot = 1;
@@ -75,6 +76,8 @@ static void on_signal(int s) {
         toggle_planes = 1;
     else if (s == SIGWINCH)
         wb_shot = 1;
+    else if (s == SIGURG)
+        probe = 1;
     else
         quit = 1;
 }
@@ -1160,10 +1163,116 @@ static void write_wb(struct comp *c, const char *path) {
     close(fd);
 }
 
+/* Shows a test layer on a spare plane of the writeback CRTC and finds where
+ * the plane really fetched it from: every pixel of the test buffer (padding
+ * included) holds its own linear index, so each pixel read back names the
+ * address it came from. The layer is fb_w x (src_y + h) with `pitch`, shown
+ * from row src_y at (0, dst_y), 1080 wide; `scaler` picks a scaling plane.
+ * The writeback buffer has `wb_pitch`. Logs the byte shift of the first,
+ * middle and last rows (0 = right) and returns the first, or LONG_MIN. */
+static long plane_probe(struct comp *c, int fb_w, int pitch, int src_w, int src_y,
+                        int dst_y, int h, int scaler) {
+    int w = c->width, wb_pitch = (w * 4 + 63) & ~63;
+    size_t len = (size_t)pitch * (size_t)(src_y + h);
+    int fd = gpu_dmabuf_alloc("system", len);
+    size_t wlen = (size_t)wb_pitch * c->height;
+    int wfd = gpu_dmabuf_alloc("system", wlen);
+    uint32_t fb = 0, wfb = 0;
+    long base = LONG_MIN, stride = 0, col = 0;
+    int plane = -1;
+    uint32_t *px = MAP_FAILED;
+    uint8_t *out = MAP_FAILED;
+    if (fd < 0 || wfd < 0)
+        goto done;
+    px = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    out = mmap(NULL, wlen, PROT_READ | PROT_WRITE, MAP_SHARED, wfd, 0);
+    if (px == MAP_FAILED || out == MAP_FAILED)
+        goto done;
+    dmabuf_sync(fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE);
+    for (size_t i = 0; i < len / 4; i++)
+        px[i] = (uint32_t)(i & 0xffffff);
+    dmabuf_sync(fd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE);
+    dmabuf_sync(wfd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE);
+    memset(out, 0xee, wlen);
+    dmabuf_sync(wfd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE);
+    if (kms_add_fb(&c->k, fd, (uint32_t)fb_w, (uint32_t)(src_y + h), (uint32_t)pitch,
+                   DRM_FORMAT_XRGB8888, &fb) ||
+        kms_add_fb(&c->k, wfd, (uint32_t)w, (uint32_t)c->height, (uint32_t)wb_pitch,
+                   DRM_FORMAT_ABGR8888, &wfb))
+        goto done;
+    for (int p = 0; p < c->k.nplanes && plane < 0; p++)
+        if (!((c->busy_planes >> p) & 1) && p != c->k.primary &&
+            c->k.planes[p].scaler == scaler)
+            plane = p;
+    if (plane < 0)
+        goto done;
+    struct kms_layer l = {.fb = fb, .sy = (float)src_y, .sw = (float)src_w,
+                          .sh = (float)h, .dy = dst_y, .dw = src_w, .dh = h,
+                          .alpha = 0xffff, .in_fence = -1, .plane = plane};
+    int r = kms_writeback(&c->k, &l, 1, wfb);
+    if (r) {
+        LOG("probe: writeback: %s", strerror(-r));
+        goto done;
+    }
+    dmabuf_sync(wfd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ);
+    /* ABGR8888 bytes R, G, B, A; the index was 0x00RRGGBB. */
+#define AT(x, y)                                                               \
+    ((long)out[(size_t)(y) * wb_pitch + (x) * 4] << 16 |                       \
+     (long)out[(size_t)(y) * wb_pitch + (x) * 4 + 1] << 8 |                    \
+     out[(size_t)(y) * wb_pitch + (x) * 4 + 2])
+    long i0 = AT(0, dst_y), i8 = AT(0, dst_y + 8), ix = AT(src_w / 2, dst_y);
+#undef AT
+    base = (i0 - (long)src_y * (pitch / 4)) * 4;
+    stride = (i8 - i0) / 8 * 4;
+    col = ix - i0;
+    dmabuf_sync(wfd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ);
+done:
+    LOG("probe: fb %dx%d pitch %d, src %dx%d+0+%d -> y %d, plane %u%s: "
+        "start %+ld bytes, row stride %ld, half row %ld px",
+        fb_w, src_y + h, pitch, src_w, h, src_y, dst_y,
+        plane >= 0 ? c->k.planes[plane].id : 0, scaler ? " (scaler)" : "",
+        base, stride, col);
+    if (fb)
+        kms_rm_fb(&c->k, fb);
+    if (wfb)
+        kms_rm_fb(&c->k, wfb);
+    if (px != MAP_FAILED)
+        munmap(px, len);
+    if (out != MAP_FAILED)
+        munmap(out, wlen);
+    if (fd >= 0)
+        close(fd);
+    if (wfd >= 0)
+        close(wfd);
+    return base;
+}
+
+/* The plane probes (SIGURG): which layouts the DPPs fetch correctly. */
+static void probe_planes(struct comp *c) {
+    wait_flip(c);
+    static const int t[][5] = {
+        /* fb_w, pitch, src_w, src_y, dst_y */
+        {1080, 4352, 1080, 0, 0},   {1080, 4352, 1080, 0, 860},
+        {1080, 4320, 1080, 0, 0},   {1080, 4320, 1080, 0, 860},
+        {1088, 4352, 1088, 0, 0},   {1088, 4352, 1088, 0, 860},
+        {1088, 4352, 1080, 0, 0},   {1088, 4352, 1080, 0, 860},
+        {1024, 4096, 1024, 0, 0},   {1024, 4096, 1024, 0, 860},
+        {1024, 4352, 1024, 0, 0},   {1024, 4352, 1024, 0, 860},
+        {1072, 4288, 1072, 0, 0},   {1072, 4288, 1072, 0, 860},
+        {1080, 4608, 1080, 0, 0},   {1080, 4608, 1080, 0, 860},
+        {1080, 4352, 1080, 100, 0}, {1080, 4352, 1080, 100, 860},
+        {1080, 4352, 540, 0, 860},
+    };
+    for (size_t i = 0; i < sizeof t / sizeof t[0]; i++)
+        plane_probe(c, t[i][0], t[i][1], t[i][2], t[i][3], t[i][4], 64, 0);
+}
+
 /* ---- setup ---- */
 
 static int outputs_init(struct comp *c) {
-    c->pitch = (c->width * 4 + 63) & ~63;
+    /* Rows exactly as wide as the screen, like Xorg's framebuffer: the
+     * panel showed a 64-byte-aligned pitch sheared (notes/gpu/DESIGN.md). */
+    c->pitch = c->width * 4;
     for (int i = 0; i < NBUF; i++) {
         struct output *o = &c->out[i];
         /* GPU: written by the GPU, read by the display. CPU: written by
@@ -1256,6 +1365,7 @@ int main(int argc, char **argv) {
     signal(SIGUSR2, on_signal);
     signal(SIGHUP, on_signal);
     signal(SIGWINCH, on_signal);
+    signal(SIGURG, on_signal);
 
     static struct comp c;
     c.client_fd = c.listen_fd = c.flight_fence = c.floor_fd = -1;
@@ -1321,10 +1431,16 @@ int main(int argc, char **argv) {
         memset(c.out[0].map, 0, (size_t)c.pitch * c.height);
         flush_for_device(c.out[0].fd);
     }
-    int r = c.k.crtc_active ? kms_commit_blocking(&c.k, c.out[0].fb)
-                            : kms_commit(&c.k, c.out[0].fb, -1, 1, 0);
+    /* A full modeset, whatever the display was left in: the CRTC off, then
+     * on with the mode (the panel showed garbage when an inherited state
+     * was kept; notes/gpu/DESIGN.md). */
+    int r, was_active = c.k.crtc_active;
+    if (was_active && (r = kms_set_active(&c.k, 0, 0)))
+        LOG("modeset: CRTC off: %s", strerror(-r));
+    r = kms_commit(&c.k, c.out[0].fb, -1, 1, 0);
     if (r) {
-        LOG("first frame (modeset %d): %s", !c.k.crtc_active, strerror(-r));
+        LOG("first frame (modeset, was %s): %s", was_active ? "on" : "off",
+            strerror(-r));
         return 14;
     }
     c.powered = 1;
@@ -1403,6 +1519,10 @@ int main(int argc, char **argv) {
             snprintf(slash ? slash + 1 : path,
                      sizeof path - (size_t)(slash ? slash + 1 - path : 0), "wb.ppm");
             write_wb(&c, path);
+        }
+        if (probe) {
+            probe = 0;
+            probe_planes(&c);
         }
         if (toggle_profile) {
             toggle_profile = 0;

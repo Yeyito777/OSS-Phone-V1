@@ -31,6 +31,8 @@ struct kms {
     uint32_t mode_blob;
     int crtc_active; /* CRTC ACTIVE when we opened it, with our mode */
     uint32_t crtc_active_prop, crtc_mode_prop, crtc_dqe_fd;
+    /* Reset to their defaults by a modeset (0 if absent). */
+    uint32_t crtc_vrr, crtc_color_mode, crtc_render_intent;
     uint32_t conn_crtc_prop;
     struct kms_plane planes[KMS_MAX_PLANES];
     int nplanes, primary, nscalers;

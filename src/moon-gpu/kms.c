@@ -264,6 +264,10 @@ int kms_open(struct kms *k, const char *path, int want_hz) {
     k->crtc_mode_prop =
         prop_id(fd, k->crtc_id, DRM_MODE_OBJECT_CRTC, "MODE_ID", &cur_mode);
     k->crtc_dqe_fd = prop_id(fd, k->crtc_id, DRM_MODE_OBJECT_CRTC, "DQE_FD", NULL);
+    k->crtc_vrr = prop_id(fd, k->crtc_id, DRM_MODE_OBJECT_CRTC, "VRR_ENABLED", NULL);
+    k->crtc_color_mode = prop_id(fd, k->crtc_id, DRM_MODE_OBJECT_CRTC, "color mode", NULL);
+    k->crtc_render_intent =
+        prop_id(fd, k->crtc_id, DRM_MODE_OBJECT_CRTC, "render intent", NULL);
     k->conn_crtc_prop =
         prop_id(fd, k->conn_id, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID", NULL);
     if (k->wb_conn && k->wb_crtc && k->wb_crtc != k->crtc_id) {
@@ -450,6 +454,9 @@ int kms_commit_layers(struct kms *k, const struct kms_layer *layers, int n,
         add(&q, k->crtc_id, k->crtc_active_prop, 1);
         add(&q, k->crtc_id, k->crtc_mode_prop, k->mode_blob);
         add(&q, k->crtc_id, k->crtc_dqe_fd, (uint64_t)(int64_t)-1);
+        add(&q, k->crtc_id, k->crtc_vrr, 0);
+        add(&q, k->crtc_id, k->crtc_color_mode, 0);
+        add(&q, k->crtc_id, k->crtc_render_intent, 0);
         add(&q, k->conn_id, k->conn_crtc_prop, k->crtc_id);
     }
     int used[KMS_MAX_PLANES] = {0};
