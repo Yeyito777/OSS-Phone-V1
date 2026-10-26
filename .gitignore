@@ -28,6 +28,7 @@
 !/scripts/kernel/
 !/scripts/gpu/
 !/scripts/venus/
+!/scripts/wayland/
 /scripts/device/*
 !/scripts/device/90-moon-autostart.sh
 !/scripts/device/moon-boot-supervisor.sh
@@ -55,6 +56,7 @@
 !/notes/ui-polish/
 !/notes/telephony/
 !/notes/gpu/
+!/notes/wayland/
 /notes/a26-shell/*
 !/notes/a26-shell/README.md
 !/notes/a26-shell/APPLE-KEYBOARD-LAYOUT.md
