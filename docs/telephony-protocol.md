@@ -6,6 +6,10 @@ slots, eSIM), `sim.state` `no_profile`, `network.emergency_only`; raw SIM
 logical channels for eSIM management (root only, §3.1); the incoming-call
 notification rings (`ringing`) with moon-notifyd r3. Backward compatible.
 
+Revision 1.2 (2026-10-26): `call.hangup` names its call `call` (it was `id`,
+which is the request id and never reached the command); requests with
+duplicate JSON keys are rejected (`invalid_request`).
+
 `moon-telephonyd` is OSS-Phone-V1's telephony service: SIM, network and
 signal status, SMS, voice calls and mobile data. It talks to the modem through
 Samsung's vendor radio HAL (rild's `android.hardware.radio@1.x::IRadio` over
@@ -36,8 +40,10 @@ its supervisor and may be absent for a few seconds. Suggested timeouts: 1 s,
 {"id":8,"ok":false,"error":{"code":"unavailable","message":"no SIM ready"}}
 ```
 
-`id` is a non-zero integer echoed in the response. Unknown arguments are
-rejected (`invalid_argument`). Error codes: `invalid_request`,
+`id` is a non-zero integer echoed in the response; command arguments are
+named by kind (`call`, `peer`, `channel`…), never `id`. Unknown arguments are
+rejected (`invalid_argument`), and so is a request that repeats a key at any
+depth (`invalid_request`). Error codes: `invalid_request`,
 `unknown_command`, `invalid_argument`, `not_found`, `permission_denied`,
 `unavailable` (no modem connection / no SIM), `invalid_state` (e.g. answering
 with no incoming call), `busy`, `refused` (a safety rule, see `sim.unlock`),
@@ -151,7 +157,7 @@ as concatenated SMS and incoming parts are reassembled.
 | `call.dial` ⧗ | `number` (digits, `+ * # , ;`) | `{}` once the modem accepted it; the call appears through `calls_changed` |
 | `call.answer` ⧗ | — | `{}`; answers the incoming call (holding an active one for a waiting call) |
 | `call.reject` ⧗ | — | `{}`; declines the incoming/waiting call |
-| `call.hangup` ⧗ | optional `id` | `{}`; default: the active/dialing call, else the incoming one |
+| `call.hangup` ⧗ | optional `call` (a call id) | `{}`; default: the active/dialing call, else the incoming one |
 | `call.swap` ⧗ | — | `{}`; swaps active and held |
 | `call.dtmf` ⧗ | `digits` (`0-9 * # A-D`) | `{}` |
 | `call.audio` | optional `speaker`, `mute` (bools) | `{"speaker", "mute"}` |

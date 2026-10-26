@@ -4,6 +4,7 @@
 
 mod binder;
 mod daemon;
+mod json_strict;
 mod radio;
 mod sms;
 mod store;

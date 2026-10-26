@@ -1539,6 +1539,15 @@ impl Daemon {
 
     fn request(&mut self, index: usize, line: &[u8]) {
         let key = self.clients[index].key;
+        // serde_json keeps the last of duplicate keys silently; a repeated
+        // "id" would then lose an argument without an error.
+        if let Err(message) = crate::json_strict::check(line) {
+            queue(
+                &mut self.clients[index],
+                &json!({"id": null, "ok": false, "error": {"code": "invalid_request", "message": message}}),
+            );
+            return;
+        }
         let parsed = serde_json::from_slice::<Value>(line)
             .ok()
             .and_then(|value| match value {
@@ -1589,7 +1598,7 @@ impl Daemon {
             "sms.mark_read" => &["peer", "ids"],
             "sms.delete" => &["peer", "ids"],
             "call.dial" => &["number"],
-            "call.hangup" => &["id"],
+            "call.hangup" => &["call"],
             "call.dtmf" => &["digits"],
             "call.audio" => &["speaker", "mute"],
             "call.history" => &["before", "limit"],
@@ -1824,7 +1833,7 @@ impl Daemon {
                     Ok(s) => s,
                     Err(e) => return Some(Err(e)),
                 };
-                let target = match a.get("id").and_then(Value::as_str) {
+                let target = match a.get("call").and_then(Value::as_str) {
                     Some(cid) => self.calls.iter().find(|t| format!("c{}", t.id) == cid),
                     None => self
                         .calls
