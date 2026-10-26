@@ -114,8 +114,11 @@ impl Application {
 
 pub struct AppRegistry {
     applications: [Application; AppId::COUNT],
-    /// Extra environment for every app (the Wayland server's socket).
-    child_env: Vec<(String, String)>,
+    /// The Wayland server's environment, and the apps that get it (only
+    /// apps known to speak Wayland: a toolkit that merely can, like
+    /// Chromium's, must not be moved onto it by accident).
+    wayland_env: Vec<(String, String)>,
+    wayland_apps: Vec<AppId>,
     active: Option<AppId>,
     leases: LeaseManager,
 }
@@ -141,12 +144,14 @@ impl AppRegistry {
             ],
             active: None,
             leases: LeaseManager::default(),
-            child_env: Vec::new(),
+            wayland_env: Vec::new(),
+            wayland_apps: Vec::new(),
         }
     }
 
-    pub fn set_child_env(&mut self, env: Vec<(String, String)>) {
-        self.child_env = env;
+    pub fn set_wayland_env(&mut self, env: Vec<(String, String)>, apps: Vec<AppId>) {
+        self.wayland_env = env;
+        self.wayland_apps = apps;
     }
 
     pub fn active(&self) -> Option<AppId> {
@@ -331,7 +336,11 @@ impl AppRegistry {
         let Some(active) = desired else {
             return update;
         };
-        let child_env = self.child_env.clone();
+        let child_env = if self.wayland_apps.contains(&active) {
+            self.wayland_env.clone()
+        } else {
+            Vec::new()
+        };
         let application = self.app_mut(active);
         match application.lifecycle {
             AppLifecycle::Background if application.windows.is_empty() => {

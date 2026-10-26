@@ -462,7 +462,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .and_then(|()| wl_apps::WaylandApps::new(&conn, root, width, height, &dir))
             {
                 Ok(server) => {
-                    apps.set_child_env(server.client_env());
+                    // MOON_WAYLAND_APPS names the apps that speak Wayland
+                    // (comma-separated; default: the System app).
+                    let names = env::var("MOON_WAYLAND_APPS").unwrap_or_else(|_| "system".into());
+                    let wayland_apps: Vec<AppId> = names
+                        .split(',')
+                        .filter_map(|name| AppId::parse(name.trim()))
+                        .collect();
+                    apps.set_wayland_env(server.client_env(), wayland_apps);
                     eprintln!(
                         "wayland: serving apps at {}",
                         dir.join("wayland-0").display()
