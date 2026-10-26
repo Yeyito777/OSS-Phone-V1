@@ -1,5 +1,14 @@
 # Stage 2 (`oss-init` containment) — attended morning test plan
 
+> **SUPERSEDED — DO NOT USE THIS PLAN. DO NOT FLASH `4d27b69b` OR `eaeb4494` TO
+> BOOT.** Both boot-looped on the device and needed physical rescue. Per the
+> user's hard rule (2026-10-26), nothing that changes the boot chain may be
+> flashed to BOOT until a failed boot provably self-recovers. All stage-2
+> testing now goes through `notes/stage2/ONESHOT-TEST-PLAN.md` (recovery
+> partition, one-shot, BOOT untouched), and only after the corrected
+> private-rootfs design (DESIGN.md §5.6) is validated. This file is kept for
+> history only.
+
 **Do not flash unattended.** This boots OSS Phone's own `oss-init` as the real
 PID 1 and runs Android in a PID + mount namespace. The iron rule makes every
 failure fall back to a clean uncontained boot in the same boot, but one narrow

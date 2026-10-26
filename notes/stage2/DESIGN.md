@@ -36,9 +36,18 @@ oss-init to exit/return.
 > (the container's mounts are `CLONE_NEWNS`-isolated and freed on death). Full
 > write-up: `notes/stage2/V2-BOOTLOOP-ROOTCAUSE.md`. The paths were validated
 > under real Linux PID+mount namespaces on whale, including a switch_root-style
-> mount-move proof (§5.5). The image is built and **not flashed**; the on-device
-> unknowns (SELinux on our PID 1, full Android boot as a namespaced init) are
-> what the attended morning test resolves.
+> mount-move proof (§5.5). The image is built and **not flashed**.
+>
+> **v3 ALSO boot-looped (`eaeb4494`); the architecture below (§5.1–§5.5) is
+> SUPERSEDED.** Running the REAL magiskinit (not a stub) proved two fatal facts:
+> magiskinit *must* be the kernel-loaded `/init` (with oss-init at `/init`,
+> magiskinit backs up oss-init as itself, renames `/init`→`/sdcard`, and corrupts
+> the hijack), and it *rewrites the shared rootfs*, corrupting oss-init's fallback
+> — which then re-ran magiskinit and SIGSEGV'd as PID 1 → panic → reset loop.
+> Full write-up: `notes/stage2/V3-BOOTLOOP-ROOTCAUSE.md`. The corrected design is
+> §5.6; it is **not built or flashed** and must be validated (userspace harness,
+> then the one-shot recovery path in `ONESHOT-TEST-PLAN.md`) before any flash.
+> **Do not flash `4d27b69b` or `eaeb4494`.**
 
 ## 1. What PID 1 does today (stage 1), from evidence
 
@@ -208,7 +217,38 @@ base magiskinit byte-for-byte, the Moon overlay files are unchanged,
 `/init.stock` is the decompressed backup, and the relay rc is present. An
 independent unpack confirmed **no `oss-run` anywhere** in the ramdisk.
 
-### 5.6 `oss-pid1` — the safe stepping stone (kept)
+### 5.6 Corrected architecture (v4 design — not yet built)
+The real-binary findings (`V3-BOOTLOOP-ROOTCAUSE.md`) dictate three changes.
+Validated direction: with the normal Magisk layout, the real magiskinit
+decompresses `.backup/init.xz` and execs the real stock init (observed under
+qemu); with oss-init at `/init` it does not.
+
+1. **The container gets a PRIVATE rootfs with the normal Magisk layout.** In the
+   cloned child (new PID+mount ns), oss-init builds a fresh rootfs on its own
+   superblock — either a tmpfs populated with a copy of the ramdisk, or an
+   overlayfs (lowerdir = the initramfs read-only, upperdir = a fresh tmpfs) —
+   whose `/init` IS magiskinit and which has `.backup/`, `overlay.d/`,
+   `first_stage_ramdisk/` exactly as a normal Magisk boot. It `pivot_root`s into
+   it and execs `/init`. magiskinit then runs **identically to the working
+   stage-1 boot**, and every rewrite/`FreeRamdisk` it does lands on the private
+   superblock, leaving oss-init's rootfs pristine.
+2. **The fallback execs the STOCK init, never magiskinit.** `/init.stock` is the
+   static stock init (confirmed statically linked); exec'ing it via a held fd is
+   the normal stock-boot path and does not depend on the ramdisk magiskinit
+   mangled. The fallback must **not** re-run magiskinit (that is what SIGSEGV'd
+   as PID 1 in v3).
+3. **The panic path cannot be made truly impossible while exec'ing a fallback.**
+   Once oss-init execs any init and that init later dies as PID 1, the kernel
+   panics. Therefore this design is testable **only** behind a mechanism that
+   auto-returns to the known-good boot after a panic — the one-shot recovery
+   path (`ONESHOT-TEST-PLAN.md`) — and must first be de-risked with the
+   zero-boot userspace harness. Nothing goes on BOOT until both hold.
+
+Open implementation risk: the private-rootfs copy/overlay runs inside PID 1
+before exec; a bug there is itself a PID-1 crash. It must be built and proven in
+the userspace harness first.
+
+### 5.7 `oss-pid1` — the safe stepping stone (kept)
 `scripts/native-init/oss-pid1.c` + `build-boot-image.sh` remain: a pre-init that
 owns PID 1 then *execs* the stack (no containment), with a built image on the
 **stock** kernel. It is the lowest-risk artifact and a useful bisection point

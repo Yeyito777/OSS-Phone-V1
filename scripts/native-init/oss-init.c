@@ -1,5 +1,19 @@
 /* OSS-Phone-V1 stage-2 init ("oss-init") -- containment, v3.
  *
+ * !!! SUPERSEDED / DO NOT BUILD OR FLASH THIS AS-IS !!!
+ * The v3 image (eaeb4494) boot-looped on the device. Running the REAL magiskinit
+ * proved the containment path below is fatally wrong: magiskinit must be the
+ * kernel-loaded /init (with oss-init at /init it backs up oss-init as itself,
+ * renames /init->/sdcard, corrupts the hijack) AND it rewrites the shared
+ * initramfs rootfs, corrupting oss-init's fallback. See
+ * notes/stage2/V3-BOOTLOOP-ROOTCAUSE.md and DESIGN.md §5.6 for the corrected
+ * design: the container must get a PRIVATE rootfs with the normal Magisk layout
+ * (/init = magiskinit), and the fallback must exec the STOCK init, never
+ * magiskinit. That rework is not implemented here yet; the only change applied
+ * below is the fallback order (stock init first), per review. This file stays
+ * for reference and must only ever be tested via the one-shot recovery path
+ * (notes/stage2/ONESHOT-TEST-PLAN.md), never flashed to BOOT.
+ *
  * On the OSS Phone kernel (CONFIG_PID_NS=y, CONFIG_DEVTMPFS=y, DEFEX removed)
  * this binary is the ramdisk /init, so the kernel execs it as the REAL PID 1
  * and it stays PID 1. Android's entire init (first + second stage, via the
@@ -82,21 +96,19 @@ static void sleep_ms(long ms) {
     while (nanosleep(&ts, &ts) < 0 && errno == EINTR) {}
 }
 
-/* Boot the stock stack as the REAL PID 1 and NEVER return. This is "boot
- * exactly like today, uncontained". It runs from a pristine namespace (oss-init
- * mounted nothing; the dead container's mounts were in its own namespace), so
- * first-stage mounts and SwitchRoot are clean. Tries the held fds first (they
- * survive Android's FreeRamdisk unlinking the initramfs), then the paths, then
- * -- only if nothing can be exec'd -- reboots, forever. */
-static void boot_uncontained(int fd_magisk, int fd_stock, char **argv) {
+/* Boot the STOCK init as the REAL PID 1 and NEVER return. This is "boot exactly
+ * like today, uncontained". Exec the stock init ONLY -- NOT magiskinit:
+ * re-running magiskinit on a rootfs it already mangled is what SIGSEGV'd as
+ * PID 1 in v3 (V3-BOOTLOOP-ROOTCAUSE.md). /init.stock is the static stock init
+ * (the normal first-stage boot path) and does not depend on the ramdisk state.
+ * The held fd survives Android's FreeRamdisk/renames, so try it first, then the
+ * path, then -- only if nothing can be exec'd -- reboot, forever. */
+static void boot_uncontained(int fd_stock, char **argv) {
     for (;;) {
-        if (fd_magisk >= 0)
-            syscall(SYS_execveat, fd_magisk, "", argv, environ, AT_EMPTY_PATH);
-        (void)execve(PRIMARY_INIT, argv, environ);
         if (fd_stock >= 0)
             syscall(SYS_execveat, fd_stock, "", argv, environ, AT_EMPTY_PATH);
         (void)execve(STOCK_INIT, argv, environ);
-        kmsg("<3>oss-init: no init to exec; rebooting to a fresh boot\n");
+        kmsg("<3>oss-init: no stock init to exec; rebooting to a fresh boot\n");
         sync();
         syscall(SYS_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
                 LINUX_REBOOT_CMD_RESTART, NULL);
@@ -124,7 +136,7 @@ static int saw_liveness(int kfd) {
 
 /* Reap, watch for early liveness, and answer any container exit with the
  * uncontained fallback. NEVER returns. */
-static void supervise(pid_t child, int fd_magisk, int fd_stock, int kfd, char **argv) {
+static void supervise(pid_t child, int fd_stock, int kfd, char **argv) {
     long deadline = now_ms() + LIVENESS_DEADLINE_MS;
     int alive_seen = 0;
     for (;;) {
@@ -133,7 +145,7 @@ static void supervise(pid_t child, int fd_magisk, int fd_stock, int kfd, char **
         if (r == child || (r < 0 && errno == ECHILD)) {
             /* The container is gone (reaped, or no children remain at all). */
             kmsg("<4>oss-init: container exited; booting uncontained\n");
-            boot_uncontained(fd_magisk, fd_stock, argv); /* never returns */
+            boot_uncontained(fd_stock, argv); /* never returns */
         }
         if (r > 0) continue; /* reaped an orphan; keep going */
 
@@ -145,7 +157,7 @@ static void supervise(pid_t child, int fd_magisk, int fd_stock, int kfd, char **
                 kmsg("<4>oss-init: no liveness by deadline; killing and booting uncontained\n");
                 kill(child, SIGKILL);
                 (void)waitpid(child, &status, 0);
-                boot_uncontained(fd_magisk, fd_stock, argv); /* never returns */
+                boot_uncontained(fd_stock, argv); /* never returns */
             }
         }
         sleep_ms(POLL_MS);
@@ -157,7 +169,6 @@ int main(int argc, char **argv) {
     kmsg("<6>oss-init: OSS-Phone init is the real PID 1; containing Android init\n");
 
     /* Held fds so the fallback survives Android's FreeRamdisk. */
-    int fd_magisk = open(PRIMARY_INIT, O_RDONLY | O_CLOEXEC);
     int fd_stock = open(STOCK_INIT, O_RDONLY | O_CLOEXEC);
     /* Read side of the global kernel log, for liveness (no mount needed). */
     int kfd = open("/dev/kmsg", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
@@ -181,12 +192,12 @@ int main(int argc, char **argv) {
     }
 
     if (pid > 0) {
-        supervise((pid_t)pid, fd_magisk, fd_stock, kfd, argv); /* never returns */
+        supervise((pid_t)pid, fd_stock, kfd, argv); /* never returns */
     }
 
     /* clone failed (e.g. stock kernel without PID_NS): nothing was dirtied, so
      * boot the stock stack uncontained -- exactly today's boot. */
     kmsg("<4>oss-init: clone(NEWPID|NEWNS) failed; booting uncontained\n");
-    boot_uncontained(fd_magisk, fd_stock, argv); /* never returns */
+    boot_uncontained(fd_stock, argv); /* never returns */
     return 0; /* unreachable; present only to satisfy the compiler */
 }
