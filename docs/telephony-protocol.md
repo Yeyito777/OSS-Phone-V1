@@ -165,7 +165,7 @@ as concatenated SMS and incoming parts are reassembled.
 | `call.history_delete` | `ids` or `all: true` | `{"count": n}`; event `call_history_changed` |
 | `data.get` | — | `{"data": {...}, "apn": {"apn","protocol","user","auth"}}` |
 | `data.set` | optional `enabled`, `apn`, `protocol` (`IP`, `IPV6`, `IPV4V6`), `user`, `password`, `auth` (0 none, 1 PAP, 2 CHAP, 3 either) | as `data.get`; persistent |
-| `radio.set` ⧗ | `airplane` (bool) | `{}`; persistent |
+| `radio.set` | `airplane` (bool) | `{"airplane": bool}`; persistent. Every slot's radio power follows it (also after a reboot or modem restart: the modem powers itself on at boot); `radio` in the state changes when the modem reports it. Turning airplane mode on also takes mobile data down |
 
 Placing calls and sending SMS cost money and reach real people: Moon must
 only issue them on an explicit user action.

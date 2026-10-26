@@ -17,12 +17,24 @@ LOG=/data/adb/moon/telephony.log
 [ -x "$BB" ] || { echo "Moon BusyBox is unavailable" >&2; exit 20; }
 mkdir -p "$RUNTIME"
 
-keeper="$(cat "$PIDFILE" 2>/dev/null || true)"
-case "$keeper" in ''|*[!0-9]*) ;; *)
-    if grep -q moon-telephony-keeper "/proc/$keeper/cmdline" 2>/dev/null; then
-        echo "moon-telephonyd keeper already running pid=$keeper"
-        exit 0
-    fi ;;
+# The pidfile holds "PID STARTTIME" (/proc/PID/stat field 22), so a reused
+# PID never matches. /proc/PID/cmdline is never read: it takes the target's
+# mmap lock and can block (notes/direct-boot/RESEARCH.md).
+keeper_alive() {
+    set -- $(cat "$PIDFILE" 2>/dev/null)
+    case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$(cut -d' ' -f22 "/proc/$1/stat" 2>/dev/null)" = "${2:-}" ]
+}
+if keeper_alive; then
+    echo "moon-telephonyd keeper already running"
+    exit 0
+fi
+
+# A daemon left without its keeper (keeper killed) would fight a new one
+# for rild's callbacks and the socket: end it first.
+pid="$(cat "$RUNTIME/daemon.pid" 2>/dev/null || true)"
+case "$pid" in ''|*[!0-9]*) ;; *)
+    [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$DAEMON" ] && kill -TERM "$pid" 2>/dev/null ;;
 esac
 
 if [ -f "$LOG" ] && [ "$("$BB" stat -c %s "$LOG" 2>/dev/null || echo 0)" -gt 262144 ]; then
@@ -30,13 +42,15 @@ if [ -f "$LOG" ] && [ "$("$BB" stat -c %s "$LOG" 2>/dev/null || echo 0)" -gt 262
 fi
 rm -f "$RUNTIME/stop"
 
-# The keeper is a BusyBox sh; its argv carries a marker for the check above.
+# The keeper: a BusyBox sh loop that restarts the daemon with backoff.
 "$BB" setsid "$BB" sh -c '
-    echo $$ >"$3"
+    echo "$$ $(cut -d" " -f22 /proc/$$/stat)" >"$3"
     backoff=2
     while [ ! -e /data/adb/moon/disabled ] && [ "$(getprop moon.boot.mode)" != android ]; do
         started=$(cut -d. -f1 /proc/uptime)
-        "$1" >>"$2" 2>&1 </dev/null
+        "$1" >>"$2" 2>&1 </dev/null &
+        echo $! >/data/local/tmp/moon-telephony/daemon.pid
+        wait $!
         rc=$?
         [ -e /data/local/tmp/moon-telephony/stop ] && break
         ran=$(( $(cut -d. -f1 /proc/uptime) - started ))
@@ -45,6 +59,6 @@ rm -f "$RUNTIME/stop"
         sleep "$backoff"
         [ "$backoff" -ge 60 ] || backoff=$((backoff * 2))
     done
-    rm -f "$3"
+    rm -f "$3" /data/local/tmp/moon-telephony/daemon.pid
 ' moon-telephony-keeper "$DAEMON" "$LOG" "$PIDFILE" </dev/null >/dev/null 2>&1 &
 echo "moon-telephonyd started"
