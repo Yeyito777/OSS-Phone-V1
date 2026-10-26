@@ -2,13 +2,13 @@
 # Experiment only (milestone 1 on the phone): run Moon with its Wayland
 # server on, without touching /data/adb/moon or the boot path.
 #
-#   su -c 'sh /data/local/tmp/a26-wayland/moon-wayland-test.sh start [demo]'
+#   su -c 'sh /data/local/tmp/a26-wayland/moon-wayland-test.sh start [demo|system]'
 #   su -c 'sh /data/local/tmp/a26-wayland/moon-wayland-test.sh stop'
 #
 # start: stops the running Moon session and starts the installed Moon again
 # exactly as the supervisor does (same chroot wrapper, same GPU socket when
-# the GPU session is up), plus MOON_WAYLAND_DIR, and with `demo` the native
-# demo app in the System slot. The supervisor's liveness probe keeps
+# the GPU session is up), plus MOON_WAYLAND_DIR; `demo` puts the native demo
+# app in the System slot, `system` the System app's Wayland build. The supervisor's liveness probe keeps
 # working (same control socket) and its pidfile names the new session, so
 # a failure still takes the normal recovery and fallback paths.
 # stop: the same restart without the Wayland environment. A reboot also
@@ -57,7 +57,10 @@ start_session() {
 case "${1:-}" in
     start)
         extra=MOON_WAYLAND_DIR=/run/moon-wayland
-        [ "${2:-}" != demo ] || extra="$extra A26_SYSTEM_APP=/opt/moon-wl-demo/bin/moon-wl-demo"
+        case "${2:-}" in
+            demo) extra="$extra A26_SYSTEM_APP=/opt/moon-wl-demo/bin/moon-wl-demo" ;;
+            system) extra="$extra A26_SYSTEM_APP=/opt/a26-system/bin/a26-system-wayland" ;;
+        esac
         stop_session
         start_session "$extra" 2>&1 | tee -a "$LOG"
         ;;
@@ -65,5 +68,5 @@ case "${1:-}" in
         stop_session
         start_session '' 2>&1 | tee -a "$LOG"
         ;;
-    *) echo "usage: $0 start [demo] | stop" >&2; exit 2 ;;
+    *) echo "usage: $0 start [demo|system] | stop" >&2; exit 2 ;;
 esac
