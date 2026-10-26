@@ -21,6 +21,8 @@ if [ -n "$pid" ] && [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$DAEMON" ]; 
         [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$DAEMON" ] || break
         sleep 0.3
     done
+    # Never leave it as a second rild client next to Android's phone process.
+    [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$DAEMON" ] && kill -KILL "$pid" 2>/dev/null
 fi
 # The keeper exits by itself once the daemon is gone and the stop file is
 # there; end it anyway if it is still the recorded process.

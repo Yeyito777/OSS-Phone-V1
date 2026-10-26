@@ -34,7 +34,14 @@ fi
 # for rild's callbacks and the socket: end it first.
 pid="$(cat "$RUNTIME/daemon.pid" 2>/dev/null || true)"
 case "$pid" in ''|*[!0-9]*) ;; *)
-    [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$DAEMON" ] && kill -TERM "$pid" 2>/dev/null ;;
+    if [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$DAEMON" ]; then
+        kill -TERM "$pid" 2>/dev/null
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$DAEMON" ] || break
+            sleep 0.3
+        done
+        [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$DAEMON" ] && kill -KILL "$pid" 2>/dev/null
+    fi ;;
 esac
 
 if [ -f "$LOG" ] && [ "$("$BB" stat -c %s "$LOG" 2>/dev/null || echo 0)" -gt 262144 ]; then
@@ -46,7 +53,8 @@ rm -f "$RUNTIME/stop"
 "$BB" setsid "$BB" sh -c '
     echo "$$ $(cut -d" " -f22 /proc/$$/stat)" >"$3"
     backoff=2
-    while [ ! -e /data/adb/moon/disabled ] && [ "$(getprop moon.boot.mode)" != android ]; do
+    while [ ! -e /data/local/tmp/moon-telephony/stop ] && [ ! -e /data/adb/moon/disabled ] &&
+        [ "$(getprop moon.boot.mode)" != android ]; do
         started=$(cut -d. -f1 /proc/uptime)
         "$1" >>"$2" 2>&1 </dev/null &
         echo $! >/data/local/tmp/moon-telephony/daemon.pid
