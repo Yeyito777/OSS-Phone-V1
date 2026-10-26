@@ -41,6 +41,7 @@
 #include <limits.h>
 #include <math.h>
 #include <poll.h>
+#include <setjmp.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -115,6 +116,11 @@ struct surface {
     size_t map_base_len;
     uint32_t offset; /* of the pixels in the fd (protocol v3) */
     int memfd;       /* GPU texture is a copy of map, refreshed on damage */
+    /* A client's memory that may shrink (v4 MG_SURFACE_FOREIGN, unsealed):
+     * read only into this copy, under the SIGBUS guard; cpu.px points here. */
+    uint8_t *shadow;
+    int report_idle; /* v4 MG_SURFACE_REPORT_IDLE */
+    int in_use;      /* named by a frame since its last MG_SURFACE_IDLE */
     struct texture tex;
     EGLImageKHR image;
     GLuint fbo;      /* GPU copies are drawn through this */
@@ -153,6 +159,10 @@ struct comp {
 
     struct frame cur, pending;
     int have_pending, cur_valid, dirty;
+    /* The frame on screen (the last flip's): while a flip is in flight it
+     * is not `cur`, and its surfaces are still being scanned out. */
+    struct frame shown;
+    int shown_valid;
 
     /* the commit waiting for its flip */
     int flip_pending;
@@ -223,6 +233,7 @@ static void release(struct comp *c, struct surface *s) {
         kms_rm_fb(&c->k, s->fb);
     if (s->map_base)
         munmap(s->map_base, s->map_base_len);
+    free(s->shadow);
     if (s->fd >= 0)
         close(s->fd);
     memset(s, 0, sizeof *s);
@@ -234,10 +245,14 @@ static void free_surface(struct comp *c, struct surface *s) {
     *s = c->surf[--c->nsurf];
 }
 
+static void settle(struct comp *c, uint32_t id);
+
 static struct surface *new_surface(struct comp *c, uint32_t id) {
     struct surface *old = find_surface(c, id);
-    if (old)
-        free_surface(c, old);
+    if (old) {
+        settle(c, id);
+        free_surface(c, find_surface(c, id));
+    }
     if (c->nsurf == c->capsurf) {
         size_t cap = c->capsurf ? c->capsurf * 2 : 32;
         struct surface *n = realloc(c->surf, cap * sizeof *n);
@@ -281,9 +296,55 @@ static void upload_rects(struct surface *s, const struct mg_rect *rects,
             continue;
         glTexSubImage2D(GL_TEXTURE_2D, 0, x0, y0, x1 - x0, y1 - y0, GL_RGBA,
                         GL_UNSIGNED_BYTE,
-                        s->map + (size_t)y0 * s->stride + (size_t)x0 * 4);
+                        s->cpu.px + (size_t)y0 * s->stride + (size_t)x0 * 4);
     }
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+}
+
+/* The SIGBUS guard: a client may truncate its memfd while it is read. */
+static sigjmp_buf guard_jmp;
+static volatile sig_atomic_t guard_armed;
+
+static void on_sigbus(int sig, siginfo_t *si, void *uc) {
+    (void)si;
+    (void)uc;
+    if (guard_armed) {
+        guard_armed = 0;
+        siglongjmp(guard_jmp, 1);
+    }
+    signal(sig, SIG_DFL); /* a fault outside the guard: crash as usual */
+    raise(sig);
+}
+
+/* Copies the damaged rows of a foreign memfd into the surface's own copy.
+ * Returns -1 if the memory shrank under the copy. */
+static int refresh_shadow(struct surface *s, const struct mg_rect *rects,
+                          uint32_t count) {
+    if (sigsetjmp(guard_jmp, 1))
+        return -1;
+    guard_armed = 1;
+    for (uint32_t i = 0; i < count; i++) {
+        int x0 = rects[i].x0 < 0 ? 0 : rects[i].x0;
+        int y0 = rects[i].y0 < 0 ? 0 : rects[i].y0;
+        int x1 = rects[i].x1 > s->width ? s->width : rects[i].x1;
+        int y1 = rects[i].y1 > s->height ? s->height : rects[i].y1;
+        for (int y = y0; y < y1 && x0 < x1; y++) {
+            size_t at = (size_t)y * s->stride + (size_t)x0 * 4;
+            memcpy(s->shadow + at, s->map + at, (size_t)(x1 - x0) * 4);
+        }
+    }
+    guard_armed = 0;
+    return 0;
+}
+
+/* The bytes an fd holds, or -1 if it cannot tell. */
+static off_t fd_size(int fd) {
+    struct stat st;
+    if (!fstat(fd, &st) && S_ISREG(st.st_mode))
+        return st.st_size;
+    off_t end = lseek(fd, 0, SEEK_END); /* dmabufs report their size here */
+    lseek(fd, 0, SEEK_SET);
+    return end;
 }
 
 /* Maps a surface's pixels: `s->offset` bytes into `fd`, from the page
@@ -485,8 +546,61 @@ static int frame_copy(struct frame *dst, const struct mg_frame *f,
     return 0;
 }
 
-static void power(struct comp *c, int on);
 static void wait_flip(struct comp *c);
+
+/* The frame now on screen is `cur` (its flip completed, or it lit the
+ * panel). */
+static void shown_is_cur(struct comp *c) {
+    struct mg_frame f = {.serial = c->cur.serial, .flags = c->cur.flags,
+                         .base = c->cur.base, .count = c->cur.count};
+    c->shown_valid = c->cur_valid && !frame_copy(&c->shown, &f, c->cur.nodes);
+}
+
+/* Whether the queued, current or on-screen frame names surface `id`. */
+static int referenced(const struct comp *c, uint32_t id) {
+    return (c->have_pending && frame_uses(&c->pending, id)) ||
+           (c->cur_valid && frame_uses(&c->cur, id)) ||
+           (c->shown_valid && frame_uses(&c->shown, id));
+}
+
+/* v4: MG_SURFACE_IDLE for every surface that asked and is no longer
+ * referenced. */
+static void send_idle(struct comp *c) {
+    for (size_t i = 0; i < c->nsurf; i++) {
+        struct surface *s = &c->surf[i];
+        if (!s->report_idle || !s->in_use || referenced(c, s->id))
+            continue;
+        s->in_use = 0;
+        struct mg_id m = {.id = s->id};
+        send_msg(c, MG_SURFACE_IDLE, &m, sizeof m, -1);
+    }
+}
+
+/* A new frame names these surfaces: they are in use until it is gone. */
+static void mark_in_use(struct comp *c, const struct frame *f) {
+    for (size_t i = 0; i < c->nsurf; i++)
+        if (c->surf[i].report_idle && frame_uses(f, c->surf[i].id))
+            c->surf[i].in_use = 1;
+}
+
+/* v4: tells the client surface `id` is gone. */
+static void surface_failed(struct comp *c, uint32_t id, uint32_t reason) {
+    if (c->client_version < 4)
+        return;
+    struct mg_failed m = {.id = id, .reason = reason};
+    send_msg(c, MG_SURFACE_FAILED, &m, sizeof m, -1);
+}
+
+/* Before surface `id`'s buffer goes: a plane may scan it out until the flip
+ * in flight completes (removing a framebuffer that is on screen turns its
+ * plane off). */
+static void settle(struct comp *c, uint32_t id) {
+    if (c->flip_pending && ((c->cur_valid && frame_uses(&c->cur, id)) ||
+                            (c->shown_valid && frame_uses(&c->shown, id))))
+        wait_flip(c);
+}
+
+static void power(struct comp *c, int on);
 
 static int surface_format(uint32_t format, uint32_t *fourcc, int *opaque) {
     if (format == MG_XRGB8888) {
@@ -526,6 +640,7 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
          * on a plane until the flip in flight completes. */
         wait_flip(c);
         free_all_surfaces(c);
+        c->shown_valid = 0;
         uint64_t mhz = (uint64_t)c->k.mode.clock * 1000000ull /
                        ((uint64_t)c->k.mode.htotal * c->k.mode.vtotal);
         struct mg_welcome w = {
@@ -556,41 +671,71 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
         struct mg_surface_shm shm = {0};
         memcpy(&shm, body, blen < sizeof shm ? blen : sizeof shm);
         const struct mg_surface_shm *m = &shm;
+        uint32_t flags = m->flags;
+        if (c->client_version < 4)
+            flags &= MG_SURFACE_DMABUF;
         uint32_t fourcc;
         int opaque;
         if (nfds < 1 || !m->id || m->id == MG_MIRROR_ID || !m->width ||
             !m->height || m->width > 8192 || m->height > 8192 ||
-            m->stride < m->width * 4 || (m->offset & 3) ||
+            m->stride < m->width * 4 || m->stride > 65536 || (m->offset & 3) ||
             surface_format(m->format, &fourcc, &opaque)) {
             LOG("bad surface %u", m->id);
+            surface_failed(c, m->id, MG_FAIL_INVALID);
+            break;
+        }
+        /* The pixels must lie inside the fd. */
+        uint64_t need = (uint64_t)m->offset + (uint64_t)m->stride * (m->height - 1) +
+                        (uint64_t)m->width * 4;
+        off_t have = fd_size(fds[0]);
+        if (have >= 0 && (uint64_t)have < need) {
+            LOG("surface %u: %llu bytes in its fd, %llu needed", m->id,
+                (unsigned long long)have, (unsigned long long)need);
+            surface_failed(c, m->id, MG_FAIL_INVALID);
             break;
         }
         struct surface *s = new_surface(c, m->id);
         if (!s)
             break;
         s->offset = m->offset;
-        if (m->flags & MG_SURFACE_DMABUF) {
+        s->report_idle = (flags & MG_SURFACE_REPORT_IDLE) != 0;
+        if (flags & MG_SURFACE_DMABUF) {
             int fd = dup(fds[0]);
             if (adopt_dmabuf(c, s, fd, (int)m->width, (int)m->height,
                              (int)m->stride, fourcc, opaque, c->tier == TIER_CPU)) {
                 LOG("surface %u: dmabuf import failed", m->id);
                 free_surface(c, s);
+                surface_failed(c, m->id, MG_FAIL_IMPORT);
             }
             break;
         }
-        /* A memfd: a texture copied from it, or read in place by the CPU. */
+        /* A memfd: a texture copied from it, or read in place by the CPU;
+         * a foreign one that may shrink, only through a guarded copy. */
         s->width = (int)m->width;
         s->height = (int)m->height;
         s->stride = (int)m->stride;
         s->fourcc = fourcc;
         s->opaque = opaque;
         s->memfd = 1;
-        if (map_pixels(s, fds[0], 0)) {
-            LOG("surface %u: mmap: %s", m->id, strerror(errno));
+        int seals = fcntl(fds[0], F_GET_SEALS);
+        int sealed = seals >= 0 && (seals & F_SEAL_SHRINK);
+        if (map_pixels(s, fds[0], 0) ||
+            ((flags & MG_SURFACE_FOREIGN) && !sealed &&
+             !(s->shadow = malloc(s->map_len)))) {
+            LOG("surface %u: %s", m->id, s->map ? "no memory for a copy" : strerror(errno));
             free_surface(c, s);
+            surface_failed(c, m->id, MG_FAIL_IMPORT);
             break;
         }
-        s->cpu = (struct cpu_image){s->map, s->width, s->height, s->stride, opaque};
+        struct mg_rect all = {0, 0, s->width, s->height};
+        if (s->shadow && refresh_shadow(s, &all, 1)) {
+            LOG("surface %u: its memory shrank", m->id);
+            free_surface(c, s);
+            surface_failed(c, m->id, MG_FAIL_FAULT);
+            break;
+        }
+        s->cpu = (struct cpu_image){s->shadow ? s->shadow : s->map, s->width,
+                                    s->height, s->stride, opaque};
         if (c->tier == TIER_GPU) {
             s->tex = (struct texture){.target = GL_TEXTURE_2D, .width = s->width,
                                       .height = s->height, .swizzle = 1,
@@ -598,7 +743,6 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
             glGenTextures(1, &s->tex.id);
             glBindTexture(GL_TEXTURE_2D, s->tex.id);
             glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, s->width, s->height);
-            struct mg_rect all = {0, 0, s->width, s->height};
             upload_rects(s, &all, 1);
         }
         break;
@@ -608,9 +752,18 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
         const struct mg_damage *m = (const void *)body;
         if (blen < sizeof *m + (size_t)m->count * sizeof(struct mg_rect))
             break;
+        const struct mg_rect *rects = (const void *)(m + 1);
         struct surface *s = find_surface(c, m->id);
+        if (s && s->shadow && refresh_shadow(s, rects, m->count)) {
+            LOG("surface %u: its memory shrank; dropped", m->id);
+            if (c->cur_valid && frame_uses(&c->cur, m->id))
+                c->dirty = 1;
+            free_surface(c, s);
+            s = NULL;
+            surface_failed(c, m->id, MG_FAIL_FAULT);
+        }
         if (s && s->memfd && c->tier == TIER_GPU)
-            upload_rects(s, (const void *)(m + 1), m->count);
+            upload_rects(s, rects, m->count);
         if (s && c->cur_valid && frame_uses(&c->cur, m->id))
             c->dirty = 1;
         struct mg_uploaded u = {.id = m->id, .serial = m->serial};
@@ -619,18 +772,20 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
     }
     case MG_SURFACE_COPY: {
         NEED(struct mg_surface_copy);
-        if (make_copy(c, (const void *)body))
-            LOG("copy %u failed", ((const struct mg_surface_copy *)body)->id);
+        const struct mg_surface_copy *m = (const void *)body;
+        int known = find_surface(c, m->source) != NULL;
+        if (make_copy(c, m)) {
+            LOG("copy %u failed", m->id);
+            surface_failed(c, m->id, known ? MG_FAIL_IMPORT : MG_FAIL_INVALID);
+        }
         break;
     }
     case MG_SURFACE_FREE: {
         NEED(struct mg_id);
-        struct surface *s = find_surface(c, ((const struct mg_id *)body)->id);
-        if (s && s != &c->mirror) {
-            /* A plane may still scan it out until the flip in flight. */
-            if (c->flip_pending && frame_uses(&c->cur, s->id))
-                wait_flip(c);
-            s = find_surface(c, ((const struct mg_id *)body)->id);
+        uint32_t id = ((const struct mg_id *)body)->id;
+        if (id != MG_MIRROR_ID && find_surface(c, id)) {
+            settle(c, id);
+            struct surface *s = find_surface(c, id);
             if (s)
                 free_surface(c, s);
         }
@@ -650,8 +805,12 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
             LOG("frame %u truncated", m->serial);
             break;
         }
-        if (!frame_copy(&c->pending, m, (const void *)(m + 1)))
+        if (!frame_copy(&c->pending, m, (const void *)(m + 1))) {
             c->have_pending = 1;
+            mark_in_use(c, &c->pending);
+        }
+        /* A queued frame it replaced may have been the last to name some. */
+        send_idle(c);
         break;
     }
     case MG_POWER: {
@@ -973,8 +1132,10 @@ static void flip_done(struct comp *c, const struct kms_flip *ev) {
         close(c->flight_fence);
     c->flight_fence = -1;
     c->flip_pending = 0;
+    shown_is_cur(c);
     if (p.serial)
         send_msg(c, MG_PRESENTED, &p, sizeof p, -1);
+    send_idle(c);
 }
 
 static void read_flips(struct comp *c, int timeout_ms) {
@@ -1037,6 +1198,8 @@ static void power(struct comp *c, int on) {
         (now_ns() - t0) / 1e6);
     if (!r) {
         c->powered = on;
+        if (on)
+            shown_is_cur(c);
         if (on && c->cur_valid && c->cur.serial) {
             /* The frame that lit the panel counts as presented. */
             struct mg_presented p = {.serial = c->cur.serial,
@@ -1249,98 +1412,6 @@ done:
     return base;
 }
 
-/* Shows one test image on the panel's primary plane from a buffer laid out
- * as given and logs the CRC the display computes of what it sends: the same
- * image from two layouts gives the same CRC only if both are fetched right.
- * The panel's own path (DPP, DECON, not the writeback DECON) is measured. */
-static void panel_probe(struct comp *c, int fb_w, int pitch, uint32_t fourcc,
-                        char *crc, size_t crclen) {
-    int w = c->width, h = c->height;
-    size_t len = (size_t)pitch * h;
-    snprintf(crc, crclen, "none");
-    int fd = gpu_dmabuf_alloc("system", len);
-    uint32_t fb = 0;
-    uint32_t *px = fd >= 0 ? mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
-                           : MAP_FAILED;
-    if (px == MAP_FAILED)
-        goto done;
-    dmabuf_sync(fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE);
-    for (int y = 0; y < h; y++)
-        for (int x = 0; x < pitch / 4; x++) {
-            uint32_t v = x < w ? ((uint32_t)x * 2654435761u ^ (uint32_t)y * 40503u) & 0xffffff
-                               : 0x00ff00; /* padding: shows if fetched */
-            if (fourcc == DRM_FORMAT_ABGR8888 || fourcc == DRM_FORMAT_XBGR8888)
-                v = (v & 0xff00) | (v >> 16 & 0xff) | (v & 0xff) << 16;
-            px[(size_t)y * (pitch / 4) + x] = 0xff000000u | v;
-        }
-    dmabuf_sync(fd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE);
-    if (kms_add_fb(&c->k, fd, (uint32_t)fb_w, (uint32_t)h, (uint32_t)pitch, fourcc, &fb))
-        goto done;
-    const char *dir = "/sys/kernel/debug/dri/0/crtc-0/crc";
-    char path[96];
-    snprintf(path, sizeof path, "%s/control", dir);
-    int cfd = open(path, O_WRONLY | O_CLOEXEC);
-    if (cfd >= 0) {
-        if (write(cfd, "auto", 4) < 0)
-            ;
-        close(cfd);
-    }
-    snprintf(path, sizeof path, "%s/data", dir);
-    int r = kms_commit_blocking(&c->k, fb);
-    int dfd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-    for (int i = 0; i < 4 && !r; i++)
-        r = kms_commit_blocking(&c->k, fb);
-    usleep(50000);
-    if (r) {
-        snprintf(crc, crclen, "commit: %s", strerror(-r));
-    } else if (dfd >= 0) {
-        char buf[4096];
-        ssize_t n = read(dfd, buf, sizeof buf - 1);
-        if (n > 0) {
-            buf[n] = 0;
-            /* The last complete line. */
-            while (n > 0 && buf[n - 1] == '\n')
-                buf[--n] = 0;
-            char *last = strrchr(buf, '\n');
-            snprintf(crc, crclen, "%s", last ? last + 1 : buf);
-        } else {
-            snprintf(crc, crclen, "no data (%s)", n < 0 ? strerror(errno) : "eof");
-        }
-    } else {
-        snprintf(crc, crclen, "no crc: %s", strerror(errno));
-    }
-    if (dfd >= 0)
-        close(dfd);
-done:
-    LOG("panel probe: fb %dx%d pitch %d %.4s: crc %s", fb_w, h, pitch,
-        (const char *)&fourcc, crc);
-    if (fb) {
-        /* Back to the compositor's own buffer before this one goes. */
-        kms_commit_blocking(&c->k, c->out[(c->next_buf + NBUF - 1) % NBUF].fb);
-        kms_rm_fb(&c->k, fb);
-    }
-    if (px != MAP_FAILED)
-        munmap(px, len);
-    if (fd >= 0)
-        close(fd);
-}
-
-static void probe_panel(struct comp *c) {
-    wait_flip(c);
-    char a[128], b[128];
-    int w = c->width, p64 = (w * 4 + 63) & ~63;
-    static const uint32_t fmts[] = {DRM_FORMAT_XRGB8888, DRM_FORMAT_ABGR8888};
-    for (int f = 0; f < 2; f++) {
-        panel_probe(c, w, w * 4, fmts[f], a, sizeof a);       /* reference */
-        panel_probe(c, w, p64, fmts[f], b, sizeof b);         /* GPU tier's */
-        panel_probe(c, p64 / 4, p64, fmts[f], b, sizeof b);   /* fb as wide as pitch */
-        panel_probe(c, w - 8, p64, fmts[f], b, sizeof b);     /* (w+8)*4 = pitch */
-        panel_probe(c, w, w * 4, fmts[f], b, sizeof b);       /* reference again */
-    }
-    c->dirty = c->cur_valid;
-}
-
-/* The plane probes (SIGURG): which layouts the DPPs fetch correctly. */
 /* The panel's primary plane, through the writeback: the panel shows the
  * current output on another plane meanwhile. */
 static void probe_primary(struct comp *c) {
@@ -1499,6 +1570,8 @@ int main(int argc, char **argv) {
     signal(SIGHUP, on_signal);
     signal(SIGWINCH, on_signal);
     signal(SIGURG, on_signal);
+    struct sigaction bus = {.sa_sigaction = on_sigbus, .sa_flags = SA_SIGINFO};
+    sigaction(SIGBUS, &bus, NULL);
 
     static struct comp c;
     c.client_fd = c.listen_fd = c.flight_fence = c.floor_fd = -1;

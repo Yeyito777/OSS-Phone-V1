@@ -35,4 +35,4 @@ else
     exit 1
 fi
 echo "$SOURCE_HASH" >"$OUTPUT/SOURCE"
-echo "Built $OUTPUT/moon-compositor, moon-gpu-poc (sources $SOURCE_HASH)"
+echo "Built $OUTPUT/moon-compositor, moon-gpu-poc, moon-gpu-proto-test (sources $SOURCE_HASH)"

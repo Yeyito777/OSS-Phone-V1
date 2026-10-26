@@ -1,4 +1,4 @@
-/* moon-compositor's wire protocol (version 3; versions 2 and 3 accepted).
+/* moon-compositor's wire protocol (version 4; versions 2 to 4 accepted).
  *
  * One client (Moon) on a SOCK_SEQPACKET Unix socket: every message is one
  * packet, a header followed by its body, little-endian, 4-byte aligned. File
@@ -20,9 +20,15 @@
  *   v2: the October 2026 protocol.
  *   v3: mg_surface_shm.offset, the byte offset of the pixels in the fd
  *       (wl_shm buffers live inside a pool). Absent (v2 messages), it is 0.
- * Compatibility: a v2 client works with a v3 compositor unchanged; a v3
- * client needs a v3 compositor (deploy the compositor first). */
-#define MG_PROTO_VERSION 3
+ *   v4: client memory that may shrink (MG_SURFACE_FOREIGN), MG_SURFACE_IDLE
+ *       for surfaces that ask (MG_SURFACE_REPORT_IDLE), MG_SURFACE_FAILED.
+ *       The compositor sends v4 messages and honours v4 flags only to and
+ *       from a client that said v4.
+ * Compatibility: an older client works with a newer compositor unchanged;
+ * a newer client needs a compositor that speaks its version (deploy the
+ * compositor first). Compositors before v4 drop a client whose version
+ * differs from theirs, so a client steps down when its hello is refused. */
+#define MG_PROTO_VERSION 4
 #define MG_PROTO_MIN_VERSION 2
 #define MG_MIRROR_ID 0xffffffffu
 #define MG_MAX_PACKET (64 * 1024)
@@ -43,6 +49,8 @@ enum mg_type {
     MG_UPLOADED = 66,       /* mg_uploaded: the surface's memory is free */
     MG_PRESENTED = 67,      /* mg_presented */
     MG_POWERED = 68,        /* mg_power: the panel state took effect */
+    MG_SURFACE_IDLE = 69,   /* v4, mg_id: nothing references it any more */
+    MG_SURFACE_FAILED = 70, /* v4, mg_failed: the surface is gone */
 };
 
 struct mg_header {
@@ -85,6 +93,15 @@ enum mg_surface_flags {
      * DMA_BUF_IOCTL_SYNC): the compositor samples it in place and may scan
      * it out on a plane. Otherwise a memfd, copied on each damage. */
     MG_SURFACE_DMABUF = 1,
+    /* v4: a memfd that is not the client's own (a Wayland client's wl_shm
+     * pool): it may be truncated under the compositor. Unless it is sealed
+     * against shrinking (F_SEAL_SHRINK), the compositor reads it only into
+     * its own copy, under a SIGBUS guard; a fault ends the surface
+     * (MG_SURFACE_FAILED, MG_FAIL_FAULT). Ignored for dmabufs. */
+    MG_SURFACE_FOREIGN = 2,
+    /* v4: send MG_SURFACE_IDLE each time the compositor stops referencing
+     * the surface (below). */
+    MG_SURFACE_REPORT_IDLE = 4,
 };
 
 struct mg_surface_shm {
@@ -126,6 +143,32 @@ struct mg_surface_copy {
 
 struct mg_id {
     uint32_t id;
+};
+
+/* MG_SURFACE_IDLE (v4), for surfaces created with MG_SURFACE_REPORT_IDLE:
+ * the compositor no longer references the surface's memory, so its owner
+ * may write or reuse it. Sent each time the surface stops being named by
+ * the queued frame, the current frame and the frame on screen, which is
+ * after the flip that took it off screen (and at once for a queued frame
+ * that was replaced before it was shown). Damage uploads and
+ * MG_SURFACE_COPY read the memory before the compositor reads its next
+ * message, so they never hold it. A surface that a frame names again is
+ * referenced again and gets another MG_SURFACE_IDLE later. None follows
+ * MG_SURFACE_FREE, which ends the id: once the compositor has read it the
+ * memory is no longer referenced. */
+
+enum mg_fail_reason {
+    MG_FAIL_INVALID = 1, /* bad parameters, or the fd is smaller than them */
+    MG_FAIL_IMPORT = 2,  /* the memory cannot be mapped, imported or copied */
+    MG_FAIL_FAULT = 3,   /* the memory shrank under the compositor (SIGBUS) */
+};
+
+/* MG_SURFACE_FAILED (v4): surface `id` (from MG_SURFACE_SHM or
+ * MG_SURFACE_COPY) does not exist, or no longer does; frames that name it
+ * skip it. The id may be used again. */
+struct mg_failed {
+    uint32_t id;
+    uint32_t reason; /* mg_fail_reason */
 };
 
 enum mg_node_kind {

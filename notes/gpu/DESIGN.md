@@ -252,10 +252,11 @@ Xorg, and nothing in the compositor has to change.
   writeback said "clean" while the panel was not. A writeback is no proof
   of the panel's picture; the panel needs eyes (the CRTC's CRC debugfs is
   no help: it stays the same across different images).
-  Candidate for the GPU tier (branch only, not yet seen on the panel):
-  render into 4352-byte rows and declare the framebuffer 1088 wide, shown
-  1080 wide from the left, so a DPP that walks the framebuffer width or the
-  pitch walks 4352 either way.
+  The GPU tier renders into 4352-byte rows and declares the framebuffer
+  1088 wide, shown 1080 wide from the left, so a DPP that walks the
+  framebuffer width or the pitch walks 4352 either way: the user saw that
+  clean on two boots (main 2ba5a76), and the lock-screen drag still paces
+  at 120 Hz (8.30 ms intervals, no missed vblanks after the first seconds).
 - **Display planes are off on the phone (2026-10-26).** With the lock
   screen's notification list (a 1080x1280 ARGB layer at y=860, pitch 4352)
   on a plane, the planes fetched it 27520 bytes late (above). Until the
@@ -362,11 +363,14 @@ the previous one's flip event.
 ## The protocol and its versions
 
 `src/moon-gpu/proto.h` is the reference. Moon (`gpu.rs`) says which version
-it speaks in `MG_HELLO`; the compositor accepts versions 2 to 3 and echoes
-the client's in `MG_WELCOME`, so a client never sees newer fields than it
-asked for.
+it speaks in `MG_HELLO`; the compositor accepts versions 2 to 4 and echoes
+the client's in `MG_WELCOME`, so a client never sees newer fields or
+messages than it asked for (v4 flags from an older client are ignored).
+Compositors before v4 drop a client whose version differs from theirs, so
+Moon steps down a version when the compositor closes the link after its
+hello.
 
-- **v2**: the protocol Moon speaks today.
+- **v2**: the October 2026 protocol.
 - **v3**: `mg_surface_shm` gains `offset`, the byte offset of the pixels in
   the fd (a multiple of 4), for Wayland clients' buffers: a `wl_shm` buffer
   lives inside a pool, and a dmabuf plane can start inside its buffer. For
@@ -375,9 +379,43 @@ asked for.
   the KMS framebuffer (`offsets[0]`), so the buffer stays sampled in place
   and plane-eligible. A v2 message simply ends before the field (24 bytes
   instead of 28) and means offset 0.
+- **v4** (the Wayland agent's M2 requests):
+  - `MG_SURFACE_FOREIGN` (surface flag): a memfd that is not the client's
+    own, such as a Wayland client's `wl_shm` pool, which its owner may
+    truncate. If the fd is sealed against shrinking (`F_SEAL_SHRINK`) it is
+    read in place as before; otherwise the compositor keeps its own copy,
+    refreshed from the damaged rows under a SIGBUS guard (`sigsetjmp`
+    around a plain `memcpy`, never around a GL call), and uploads or draws
+    from that. A fault ends the surface with `MG_SURFACE_FAILED`
+    (`MG_FAIL_FAULT`); the compositor carries on.
+  - Every surface's fd must hold `offset + stride * (height - 1) + width *
+    4` bytes, or the surface is refused (`MG_FAIL_INVALID`).
+  - `MG_SURFACE_REPORT_IDLE` (surface flag) and `MG_SURFACE_IDLE {id}`:
+    sent each time the surface stops being named by the queued frame, the
+    current frame and the frame on screen, which is after the flip that
+    took it off screen (at once for a queued frame replaced before it was
+    shown). Damage uploads and `MG_SURFACE_COPY` read the memory before the
+    next message is read, so they never hold it. Moon releases a client's
+    `wl_buffer` on it. None follows `MG_SURFACE_FREE`.
+  - `MG_SURFACE_FAILED {id, reason}`: a surface from `MG_SURFACE_SHM` or
+    `MG_SURFACE_COPY` does not exist (bad parameters, a too-small fd, an
+    import, map or copy failure) or no longer does (a fault). Frames that
+    name it skip it.
+  - Freeing or replacing a surface that the frame on screen or in flight
+    still names now waits for that flip first (removing a framebuffer that
+    a plane scans out turns the plane off).
+  - Tested on the phone by `scripts/gpu/proto-test.sh`
+    (`src/moon-gpu/proto-test.c`), which stops Moon for a few seconds and
+    talks to the running compositor itself.
+- **Later (v5): acquire fences** for GPU-rendering clients: an optional
+  sync_file with `MG_SURFACE_DAMAGE`, kept on the surface until the next
+  damage; the planes path passes it as the layer's `IN_FENCE_FD`, the GPU
+  tier waits on it server-side (`EGL_ANDROID_native_fence_sync`, then
+  `eglWaitSyncKHR`) before sampling, the CPU tier polls it. Not built until
+  a client renders with the GPU.
 
-A v2 client works with a v3 compositor unchanged; a v3 client needs a v3
-compositor, so deploy the compositor before such a client.
+An older client works with a newer compositor unchanged; a newer client
+needs a compositor that speaks its version, so deploy the compositor first.
 
 ## What is built (branch `gpu-compositor`)
 
