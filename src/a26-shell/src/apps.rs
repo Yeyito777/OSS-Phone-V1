@@ -475,6 +475,11 @@ impl AppRegistry {
         self.leases.next_deadline(now)
     }
 
+    /// The app is playing media (its media lease is held).
+    pub fn media_active(&self, app: AppId, now: Instant) -> bool {
+        self.leases.holds(app, LeaseKind::Media, now)
+    }
+
     pub fn has_active_leases(&mut self, now: Instant) -> bool {
         self.leases.any_active(now)
     }

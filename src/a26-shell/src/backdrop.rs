@@ -78,6 +78,9 @@ pub struct DimLevels {
     levels: Vec<Option<SurfaceId>>,
     /// Per copy, the regions that no longer match the source.
     dirty: Vec<Vec<Damage>>,
+    /// Copies whose whole source changed (a new wallpaper): redrawn in idle
+    /// time like missing ones.
+    whole: Vec<bool>,
 }
 
 impl DimLevels {
@@ -86,6 +89,7 @@ impl DimLevels {
             source,
             levels: vec![None; dims.len()],
             dirty: vec![Vec::new(); dims.len()],
+            whole: vec![false; dims.len()],
             dims,
         }
     }
@@ -108,9 +112,16 @@ impl DimLevels {
         }
     }
 
-    /// Copies not created yet.
+    /// The whole source changed.
+    pub fn invalidate_all(&mut self) {
+        for (level, whole) in self.levels.iter().zip(&mut self.whole) {
+            *whole = level.is_some();
+        }
+    }
+
+    /// Copies not created yet, or wholly out of date.
     pub fn missing(&self) -> bool {
-        self.levels.contains(&None)
+        self.levels.contains(&None) || self.whole.contains(&true)
     }
 
     /// Creates up to `count` missing copies (two full-screen composites
@@ -122,7 +133,10 @@ impl DimLevels {
         count: usize,
     ) -> Result<(), Box<dyn Error>> {
         let missing: Vec<u8> = (1..=self.max_level())
-            .filter(|level| self.levels[usize::from(*level) - 1].is_none())
+            .filter(|level| {
+                let index = usize::from(*level) - 1;
+                self.levels[index].is_none() || self.whole[index]
+            })
             .take(count)
             .collect();
         for level in missing {
@@ -156,12 +170,16 @@ impl DimLevels {
         let dim = self.dims[index];
         match self.levels[index] {
             None => self.levels[index] = Some(compositor.create_dimmed(conn, self.source, dim)?),
+            Some(id) if self.whole[index] => {
+                compositor.refresh_dimmed(conn, id, self.source, dim)?
+            }
             Some(id) if !self.dirty[index].is_empty() => {
                 compositor.refresh_dimmed_regions(conn, id, self.source, dim, &self.dirty[index])?
             }
             Some(_) => {}
         }
         self.dirty[index].clear();
+        self.whole[index] = false;
         Ok(())
     }
 

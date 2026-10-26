@@ -220,6 +220,14 @@ pub struct ShellState {
     pub shell_exposed: bool,
     /// Notifications, alarms and timers on screen (alerts.rs).
     pub alerts: crate::alerts::Alerts,
+    /// Quick settings (control_centre.rs).
+    pub control: crate::control_centre::ControlCentre,
+    /// Wallpaper and Auto-Lock (settings.rs); `settings_changed` asks the
+    /// main loop to save and apply them.
+    pub settings: crate::settings::Settings,
+    pub settings_changed: bool,
+    /// The last touch or key, for Auto-Lock.
+    pub last_input: Instant,
     active_app_focused: bool,
     launch: Option<Launch>,
 }
@@ -249,6 +257,8 @@ pub struct PublicState {
     pub keyboard: PublicKeyboardState,
     pub suspend: PublicSuspendState,
     pub alerts: crate::alerts::PublicAlerts,
+    pub settings: crate::settings::Settings,
+    pub control_centre_open: bool,
     /// Frame timing of the last finished animation (see `profile on`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub animation: Option<String>,
@@ -303,6 +313,10 @@ impl ShellState {
             pending_switcher: false,
             shell_exposed: false,
             alerts: Default::default(),
+            control: Default::default(),
+            settings: Default::default(),
+            settings_changed: false,
+            last_input: Instant::now(),
             active_app_focused: false,
             launch: None,
         }
@@ -347,6 +361,8 @@ impl ShellState {
             keyboard: self.keyboard.public(),
             suspend,
             alerts: self.alerts_public(),
+            settings: self.settings.clone(),
+            control_centre_open: self.control.open,
             animation: None,
             display: None,
         }
@@ -371,6 +387,7 @@ impl ShellState {
         self.active_app_focused = false;
         self.cancel_app_launch();
         self.alerts_cancel_touch();
+        self.control_cancel_touch();
         self.last_action = "lock".into();
         self.redraw = true;
     }
@@ -385,7 +402,16 @@ impl ShellState {
     pub fn screen_on(&mut self) {
         self.lock();
         self.screen_awake = true;
+        self.last_input = Instant::now();
         self.last_action = "screen_on".into();
+    }
+
+    /// A touch or key: Auto-Lock starts over (and undims) and a
+    /// notification's wake no longer turns the screen back off.
+    pub fn note_input(&mut self) {
+        self.last_input = Instant::now();
+        self.idle_dimmed = false;
+        self.alerts_user_input();
     }
 
     /// The power key: fades to black before the screen-off transaction, or
@@ -1032,11 +1058,13 @@ impl ShellState {
             || shaking
             || unlocking
             || self.alerts_animating(now)
+            || self.control.animating(now)
     }
 
     pub fn tick(&mut self) {
         let now = Instant::now();
         self.alerts_tick(now);
+        self.control_tick(now);
         if self.is_lockout_active() && self.view == View::Locked {
             // Repaint the "Try again in N s" countdown.
             self.redraw = true;

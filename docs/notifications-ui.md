@@ -32,3 +32,20 @@ ring.
 
 Off the phone, `MOON_NOTIFY_SOCKET` points Moon and the System app at a
 stand-in or a `moon-notifyd` run with `MOON_NOTIFY_ROOT`.
+
+## Control Centre
+
+Pulled down from the right of the top edge (x ≥ 700; the rest of the top
+edge brings the notification centre), on the lock screen, the home screen
+and over apps (`control_centre.rs`). The same curtain, with:
+
+- Wi-Fi (shows the connection; a tap opens the System app), Focus (Do Not
+  Disturb: moon-notifyd's `settings.set do_not_disturb`, a crescent in the
+  status bar while on), the flashlight (the torch LED through the first of
+  `/sys/class/camera/flash/rear_flash` or a `torch`/`flash` LED class device
+  that exists; `MOON_TORCH` overrides; hidden when none), and the next alarm
+  (a tap opens the System app).
+- Brightness and volume sliders, dragged like iOS's (relative to where the
+  finger lands). Brightness goes to Moon's display backend
+  (`display-brightness.md`); a tap on its sun toggles auto-brightness when a
+  light sensor exists. A dragged slider redraws only itself.

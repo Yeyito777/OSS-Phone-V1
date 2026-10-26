@@ -7,6 +7,7 @@ mod brightness;
 mod clock;
 mod compositor;
 mod config;
+mod control_centre;
 mod display;
 mod display_power;
 mod freezer;
@@ -23,12 +24,14 @@ mod model;
 mod motion;
 mod notify_client;
 mod present;
+mod settings;
 mod status;
 mod status_bar;
 mod suspend;
 mod text;
 mod ui;
 mod volume;
+mod wallpaper;
 
 use std::env;
 use std::error::Error;
@@ -422,6 +425,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         })
         .unwrap_or(config.initial_volume);
     let mut state = ShellState::new(config.start_locked, initial_volume);
+    let settings_path = settings::Settings::path();
+    state.settings = settings::Settings::load(&settings_path);
+    renderer.set_wallpaper(&conn, &state.settings.wallpaper)?;
+    state.control.flashlight = control_centre::Flashlight::probe();
+    eprintln!(
+        "settings: wallpaper {}, auto-lock {} s, flashlight {}",
+        state.settings.wallpaper,
+        state.settings.auto_lock_s,
+        if state.control.flashlight.is_some() {
+            "found"
+        } else {
+            "none"
+        }
+    );
+    let mut idle_dim_applied = false;
     let mut apps = AppRegistry::from_environment();
     if let Some(control) = audio_volume.as_ref()
         && let Err(error) = control.set(state.volume)
@@ -562,7 +580,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     // While an alarm or timer rings the power key snoozes
                     // or stops it instead.
                     if count > 0 {
-                        state.alerts_user_input();
+                        state.note_input();
                         if !(state.screen_awake && state.alerts_power_key()) {
                             state.power_key();
                         }
@@ -579,7 +597,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             match device.poll() {
                 Ok(keys) => {
                     for key in keys {
-                        state.alerts_user_input();
+                        state.note_input();
                         change_volume(
                             &mut state,
                             audio_volume.as_ref(),
@@ -612,6 +630,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 state.note_memory_eviction(app);
                             }
                             Ok(())
+                        }
+                        Command::SettingsSet(key, value) => {
+                            state.settings.set(key, value).map(|()| {
+                                state.settings_changed = true;
+                            })
                         }
                         Command::SuspendTest(seconds) => {
                             if platform_suspend.is_none() {
@@ -832,6 +855,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 alerts::Outgoing::Activate(id) => notifyd.activate(&id),
                 alerts::Outgoing::MarkSeen(ids) => notifyd.mark_seen(&ids),
                 alerts::Outgoing::Ring(kind, id, action) => notifyd.ring_action(kind, &id, action),
+                alerts::Outgoing::SetDnd(on) => notifyd.set_do_not_disturb(on),
             }
         }
 
@@ -850,10 +874,62 @@ fn main() -> Result<(), Box<dyn Error>> {
             next_clock_tick = clock::next_minute_boundary(Instant::now());
         }
         state.tick();
+        if let Some(volume) = state.control.pending_volume.take() {
+            set_volume(&mut state, audio_volume.as_ref(), volume);
+            // Control Centre's slider shows it; no HUD over it.
+            state.volume_overlay_until = None;
+        }
+        if std::mem::take(&mut state.settings_changed) {
+            if let Err(error) = state.settings.save(&settings_path) {
+                eprintln!("settings not saved: {error}");
+            }
+            renderer.set_wallpaper(&conn, &state.settings.wallpaper)?;
+            state.redraw = true;
+        }
+        // Auto-Lock: dim five seconds ahead, then the power fade; any input
+        // (note_input) restores the brightness.
+        let auto_lock = auto_lock_due(&state, &mut apps, Instant::now());
+        match auto_lock {
+            AutoLock::Off if state.idle_dimmed && state.screen_awake && state.fade.is_none() => {
+                state.idle_dimmed = false;
+            }
+            AutoLock::Dim if !state.idle_dimmed => {
+                state.idle_dimmed = true;
+                state.last_action = "auto_lock_dim".into();
+            }
+            AutoLock::Lock => {
+                state.power_key();
+                state.last_action = "auto_lock".into();
+            }
+            _ => {}
+        }
+        if !state.screen_awake {
+            state.idle_dimmed = false;
+        }
+        if let Some(device) = backlight.as_ref()
+            && state.fade.is_none()
+            && state.screen_awake
+            && idle_dim_applied != state.idle_dimmed
+        {
+            let result = if state.idle_dimmed {
+                device.set_fraction(IDLE_DIM_FRACTION)
+            } else {
+                device.on()
+            };
+            if let Err(error) = result {
+                eprintln!("idle dim failed: {error}");
+            }
+            idle_dim_applied = state.idle_dimmed;
+        }
         if backlight_fades && let Some(device) = backlight.as_ref() {
             match state.fade.filter(|_| state.screen_awake) {
                 Some(fade) => {
-                    if let Err(error) = device.set_fraction(1.0 - fade.black(Instant::now())) {
+                    // From the dimmed level when Auto-Lock dimmed first.
+                    let mut fraction = 1.0 - fade.black(Instant::now());
+                    if state.idle_dimmed {
+                        fraction = fraction.min(IDLE_DIM_FRACTION);
+                    }
+                    if let Err(error) = device.set_fraction(fraction) {
                         eprintln!("backlight fade failed: {error}");
                     }
                     backlight_ramping = true;
@@ -862,6 +938,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if backlight_ramping && state.screen_awake {
                         // The fade-in finished: exactly the saved brightness.
                         let _ = device.on();
+                        idle_dim_applied = false;
                     }
                     backlight_ramping = false;
                 }
@@ -1076,6 +1153,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         if apps.needs_process_poll() {
             deadline = deadline.min(now + FALLBACK_PROCESS_STATUS_INTERVAL);
         }
+        if let Some(at) = auto_lock_deadline(&state) {
+            deadline = deadline.min(at.max(now));
+        }
         if let Some(notify_deadline) = notifyd.next_deadline() {
             deadline = deadline.min(notify_deadline.max(now));
         }
@@ -1230,6 +1310,58 @@ fn next_input_deadline(state: &ShellState, raw_touch: &RawTouchTracker) -> Optio
         })
         .flatten()
         .min()
+}
+
+/// Backlight fraction while Auto-Lock dims (about 40 % on the square curve).
+const IDLE_DIM_FRACTION: f32 = 0.63;
+/// Auto-Lock dims this long before turning the screen off.
+const IDLE_DIM_LEAD: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AutoLock {
+    Off,
+    Wait,
+    Dim,
+    Lock,
+}
+
+/// Whether Auto-Lock applies now and where it stands. It waits while a
+/// finger is down, a fade runs, something rings, or the app in front plays
+/// media.
+fn auto_lock_due(state: &ShellState, apps: &mut AppRegistry, now: Instant) -> AutoLock {
+    let Some(timeout) = auto_lock_timeout(state) else {
+        return AutoLock::Off;
+    };
+    let playing = AppId::from_view(state.view).is_some_and(|app| apps.media_active(app, now));
+    if playing {
+        return AutoLock::Off;
+    }
+    let idle = now.saturating_duration_since(state.last_input);
+    if idle >= timeout {
+        AutoLock::Lock
+    } else if idle + IDLE_DIM_LEAD >= timeout {
+        AutoLock::Dim
+    } else {
+        AutoLock::Wait
+    }
+}
+
+fn auto_lock_timeout(state: &ShellState) -> Option<Duration> {
+    let seconds = state.settings.auto_lock_s;
+    (seconds > 0
+        && state.screen_awake
+        && state.fade.is_none()
+        && state.pointer.is_none()
+        && state.alerts.ringing().is_none())
+    .then(|| Duration::from_secs(u64::from(seconds)))
+}
+
+/// The next Auto-Lock step (dim, then off).
+fn auto_lock_deadline(state: &ShellState) -> Option<Instant> {
+    let timeout = auto_lock_timeout(state)?;
+    let off = state.last_input + timeout;
+    let dim = off.checked_sub(IDLE_DIM_LEAD).unwrap_or(off);
+    Some(if state.idle_dimmed { off } else { dim })
 }
 
 /// Everything Moon's idle wait blocks on.
@@ -1795,7 +1927,7 @@ fn pointer_begin(
     if !state.screen_awake {
         return None;
     }
-    state.alerts_user_input();
+    state.note_input();
     if let Some(previous) = state.pointer.take()
         && previous.keyboard_pressed
         && let Some(index) = previous.keyboard_key_index
@@ -1803,6 +1935,12 @@ fn pointer_begin(
         state.keyboard.release_key_index(index);
     }
     let (pointer, action) = new_pointer_gesture(state, keyboard_geometry, x, y, repeat_timing);
+    if !pointer.keyboard_owned && state.control_pointer_begin(f32::from(x), f32::from(y)) {
+        // Control Centre.
+        state.pointer = Some(pointer);
+        state.last_action = "pointer_begin".into();
+        return None;
+    }
     if !pointer.keyboard_owned && state.alerts_pointer_begin(f32::from(x), f32::from(y)) {
         // A banner, the notification centre, or the ringing screen.
         state.pointer = Some(pointer);
@@ -1884,8 +2022,12 @@ fn pointer_move(
     x: i16,
     y: i16,
 ) {
-    if state.alerts_touch_active() {
-        state.alerts_pointer_move(f32::from(x), f32::from(y));
+    if state.control_touch_active() || state.alerts_touch_active() {
+        if state.control_touch_active() {
+            state.control_pointer_move(f32::from(x), f32::from(y));
+        } else {
+            state.alerts_pointer_move(f32::from(x), f32::from(y));
+        }
         if let Some(pointer) = state.pointer.as_mut() {
             pointer.last_x = x;
             pointer.last_y = y;
@@ -2227,6 +2369,10 @@ fn pointer_end(
         finish_keyboard_pointer(conn, state, pointer, keyboard_geometry, key_injector);
         return;
     }
+    if state.control_touch_active() {
+        state.control_pointer_end(f32::from(x), f32::from(y));
+        return;
+    }
     if state.alerts_touch_active() {
         state.alerts_pointer_end(f32::from(x), f32::from(y));
         return;
@@ -2445,7 +2591,8 @@ fn apply_command(
         | Command::Profile(_)
         | Command::ProfileSkip(_)
         | Command::ProfileBudget(_)
-        | Command::ProfileFrames(_) => {}
+        | Command::ProfileFrames(_)
+        | Command::SettingsSet(..) => {}
         Command::Digit(digit) => state.input_digit(digit, config),
         Command::Backspace => state.backspace_pin(),
         Command::Submit => {
@@ -2502,7 +2649,7 @@ fn apply_command(
         Command::Brightness(_) => {}
         Command::Power => {
             // Exactly the physical key (it snoozes or stops what rings).
-            state.alerts_user_input();
+            state.note_input();
             if !(state.screen_awake && state.alerts_power_key()) {
                 state.power_key();
             }

@@ -118,6 +118,10 @@ impl LeaseManager {
             .min()
     }
 
+    pub fn holds(&self, app: AppId, kind: LeaseKind, now: Instant) -> bool {
+        self.deadlines[app.index()][kind.index()].is_some_and(|deadline| deadline > now)
+    }
+
     pub fn any_active(&mut self, now: Instant) -> bool {
         self.expire(now);
         self.deadlines.iter().flatten().any(Option::is_some)
