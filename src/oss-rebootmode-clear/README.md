@@ -67,31 +67,29 @@ the NORMAL mode value.
   `MODULE_UNLOAD=y`. RKP registers the module's text with uH as it does for
   each vendor module.
 
-## Proposed on-device test (needs explicit approval; not run)
+## On-device test (approved; 2026-10-26, BOOT 8c0461ee, Moon on the GPU tier)
 
-It touches nothing but the three registers above, through the kernel's own
-regmap, plus a module load/unload.
+1. Pushed: sha256 `a18606a8…4054` matched; BOOT `8c0461ee`, 306 modules.
+2. `insmod … dry_run=1`, then `rmmod`:
+   `before: reboot-cmd[0x810]=0x48 magic-inform[0x808]=0x4e4e0000 panic-inform[0x80c]=0x25b7ce71 (dry run)`
+3. `insmod`, then `rmmod`:
+   `before:` the same, then `reboot-cmd 0x48 is not a reboot mode; left unchanged`,
+   then `after:  reboot-cmd[0x810]=0x48 magic-inform[0x808]=0x4e4e0000 panic-inform[0x80c]=0x12345670`.
+   One write: panic-inform to UNKNOWN, the value `sec_reboot()` writes on
+   the very next reboot.
+4. `adb reboot`: normal boot to BOOT, Moon ready about 42 s later, OSS
+   kernel, 306 modules, taint 1024 (4096 "out-of-tree" only until the
+   reboot), BOOT unchanged.
 
-1. `adb push oss-rebootmode-clear.ko /data/local/tmp/` and check its sha256.
-2. Dry run: `su -c 'insmod /data/local/tmp/oss-rebootmode-clear.ko dry_run=1; dmesg | grep oss-rebootmode-clear'`.
-   Only three 32-bit MMIO reads (0x11860808/0c/10). 0x808 is read on every
-   reboot and 0x80c at every RTC probe, through this same regmap.
-   Then `su -c 'rmmod oss_rebootmode_clear'`.
-3. Real run: the same insmod without `dry_run`, read the `before:`/`after:`
-   lines, `rmmod`. On a normally booted phone the expected `before:` is
-   reboot-cmd 0x0, magic bits 23:16 = 0x4E, panic-inform 0x12345670, giving
-   **no writes**. Any write it does make is listed in `after:`.
-4. `adb reboot`: it must boot BOOT normally (Moon, 306 modules).
+What the live values show:
+- In a normal boot, 0x810 holds **0x48**, not 0x00. Something other than
+  exynos-reboot (presumably the bootloader) uses it, so the interlock that
+  only clears 0x01..0x05 is needed.
+- panic-inform holds a per-boot value (0x25b7ce71), not UNKNOWN, between
+  reboots.
+- magic-inform carries 0x4E in both bits 31:24 and 23:16.
 
-Risk, honestly:
-- **Lowest:** the dry run. It does only reads the kernel already performs.
-- **Writes in step 3:** if any happen, they are values the normal reboot path
-  writes. 0x810 is the exception: it is set to NORMAL only from a recovery or
-  other mode value, which a normally booted phone should not hold.
-- **Worst plausible case:** an oops while loading. The cmdline has
-  `oops=panic`, so that means a panic and reboot. In normal mode the
-  registers already select BOOT, the direct-boot policy gives one Android
-  boot after a panic, and RESCUE.md applies.
-- **Not covered by this test:** the real purpose, clearing a *recovery*
-  selection. That belongs to the stage-2 canary, which will log `before:`
-  reboot-cmd 0x1 / panic-inform 0x12345674.
+Before relying on the module in the recovery-slot canary, read its
+`before:` line from a recovery boot. It should show reboot-cmd 0x01 and
+panic-inform 0x12345674. If 0x810 holds another value there, the module will
+not change it and logs that instead.
