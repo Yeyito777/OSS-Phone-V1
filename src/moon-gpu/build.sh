@@ -14,3 +14,4 @@ flags="-O2 -Wall -Wextra -Wno-unused-parameter -std=c11"
 "$cc" $flags -o "$out/moon-compositor" "$here/compositor.c" "$here/render.c" "$here/cpu.c" \
     "$here/gpu.c" "$here/kms.c" -lEGL -lGLESv3 -lm
 "$cc" $flags -o "$out/moon-gpu-proto-test" "$here/proto-test.c"
+"$cc" $flags -o "$out/moon-gpu-vkprobe" "$here/vkprobe.c" -ldl
