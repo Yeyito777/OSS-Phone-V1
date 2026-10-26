@@ -29,6 +29,7 @@ set -euo pipefail
 declare -A KNOWN=(
   [9ab6cefe06b18ddd7d2410f8ce06233fb0c14a39687fe085b4e74ad18a91a7e8]='stock recovery (rescue baseline)'
   [25540aa188cf00ea007a1a4c52746bd07be7e75e5bcfd0b18a411bf2f89a96ef]='panic canary recovery (2026-10-26)'
+  [aab7a30153acb342edc397d3c471098f4cb0f5ceb55f196775a32950df3ac410]='OSS-kernel recovery calibration (stock recovery UI, OSS kernel)'
 )
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
