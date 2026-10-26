@@ -23,7 +23,11 @@ pub struct StatusBarSurface {
     canvas: Canvas,
     presenter: Presenter,
     mapped: bool,
-    redraw: bool,
+    /// Something was stacked above the bar; it goes back on top.
+    raise: bool,
+    /// Part of the window lost its pixels; recopy them (never restack for
+    /// this: an overlay above the bar exposing it would otherwise trade
+    /// places with it forever).
     exposed: bool,
     last: Option<StatusInfo>,
 }
@@ -65,20 +69,19 @@ impl StatusBarSurface {
             canvas: Canvas::new(i32::from(width), i32::from(HEIGHT)),
             presenter,
             mapped: false,
-            redraw: true,
+            raise: false,
             exposed: false,
             last: None,
         })
     }
 
     pub fn request_redraw(&mut self) {
-        self.redraw = true;
         self.exposed = true;
     }
 
     pub fn request_raise(&mut self) {
         if self.mapped {
-            self.redraw = true;
+            self.raise = true;
         }
     }
 
@@ -101,29 +104,25 @@ impl StatusBarSurface {
         if newly_mapped {
             conn.map_window(self.window)?;
             self.mapped = true;
-            self.redraw = true;
+            self.raise = true;
             self.exposed = true;
         }
-        let needs_present = self.redraw || self.last.as_ref() != Some(status);
-        if newly_mapped || needs_present {
+        let raised = std::mem::take(&mut self.raise);
+        if raised {
             conn.configure_window(
                 self.window,
                 &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
             )?;
         }
-        if needs_present {
-            if self.last.as_ref() != Some(status) {
-                ui::draw_status_bar(&mut self.canvas, status, Some(BLACK));
-                self.presenter.present(conn, &self.canvas, 0)?;
-                self.last = Some(status.clone());
-            }
-            if self.exposed {
-                self.presenter.expose(conn, 0)?;
-                self.exposed = false;
-            }
-            self.redraw = false;
+        if self.last.as_ref() != Some(status) {
+            ui::draw_status_bar(&mut self.canvas, status, Some(BLACK));
+            self.presenter.present(conn, &self.canvas, 0)?;
+            self.last = Some(status.clone());
         }
-        Ok(newly_mapped || needs_present)
+        if std::mem::take(&mut self.exposed) {
+            self.presenter.expose(conn, 0)?;
+        }
+        Ok(raised)
     }
 
     pub fn destroy<C: Connection>(&self, conn: &C) {

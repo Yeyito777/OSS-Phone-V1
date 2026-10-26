@@ -2426,7 +2426,13 @@ fn apply_command(
         Command::VolumeUp => change_volume(state, audio_volume, 5),
         Command::VolumeDown => change_volume(state, audio_volume, -5),
         Command::VolumeSet(value) => set_volume(state, audio_volume, value),
-        Command::Power => state.power_key(),
+        Command::Power => {
+            // Exactly the physical key (it snoozes or stops what rings).
+            state.alerts_user_input();
+            if !(state.screen_awake && state.alerts_power_key()) {
+                state.power_key();
+            }
+        }
         Command::ScreenOff => state.screen_off(),
         Command::ScreenOn => state.screen_on(),
         Command::LeaseAcquire(_, _, _)
