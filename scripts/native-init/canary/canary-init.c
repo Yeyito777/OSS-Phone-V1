@@ -4,13 +4,15 @@
  * Purpose: prove that a recovery-slot boot that dies as PID 1 (the stage-2
  * v2/v3 failure) comes back to BOOT on its own, once the PMU recovery selection
  * has been cleared. Order:
- *   1. FIRST, load oss-rebootmode-clear.ko (rebootmode-clear.h). Its kernel-log
- *      lines on a recovery entry should read
- *        before: reboot-cmd=0x1 ... panic-inform=0x12345674
- *        after:  reboot-cmd=0x0 ... magic bits 23:16=0x4e, panic-inform=0x12345670
+ *   1. FIRST, load oss-rebootmode-clear.ko with require_mode=1
+ *      (rebootmode-clear.h): the load succeeds only if it found a recovery-style
+ *      mode in reboot-cmd (0x810, mode bits 2:0) and cleared it, with the read-
+ *      back verified. Its before:/after: kernel-log lines are the measurement of
+ *      what a recovery boot really holds (CANARY-RUNBOOK.md table).
  *   2. If it loaded: log OSS-CANARY, then exit PID 1 -> "Attempted to kill
  *      init" -> panic -> reset. Expected: the phone boots BOOT, hands-free.
- *   3. If it did NOT load: the PMU may still select recovery, so a panic would
+ *   3. If it did NOT load (no mode found, refused, or an older module without
+ *      require_mode): the PMU may still select recovery, so a panic could
  *      loop. Do not panic: exec the stock recovery init (/system/bin/init, what
  *      the stock ramdisk's /init symlink points at), so stock recovery comes up
  *      and the user leaves it with "Reboot system now" (a clean reboot).
@@ -43,7 +45,10 @@ static void kmsg(const char *msg) {
 
 int main(int argc, char **argv) {
     (void)argc;
-    int clear_err = load_rebootmode_clear();         /* before anything that can fail */
+    /* require_mode=1: succeed only if this load found and cleared a recovery-
+     * style mode in reboot-cmd (0x810). Only then is the deliberate panic
+     * backed by evidence that the real selector was cleared. */
+    int clear_err = load_rebootmode_clear_params("require_mode=1", 0);   /* first */
     mkdir("/dev", 0755);
     mknod("/dev/kmsg", S_IFCHR | 0600, makedev(1, 11));
 

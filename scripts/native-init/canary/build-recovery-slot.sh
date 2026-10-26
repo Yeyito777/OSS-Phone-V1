@@ -47,7 +47,10 @@ STOCK_RECOVERY="$R/images/stock-A266MUBU1AYB8/recovery.img"
 KEY="$R/keys/recovery-avb-rsa4096.pem"
 MAGISKBOOT="${MAGISKBOOT:-$R/tools/magiskboot-x86_64}"
 KO="${A26_REBOOTMODE_CLEAR_KO:-$HOME/oss-kernel/out/modules/oss-rebootmode-clear/oss-rebootmode-clear.ko}"
-KO_SHA=a18606a8bd699b2f56426188642b13a8e35c452260f6c8c1ecac57491cba4054
+# Pin of the verify-after-write module (masked clear, require_mode).
+# The first module a18606a8 is withdrawn; set this when the kernel agent
+# reports the new .ko. Builds refuse until then.
+KO_SHA=AWAITING-NEW-OSS-REBOOTMODE-CLEAR-KO
 SALT=9413599eee2c3c4ad1a16b47eb3dc5036d93c908c656b18881680b979e1e547c
 PARTITION_SIZE=$((24576 * 4096))   # RECOVERY, PIT entry #22
 VENDOR_BOOT_SHA=74723185dc3ae25be122418e8d401b91cfd27eac688395e97067f77a849692d2
