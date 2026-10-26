@@ -182,6 +182,7 @@ OVERRIDE_WINDOW_SECONDS=8
 DIRECT_BOOT=1
 DIRECT_OVERRIDE_SECONDS=3
 AUDIO_STREAM_INDEX=5
+GPU_COMPOSITOR=1
 EOF
     chown 0:0 /data/adb/moon/config
     chmod 0600 /data/adb/moon/config
@@ -236,3 +237,8 @@ ls -lZ \
 
 echo 'Installed and enabled autonomous Moon boot: direct boot when the boot image'
 echo 'carries scripts/direct-boot, otherwise the Magisk service.d takeover.'
+
+# Moon's GPU display path (the default; notes/gpu/DESIGN.md): moon-compositor,
+# headless Xorg's configuration and the dummy driver. It keeps the user's
+# GPU_COMPOSITOR choice; `scripts/gpu/install.sh --disable` opts out.
+"$PROJECT_ROOT/scripts/gpu/install.sh"

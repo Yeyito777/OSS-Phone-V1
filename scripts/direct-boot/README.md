@@ -45,9 +45,11 @@ Magisk v30.7 BOOT image and verifies kernel and magiskinit are byte-identical.
    until the framework starts enters Android safe mode). Skipped after a
    deep-suspend resume, whose wake key can be a volume key.
 7. Takeover (`a26-xorg-takeover.sh`): stop bootanim, SurfaceFlinger, composer
-   (polling until init reaped them, no fixed sleeps); native Xorg in the
-   chroot. Native audio (`moon-permissiond` + `moon-audiod`) starts alongside
-   Xorg, then Moon.
+   (polling until init reaped them, no fixed sleeps); then, by default,
+   `moon-gpu-session.sh start` brings up `moon-compositor` as DRM master and
+   Xorg runs headless (`--gpu`); without a ready compositor, native Xorg on
+   the panel as before. Native audio (`moon-permissiond` + `moon-audiod`)
+   starts alongside Xorg, then Moon (with `MOON_GPU_SOCKET` in GPU mode).
 8. Moon answers IPC → `start-failures=0`, `moon.session.ready=1`, and
    `sys.boot_completed=1` / `dev.bootcomplete=1` so vendor boot-completed
    actions run (battery driver, zram, thermal, lmkd) and init's critical-crash
@@ -94,6 +96,10 @@ including the 240 s deadline and three consecutive failures.
 ## Controls
 
 * `scripts/a26-shell/autostart.sh skip-once|disable|enable|status`
+* `scripts/gpu/install.sh --disable|--enable`: `GPU_COMPOSITOR=0|1` in
+  `/data/adb/moon/config`; GPU mode is the default. A compositor that dies is
+  restarted twice per boot, then the session returns to Xorg on the panel in
+  place (`notes/gpu/DESIGN.md`).
 * `/data/adb/moon/config`: `DIRECT_BOOT=0` returns to the legacy post-boot
   takeover without reflashing; `DIRECT_OVERRIDE_SECONDS`, `AUDIO_STREAM_INDEX`.
 * Without the flashed ramdisk, everything here is inert and the Magisk

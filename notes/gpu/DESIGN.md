@@ -1,8 +1,8 @@
 # GPU compositing for Moon: research, design and migration plan
 
-Status: research, an on-device proof of concept, and an integration
-verified on the phone behind `GPU_COMPOSITOR` (off by default) (October
-2026). Device: SM-A266M,
+Status: GPU mode is Moon's default display path (October 2026; opt out
+with `scripts/gpu/install.sh --disable`), after research, an on-device
+proof of concept and an opt-in round on the phone. Device: SM-A266M,
 A266MUBU1AYB8, OSS kernel (5.10.223, GKI KMI), Moon direct boot. Companion
 study: `notes/wayland/DESIGN.md` on `wayland-experiment` (the Wayland
 agent's measurements of planes, CPU composition and stock compositors).
@@ -209,10 +209,13 @@ Xorg, and nothing in the compositor has to change.
 
 ## Q3: risk, fallback and robustness
 
-- **Opt-in, and the software path stays the fallback.** GPU mode is
-  `GPU_COMPOSITOR=1` in `/data/adb/moon/config` (`scripts/gpu/install.sh
-  --enable|--disable`). Moon's XRender compositor is untouched and is what
-  runs when the switch is off, when the compositor binary is missing, when
+- **The default, and the software path stays the fallback.** GPU mode runs
+  unless `/data/adb/moon/config` says `GPU_COMPOSITOR=0`
+  (`scripts/gpu/install.sh --disable`; `--enable` and a plain install clear
+  it; `install-autostart.sh` installs the GPU path). Moon's XRender
+  compositor is untouched and is what runs when the switch is off, when the
+  compositor binary, the dummy driver or the headless Xorg configuration is
+  missing, when
   it is not ready within four seconds (EGL, buffers, scanout, the first
   commit), or after a GPU-mode failure earlier in the same boot. Xorg on the
   panel with the modesetting configuration is exactly today's session.
@@ -420,10 +423,11 @@ reboot. A reboot with `GPU_COMPOSITOR=0` returned the plain software path.
 
 ## Migration plan
 
-1. **On the phone, opt-in** (done, above): merged with `GPU_COMPOSITOR`
-   off by default; screen-off drain matches the software path.
-2. **Default on** once a week of daily use shows no regressions; the
-   software session remains the fallback.
+1. **On the phone, opt-in** (done, above); screen-off drain matches the
+   software path.
+2. **Default on** (done, approved by the user after the opt-in round):
+   `GPU_COMPOSITOR` unset means GPU mode; the software session remains the
+   fallback and `--disable` the opt-out.
 3. **Fewer copies and more planes:** double-buffer the X mirror (no
    tearing); the status strip, keyboard, volume and banner windows as Moon
    layers on planes instead of X windows; the foreground app's region of the

@@ -2,10 +2,11 @@
 # Install Moon's GPU display path on the attached phone (notes/gpu/DESIGN.md):
 # moon-compositor, its session script, the session scripts that know about
 # it, Xorg's headless (dummy driver) configuration and the dummy driver
-# itself. GPU mode stays off until enabled:
+# itself. GPU mode is the default (install-autostart.sh runs this):
 #   scripts/gpu/install.sh [--enable | --disable]
-# Takes effect at the next boot (or session start). --disable only edits the
-# config. The software path is untouched and remains the fallback.
+# --disable only writes GPU_COMPOSITOR=0 (the opt-out); --enable or a plain
+# install clears it. Takes effect at the next boot. The software path is
+# untouched and remains the automatic fallback.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -92,7 +93,8 @@ if [ "$MODE" = --enable ]; then
 fi
 rm -f /data/local/tmp/moon-gpu/failed-boot
 rm -rf \$T
-grep GPU_COMPOSITOR /data/adb/moon/config || echo "GPU_COMPOSITOR unset (off)"
+grep GPU_COMPOSITOR /data/adb/moon/config || echo "GPU_COMPOSITOR unset (GPU mode, the default)"
 sha256sum \$ROOT/opt/moon-gpu/moon-compositor
 EOF
 echo "Installed the GPU display path${MODE:+ ($MODE)}; it takes effect at the next boot."
+echo "Opt out with: scripts/gpu/install.sh --disable"

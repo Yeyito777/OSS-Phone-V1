@@ -12,7 +12,8 @@
 #                               path in place
 #   moon-gpu-session.sh stop    before Android takes the display back
 #
-# Opt-in: GPU_COMPOSITOR=1 in /data/adb/moon/config. A failure during this
+# The default; GPU_COMPOSITOR=0 in /data/adb/moon/config (scripts/gpu/install.sh
+# --disable) opts out. A missing piece, or a failure during this
 # boot's start or keep disables GPU mode until the next boot.
 set -u
 
@@ -62,11 +63,17 @@ start)
     # (the supervisor gives Moon the compositor's socket only while `active`
     # names this boot).
     rm -f "$RUN/active" "$RUN/fallback" "$RUN/ready"
-    grep -q '^GPU_COMPOSITOR=1' "$CONFIG" 2>/dev/null || exit 1
-    if [ ! -x "$BIN" ]; then
-        log "enabled but $BIN is missing; software path"
-        exit 1
-    fi
+    grep -q '^GPU_COMPOSITOR=0' "$CONFIG" 2>/dev/null && exit 1
+    # Everything GPU mode needs, or the software path: a headless Xorg that
+    # cannot start would end the session.
+    for piece in "$BIN" "$ROOT/usr/lib/xorg/modules/drivers/dummy_drv.so" \
+        "$ROOT/etc/X11/xorg-gpu.conf.d/20-a26-gpu.conf" \
+        "$ROOT/etc/X11/xorg-gpu.conf.d/30-a26-input.conf"; do
+        if [ ! -e "$piece" ]; then
+            log "$piece is missing; software path"
+            exit 1
+        fi
+    done
     # Deep suspend hands the display off through Xorg (xrandr --off), which
     # a headless Xorg cannot do.
     if grep -q '"deep_suspend": *true' "$ROOT/etc/a26-shell/config.json" 2>/dev/null; then

@@ -16,7 +16,7 @@ su_sh() { adb -s "$SERIAL" shell su; }
 case "${1:-status}" in
 status)
     su_sh <<EOF
-echo "config: \$(grep GPU_COMPOSITOR /data/adb/moon/config 2>/dev/null || echo 'GPU_COMPOSITOR unset')"
+echo "config: \$(grep GPU_COMPOSITOR /data/adb/moon/config 2>/dev/null || echo 'GPU_COMPOSITOR unset (default: on)')"
 echo "active: \$([ -e $RUN/active ] && echo yes || echo no)  failed-boot: \$(cat $RUN/failed-boot 2>/dev/null || echo -)"
 echo "compositor: \$(cat $RUN/ready 2>/dev/null | tr '\n' ' ')"
 echo "Xorg: \$(pidof Xorg) moon-compositor: \$(pidof moon-compositor)"
