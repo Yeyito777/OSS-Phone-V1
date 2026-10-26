@@ -1,5 +1,9 @@
 # Moon notifications, alarms and timers: `moon-notifyd` protocol, version 1
 
+Revision 2 (2026-10-26): object arguments are named by kind (`notification`,
+`alarm`, `timer`) instead of `id`, which is the request id; duplicate JSON
+keys are rejected.
+
 `moon-notifyd` is OSS-Phone-V1's central service for **notifications**,
 **alarms** and **timers**. It runs as root inside the Alpine chroot next to
 Moon, owns all persistent state, decides when something fires, plays the alert
@@ -33,16 +37,26 @@ timeouts: 1 s per request.
 {"id":7,"cmd":"notify.post","app":"system","title":"Wi-Fi","body":"Connected to UofT"}
 ```
 
-- `id`: non-zero integer chosen by the client, echoed in the response.
+- `id`: non-zero integer chosen by the client, echoed in the response. It is
+  only ever the request id: commands that act on an object name it by its
+  kind (`notification`, `alarm`, `timer`), never `id`.
 - `cmd`: the command name (§3–§6). Other fields are the command's arguments.
   Unknown fields are rejected (`invalid_argument`), so typos surface.
+- A request with a **duplicate key** anywhere (e.g. two `id`s) is rejected
+  with `invalid_request` instead of silently keeping one value.
+
+```json
+{"id":8,"cmd":"notify.dismiss","notification":"n42"}
+```
 
 ```json
 {"id":7,"ok":true,"result":{"id":"n42","replaced":false}}
 {"id":8,"ok":false,"error":{"code":"not_found","message":"no notification n99"}}
 ```
 
-Error codes: `invalid_request` (not JSON, no `id`/`cmd`), `unknown_command`,
+A request that cannot be answered by id (not JSON, duplicate keys, no `id`
+or `cmd`) gets `"id": null`. Error codes: `invalid_request` (not JSON,
+duplicate keys, no `id`/`cmd`), `unknown_command`,
 `invalid_argument`, `not_found`, `permission_denied`, `limit_exceeded`,
 `internal`. `message` is for logs, never for users.
 
@@ -157,7 +171,7 @@ reboot, by wall clock).
 | `ping` | — | `{"version":1}` |
 | `subscribe` | — | `{}`; then a `snapshot` event and all later events on this connection |
 | `notify.post` | Notification fields: `app`, `title`, optional `tag`, `body`, `urgency` (default `normal`), `silent`, `expires_at`, `open` | `{"id":"n42","replaced":false}` |
-| `notify.withdraw` | `id`, or `app` + `tag` | `{}` (`not_found` if absent). Event reason `withdrawn` |
+| `notify.withdraw` | `notification`, or `app` + `tag` | `{}` (`not_found` if absent). Event reason `withdrawn` |
 | `notify.list` | optional `app` | `{"notifications":[…]}`, newest first |
 
 Apps should withdraw notifications that no longer apply (a finished download,
@@ -171,22 +185,22 @@ they reflect what the user did.
 
 | `cmd` | Arguments | Effect |
 | --- | --- | --- |
-| `notify.dismiss` | `id` | removed, reason `dismissed` |
+| `notify.dismiss` | `notification` | removed, reason `dismissed` |
 | `notify.dismiss_all` | optional `app` | all (of that app) removed, reason `dismissed` |
-| `notify.activate` | `id` | removed with reason `activated`; a `notification_activated` event (with `app`, `tag`, `open`) goes to every subscriber, so the posting app can react; Moon itself performs `open` |
+| `notify.activate` | `notification` | removed with reason `activated`; a `notification_activated` event (with `app`, `tag`, `open`) goes to every subscriber, so the posting app can react; Moon itself performs `open` |
 | `notify.mark_seen` | `ids` (array) or `all: true` | sets `seen`; `notifications_seen` event |
 | `alarm.list` | — | `{"alarms":[…]}` sorted by `next_fire_at` |
 | `alarm.create` | `hour` 0–23, `minute` 0–59, optional `days`, `label` (≤ 40), `enabled` (true), `sound`, `vibrate` (true), `snooze_minutes` | the alarm |
-| `alarm.update` | `id` + any alarm field above | the alarm (recomputed `next_fire_at`; clears a pending snooze) |
-| `alarm.delete` | `id` | `{}` (stops it if ringing) |
-| `alarm.stop` | `id` | stops a ringing alarm; one-shot alarms become disabled |
-| `alarm.snooze` | `id` | stops ringing; rings again after `snooze_minutes` |
+| `alarm.update` | `alarm` + any alarm field above | the alarm (recomputed `next_fire_at`; clears a pending snooze) |
+| `alarm.delete` | `alarm` | `{}` (stops it if ringing) |
+| `alarm.stop` | `alarm` | stops a ringing alarm; one-shot alarms become disabled |
+| `alarm.snooze` | `alarm` | stops ringing; rings again after `snooze_minutes` (a snoozed one-shot rings once more and stays disabled) |
 | `timer.list` | — | `{"timers":[…]}` |
 | `timer.create` | `duration_s`, optional `label` (≤ 40), `sound` | the timer, `running` |
-| `timer.pause` / `timer.resume` | `id` | the timer |
-| `timer.cancel` | `id` | `{}`; deletes it (also stops it if ringing) |
-| `timer.stop` | `id` | stops a ringing timer and deletes it |
-| `timer.restart` | `id` | a ringing or finished timer runs again for its `duration_s` |
+| `timer.pause` / `timer.resume` | `timer` | the timer |
+| `timer.cancel` | `timer` | `{}`; deletes it (also stops it if ringing) |
+| `timer.stop` | `timer` | stops a ringing timer and deletes it |
+| `timer.restart` | `timer` | a ringing or finished timer runs again for its `duration_s` |
 | `settings.get` | — | the settings object below |
 | `settings.set` | any settings fields | the settings |
 
