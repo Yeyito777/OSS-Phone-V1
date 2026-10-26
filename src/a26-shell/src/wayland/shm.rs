@@ -4,7 +4,7 @@
 //! shows the buffer (milestone 1: Xorg, through MIT-SHM `AttachFd`), which
 //! reads the pixels in place; a buffer is released once that copy is done.
 
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -79,6 +79,15 @@ impl Dispatch<WlShm, ()> for WlState {
                 resource.post_error(wl_shm::Error::InvalidStride, "pool size must be positive");
                 return;
             }
+            // Whoever maps the pool (Xorg now, moon-compositor later) takes
+            // SIGBUS if the file is smaller than the pool or shrinks later:
+            // refuse the first, and seal against the second where the client
+            // allowed sealing (memfd with MFD_ALLOW_SEALING).
+            if file_size(&fd).is_none_or(|actual| actual < i64::from(size)) {
+                resource.post_error(wl_shm::Error::InvalidFd, "pool larger than its file");
+                return;
+            }
+            seal_shrink(&fd);
             data_init.init(
                 id,
                 Arc::new(ShmPool {
@@ -148,12 +157,29 @@ impl Dispatch<WlShmPool, Arc<ShmPool>> for WlState {
                     resource.post_error(wl_shm::Error::InvalidFd, "pools cannot shrink");
                     return;
                 }
+                if file_size(&pool.fd).is_none_or(|actual| actual < i64::from(size)) {
+                    resource.post_error(wl_shm::Error::InvalidFd, "pool larger than its file");
+                    return;
+                }
                 *current = (size, current.1.wrapping_add(1));
             }
             wl_shm_pool::Request::Destroy => {}
             _ => {}
         }
     }
+}
+
+fn file_size(fd: &OwnedFd) -> Option<i64> {
+    // SAFETY: fstat fills one stat for a valid descriptor.
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    let result = unsafe { libc::fstat(fd.as_raw_fd(), &mut stat) };
+    (result == 0).then_some(stat.st_size)
+}
+
+/// Best effort: a client that did not allow sealing keeps an unsealed pool.
+fn seal_shrink(fd: &OwnedFd) {
+    // SAFETY: F_ADD_SEALS on a valid descriptor; failure changes nothing.
+    unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_ADD_SEALS, libc::F_SEAL_SHRINK) };
 }
 
 impl Dispatch<WlBuffer, Arc<ShmBuffer>> for WlState {

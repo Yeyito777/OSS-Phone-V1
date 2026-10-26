@@ -351,8 +351,12 @@ start_moon() {
     gpu_env=''
     [ "$(cat /data/local/tmp/moon-gpu/active 2>/dev/null)" != "$boot_id" ] ||
         gpu_env=MOON_GPU_SOCKET=/run/moon-gpu/compositor.sock
+    # Wayland apps (WAYLAND_APPS=1, off by default): Moon serves them on a
+    # socket in the chroot's /run, a tmpfs of this session.
+    wayland_env=''
+    [ "$(config_uint WAYLAND_APPS 0)" != 1 ] || wayland_env=MOON_WAYLAND_DIR=/run/moon-wayland
     "$BB" nohup "$BB" setsid /system/bin/sh "$ROOT/a26-enter-chroot.sh" \
-        /usr/bin/env DISPLAY=:0 A26_SHELL_CONFIG=/etc/a26-shell/config.json $gpu_env \
+        /usr/bin/env DISPLAY=:0 A26_SHELL_CONFIG=/etc/a26-shell/config.json $gpu_env $wayland_env \
         /opt/a26-shell/bin/a26-shell \
         >>"$ROOT/root/a26-shell.log" 2>&1 </dev/null &
     session_pid=$!
