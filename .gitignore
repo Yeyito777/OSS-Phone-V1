@@ -14,8 +14,10 @@
 !/src/a26-shell/
 !/src/a26-audio-bridge/
 !/src/moon-audiod/
+!/src/moon-telephonyd/
 !/src/moon-gpu/
 /src/a26-shell/target/
+/src/moon-telephonyd/target/
 
 /scripts/*
 !/scripts/a26-shell/
@@ -34,6 +36,8 @@
 !/scripts/device/moon-audio-keeper.sh
 !/scripts/device/moon-gpu-session.sh
 !/scripts/device/moon-suspend-cycle.sh
+!/scripts/device/moon-telephony-start.sh
+!/scripts/device/moon-telephony-stop.sh
 !/scripts/device/a26-enter-chroot.sh
 !/scripts/device/a26-xorg-takeover.sh
 !/scripts/device/a26-xorg-safety-watchdog.sh
@@ -46,6 +50,7 @@
 !/notes/a26-shell/
 !/notes/direct-boot/
 !/notes/ui-polish/
+!/notes/telephony/
 !/notes/gpu/
 /notes/a26-shell/*
 !/notes/a26-shell/README.md

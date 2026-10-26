@@ -1,0 +1,16 @@
+[package]
+name = "moon-telephonyd"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Moon's telephony service: SIM, signal, SMS, calls and mobile data over the vendor radio HAL"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"
+serde_json = "1.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
