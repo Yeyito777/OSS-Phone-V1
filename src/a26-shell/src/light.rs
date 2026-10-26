@@ -4,11 +4,21 @@
 //! switched on and off by writing `type * 10 + enable` to
 //! /sys/class/sensors/ssp_sensor/enable (light is type 5) and its rate is set
 //! with the hub's batch ioctl on /dev/batch_io. Every IIO record starts with
-//! the calibrated lux (u32, little endian), followed by colour channels and a
-//! 64-bit timestamp. The sensor runs only while the screen is on.
+//! the calibrated lux (u32, little endian); the driver packs the record and
+//! its 64-bit timestamp into one scan element. The sensor runs only while the
+//! screen is on.
+//!
+//! An IIO device opens only once, and Android's sensors HAL keeps them all
+//! open even with no clients (it does in Moon mode): then `start` fails with
+//! EBUSY and automatic brightness is unavailable. There is no fallback: the
+//! sensor (TCS3701) sits under the panel, and both the factory `raw_data`
+//! channels and the hub's lux follow the backlight (measured: r = 13 / 392 /
+//! 2491 at levels 0 / 44 / 100 in a dark room) unless the panel brightness
+//! is injected into the hub, which only the HAL does. Driving a level from
+//! them is a positive feedback loop.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
@@ -21,7 +31,6 @@ const IIO_NAME: &str = "light_sensor";
 /// 200 ms between readings: responsive, and ~5 wakeups/s only while the
 /// screen is on.
 const PERIOD_NS: i64 = 200_000_000;
-
 pub struct LightSensor {
     device: PathBuf,
     sysfs: PathBuf,
@@ -41,7 +50,7 @@ impl LightSensor {
                 continue;
             }
             let node = entry.file_name();
-            let record = record_size(&sysfs).unwrap_or(48);
+            let record = record_size(&sysfs).unwrap_or(12);
             return Some(Self {
                 device: PathBuf::from("/dev").join(node),
                 sysfs,
@@ -57,7 +66,8 @@ impl LightSensor {
         self.file.as_ref().map(AsRawFd::as_raw_fd)
     }
 
-    /// Starts the sensor and opens its data. Errors leave it stopped.
+    /// Starts the sensor and opens its data. Errors (EBUSY: the HAL holds
+    /// it) leave it stopped.
     pub fn start(&mut self) -> io::Result<()> {
         if self.file.is_some() {
             return Ok(());
@@ -81,7 +91,7 @@ impl LightSensor {
             .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
             .open(&self.device)?;
         set_period(PERIOD_NS);
-        fs::write(ENABLE, format!("{}\n", LIGHT_TYPE * 10 + 1))?;
+        write_enable(true)?;
         self.pending.clear();
         self.file = Some(file);
         Ok(())
@@ -89,7 +99,7 @@ impl LightSensor {
 
     pub fn stop(&mut self) {
         if self.file.take().is_some() {
-            let _ = fs::write(ENABLE, format!("{}\n", LIGHT_TYPE * 10));
+            let _ = write_enable(false);
         }
         self.pending.clear();
     }
@@ -125,31 +135,43 @@ impl Drop for LightSensor {
     }
 }
 
-/// Bytes per IIO record: the data channel (storagebits x repeat) plus the
-/// 8-byte timestamp, aligned to 8 as IIO lays them out.
+/// Switches the light sensor on or off (reference-counted by the hub). One
+/// write(2): the node returns more than was written (64 for "51\n"), which
+/// `write_all` (`fs::write`) would treat as a slice overrun and panic on.
+fn write_enable(on: bool) -> io::Result<()> {
+    let command = format!("{}\n", LIGHT_TYPE * 10 + u32::from(on));
+    OpenOptions::new()
+        .write(true)
+        .open(ENABLE)?
+        .write(command.as_bytes())
+        .map(drop)
+}
+
+/// Bytes per IIO record. Samsung's hub packs the whole record (event plus
+/// timestamp) into one element named `timestamp`; otherwise the data
+/// channels, aligned to 8, plus the 8-byte timestamp.
 fn record_size(sysfs: &std::path::Path) -> Option<usize> {
     let elements = fs::read_dir(sysfs.join("scan_elements")).ok()?;
     let mut data = 0;
-    let mut timestamp = false;
+    let mut timestamp = 0;
     for element in elements.flatten() {
         let name = element.file_name().to_string_lossy().into_owned();
         if !name.ends_with("_type") {
             continue;
         }
+        let bytes = parse_type_bytes(&fs::read_to_string(element.path()).ok()?)?;
         if name.contains("timestamp") {
-            timestamp = true;
-            continue;
+            timestamp = bytes;
+        } else {
+            data += bytes;
         }
-        data += parse_type_bytes(&fs::read_to_string(element.path()).ok()?)?;
     }
-    if data == 0 {
-        return None;
+    match (data, timestamp) {
+        (0, 0) => None,
+        (0, packed) => Some(packed),
+        (data, 0) => Some(data),
+        (data, timestamp) => Some(data.div_ceil(8) * 8 + timestamp),
     }
-    Some(if timestamp {
-        data.div_ceil(8) * 8 + 8
-    } else {
-        data
-    })
 }
 
 /// `le:s<real>/<storage>[X<repeat>]>><shift>` -> storage/8 * repeat bytes.
@@ -204,5 +226,7 @@ mod tests {
         assert_eq!(parse_type_bytes("le:s32/32>>0"), Some(4));
         assert_eq!(parse_type_bytes("be:u16/16X3>>0"), Some(6));
         assert_eq!(parse_type_bytes("garbage"), None);
+        // The hub's packed light record: u32 lux + s64 timestamp.
+        assert_eq!(parse_type_bytes("le:s96/96>>0\n"), Some(12));
     }
 }

@@ -66,3 +66,25 @@ The level maps to the panel backlight on a perceptual (square) curve, from 1
 
 The sensor backend (Samsung sensor hub, `light_sensor`) is an implementation
 detail of Moon and may change; clients use only the commands and state above.
+
+## Status (2026-10-26): `sensor` is `unavailable` on the phone
+
+Automatic brightness is implemented but has no usable light reading in Moon
+mode yet, so `sensor` reports `unavailable` (auto behaves as manual; the UI
+hides the toggle):
+
+- Android's sensors HAL (`vendor.sensors-hal-2-0-multihal`) keeps every
+  sensor-hub IIO device open even without clients, and an IIO device opens
+  only once (EBUSY). Stopping the HAL in Moon mode is not done: it has no
+  lazy start, so a handback that skipped the restore script would leave
+  Android's framework waiting for it.
+- The light sensor (AMS TCS3701) sits under the panel. Its raw channels
+  (`/sys/class/sensors/light_sensor/raw_data`) and the hub's own lux follow
+  the backlight (dark room: r = 13 / 392 / 2491 and hub lux 0 / 17 / 58 at
+  levels 0 / 44 / 100), because the hub only compensates when the panel
+  brightness (and screen content) is injected, which only the HAL does.
+  Brightness driven from them is a positive feedback loop.
+
+A working source needs the hub's compensated lux: e.g. Moon injecting the
+panel brightness into the hub and a kernel-side node exposing the last light
+event's `lux`, or a HAL-free IIO device.
