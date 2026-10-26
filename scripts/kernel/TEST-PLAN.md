@@ -2,7 +2,7 @@
 
 ## Results on the phone (2026-10-25, attended)
 
-Flashed in-OS with `flash-boot-inplace.sh --allow-kernel-change`, each image
+Flashed in-OS with `scripts/direct-boot/flash-boot-inplace.sh --allow-kernel-change`, each image
 checked against the same list on three boots (Moon ready, 306 modules, no
 module/symbol/CRC/oops lines, root, display, touch device, audio, Wi-Fi +
 HTTPS, charging, DPMS screen off/on, clean reboot):
@@ -18,6 +18,17 @@ proc mount shows only its own 4 processes (busybox's `--mount-proc` fails
 with EINVAL on the chroot's shared root; mount proc by hand). devtmpfs mounts
 with 430 nodes. **The OSS kernel image is the installed default**; stage 2
 on top of it failed (see `notes/direct-boot/RESCUE.md`).
+
+## Official source (2026-10-26)
+
+Rebuilt from Samsung's own `SM-A266M_LA_15_Opensource.zip` (sha256
+`6b993454…0453f`): the stock, oss and oss-userns BOOT images are
+byte-identical to the mirror-built ones below (`28f31505…`, `8c0461ee…`,
+`061b6923…`; the tree differs only in an unused defconfig). The image on the
+phone (`8c0461ee…`, read back 2026-10-26) is therefore already the
+official-source OSS kernel: nothing to flash, and the results above stand.
+For any future kernel change: same ramdisk only, attended, with
+`scripts/direct-boot/flash-boot-inplace.sh --allow-kernel-change` (changes to `/init` are refused).
 
 Images (unflashed) live in the Mac checkout's git-ignored `images/kernel/`
 (copies of whale's `$KROOT/out/boot/`); verify with `shasum -a 256 -c SHA256SUMS`.

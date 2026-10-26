@@ -9,9 +9,9 @@ The kernel tree (≈2 GB) and toolchain stay on the build host (`whale`,
 configs.
 
 ```sh
-# on whale, from a checkout of this branch
-scripts/kernel/build-all.sh                       # mirror source (tonight)
-scripts/kernel/build-all.sh ~/Downloads/SM-A266M_LA_15_Opensource.zip   # official source
+# on whale, from a checkout of this repo
+scripts/kernel/build-all.sh          # Samsung's zip from $KROOT/dl/, else the mirror
+scripts/kernel/build-all.sh /path/to/SM-A266M_LA_15_Opensource.zip
 ```
 
 About 12 minutes per kernel on 12 cores. Outputs: `$KROOT/out/<variant>-<source>/`
@@ -24,8 +24,8 @@ About 12 minutes per kernel on 12 cores. Outputs: `$KROOT/out/<variant>-<source>
 | --- | --- | --- |
 | Toolchain | AOSP `prebuilts/clang/host/linux-x86` commit `1006a161`, dir `clang-r416183`; `bin/clang-12` sha256 `d505bf52…71ca` | Prints exactly the stock `/proc/version` compiler: `Android (7211189, based on r416183) clang version 12.0.4 (… c935d99d…)`. The `clang-r416183b` that Samsung's `build_kernel.sh` names is 12.0.5 (7284624), *not* what built the shipped kernel. |
 | Config | `configs/A266MUBU1AYB8.config` = the phone's `/proc/config.gz` | Byte-identical to the IKCONFIG extracted from the stock `boot.img` kernel. |
-| Source (official) | `SM-A266M_LA_15_Opensource.zip`, opensource.samsung.com upload 13000, 278 700 980 bytes | Samsung's release for exactly A266MUBU1AYB8. Needs a human to accept the download terms (below). |
-| Source (tonight) | `github.com/physwizz/A266m-V-LA` commit `d569a477`, tree `d779b6c1` | Public GPL re-upload of that release. Its saved defconfig differs from the phone's config only in `LOCALVERSION="-physwizz"` and the whitelist path; we use our own config. |
+| Source | Samsung's `SM-A266M_LA_15_Opensource.zip`, opensource.samsung.com upload 13000 (attach 38622): 278 700 980 bytes, sha256 `6b993454a1ddd97fd36a94b0ee61bbe97165db5c22674f82010aece86210453f`; its `Kernel.tar.gz` sha256 `f9ca20b4…d357`; extracted-tree content hash `7ce9859e…0f38` | Samsung's release for exactly A266MUBU1AYB8, downloaded 2026-10-26 after the user accepted the terms. `fetch-source.sh samsung` checks all three hashes. Needs a person to download (below); kept at `$KROOT/dl/` on whale. |
+| Source (fallback) | `github.com/physwizz/A266m-V-LA` commit `d569a477`, tree `d779b6c1` | Public GPL re-upload of the same release. Verified: all 81 582 files byte-identical to Samsung's `Kernel.tar.gz` except the saved defconfig (`LOCALVERSION="-physwizz"`, `LOCALVERSION_AUTO` off), which the build never uses; it builds bit-identical kernels. Used only where the zip is absent. |
 | Build environment | in-tree build in a `bwrap` sandbox with the tree at Samsung's path `/home/dpi/qb5_8814/workspace/P4_1716/android/kernel/s5e8825` and the toolchain at `/home/dpi/qb5_8814/workspace/P4_1716/android/prebuilts/clang/host/linux-x86/clang-r416183`, `TARGET_BUILD_VARIANT=user`, `LLVM=1 LLVM_IAS=1`, banner `dpi@21DND505`, `Fri Feb 21 20:40:50 KST 2025`, `.scmversion` | The source path is baked into the stock config (`CONFIG_UNUSED_KSYMS_WHITELIST`). The toolchain path ends up in debug info (compiler `stdarg.h`), hence in ThinLTO hashes and build IDs; it was found by rebuilding `kperfmon.ko` until it matched Samsung's prebuilt byte for byte, build ID included, and makes the output independent of `$KROOT`. `TARGET_BUILD_VARIANT=user` selects production DEFEX/MZ/NGKSM code (without it DEFEX builds permissive). |
 
 ### Getting Samsung's official source (needs a person, ~2 minutes)
@@ -40,17 +40,23 @@ this project does not automate.
    **Download selected file(s)**.
 4. Read the legal notice; optionally pick a purpose (e.g. *Study the source
    code*) and click **Agree**.
-5. Copy the zip to whale and run
-   `scripts/kernel/build-all.sh /path/to/SM-A266M_LA_15_Opensource.zip`.
-   `fetch-source.sh samsung` checks the size, extracts `Kernel.tar.gz` to
-   `$KROOT/src/samsung` and lists every file that differs from the mirror.
+5. Put the zip at `$KROOT/dl/` on whale (it is there now) and run
+   `scripts/kernel/build-all.sh`. `fetch-source.sh samsung` verifies the zip,
+   `Kernel.tar.gz` and extracted-tree hashes, extracts to `$KROOT/src/samsung`
+   and lists every file that differs from the mirror.
+
+The zip also holds `Platform.tar.gz` (Samsung's userspace GPL parts) and
+`README_Kernel.txt`, whose instructions name `clang-r416183b` and
+`s5e8825-a26xsub_defconfig`; neither is what built the shipped kernel (see
+the toolchain and config rows). The extracted tree is read-only (444/555);
+only write bits differ from the mirror, and the build copies the tree first.
 
 The same page offers Samsung's own `toolchain.tar.gz` under *Others →
 Galaxy-A26-5g (SM-A266M)*; it is not needed (the AOSP clang above is the one
 named in the banner), but downloading it would settle the toolchain question
 beyond doubt.
 
-## What the checks prove (results for the mirror build, 2026-10-25)
+## What the checks prove (official source, 2026-10-26; the mirror gives identical results)
 
 | Check | Script | Stock reproduction | OSS variant |
 | --- | --- | --- | --- |
@@ -64,20 +70,41 @@ beyond doubt.
 | BOOT pipeline | `build-all.sh` self-test | the stock kernel through `make-boot-image.sh` reproduces today's flashed BOOT image byte for byte (`3bf29162…`) | — |
 
 Why the Image is not byte-identical although every function is: ThinLTO
-names promoted symbols `.llvm.<hash of the object's bitcode>`, and only 96 of
-608 vmlinux objects hash as in Samsung's build, which changes symbol order and
-so every address. The bitcode includes debug info, so this fits small
-non-code differences (e.g. line numbers in widely included headers) between
-the published tree and Samsung's build tree; the tree certainly differs a
-little (its Kconfig lacks `CONFIG_SEC_AUTO_INPUT` and Samsung's "Block kunit" /
-"File systems kunit" menus; the reproduction embeds the phone's config text
-anyway). Rerun against the official zip; `fetch-source.sh samsung` prints the
-differences from the mirror.
+names promoted symbols `.llvm.<(h0<<32)|h1 of the object's bitcode hash>`,
+and only 96 of 609 vmlinux objects (680 of all objects, counting modules) hash
+as in Samsung's build. That changes symbol order and so every address. What
+is known about the cause:
+
+- It is not in the published source: Samsung's official tarball is
+  file-for-file the mirror, and builds to the identical Image.
+- The official tree confirms Samsung's *build* tree had more than it ships:
+  no Kconfig defines `CONFIG_SEC_AUTO_INPUT` (only the saved defconfig names
+  it) and the empty "Block kunit" / "File systems kunit" menus in the stock
+  config come from Kconfig `menu`s the release lacks. These are all
+  `# … is not set`/`=m` for an absent driver, so they change no compiled code;
+  the reproduction embeds the phone's config text verbatim anyway.
+- Not line numbers: all 11 387 `__bug_table` file:line entries of vmlinux (and
+  those of the non-identical modules) equal Samsung's.
+- Not the environment: kperfmon.ko and 273 other modules (54 of them
+  multi-object) match Samsung's byte for byte *including the build ID*, which
+  lld computes over the full debug info. Three non-identical modules
+  (mali_kbase, ufs-exynos-core, usb_notify_layer) even have Samsung's
+  `srcversion`, which modpost computes from the sources with comments and
+  whitespace removed.
+- Not a few headers: 83 mismatching objects (e.g. `drivers/base/core.o`) use
+  only headers that byte-identical objects also use.
+
+So Samsung's build tree differs from its release in non-semantic ways spread
+through many files (most consistent with comment/whitespace edits that move
+columns or declaration lines in debug info but no code, BUG lines or
+srcversion). The published source cannot reproduce the Image byte for byte;
+it reproduces every function, export, CRC and 274 modules exactly.
 
 ### Reproducibility and results
 
 Two independent runs (fresh toolchain download, fresh clone, different
-`$KROOT`) give bit-identical outputs. Results of `build-all.sh` on the mirror:
+`$KROOT`) give bit-identical outputs, and the official zip and the mirror give
+the same outputs. Results of `build-all.sh`:
 
 | Variant | Image sha256 | BOOT image sha256 |
 | --- | --- | --- |

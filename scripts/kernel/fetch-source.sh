@@ -3,9 +3,10 @@
 #
 #   scripts/kernel/fetch-source.sh mirror
 #       Public GPL mirror pinned by commit and tree hash -> $KROOT/src/mirror
-#   scripts/kernel/fetch-source.sh samsung /path/to/SM-A266M_LA_15_Opensource.zip
-#       Samsung's official release (downloaded by a human, see README.md)
-#       -> $KROOT/src/samsung, then compares it with the mirror if present.
+#   scripts/kernel/fetch-source.sh samsung [/path/to/SM-A266M_LA_15_Opensource.zip]
+#       Samsung's official release (downloaded by a person, see README.md;
+#       default $SAMSUNG_ZIP), verified by zip, Kernel.tar.gz and extracted
+#       tree hashes -> $KROOT/src/samsung; then compared with the mirror.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
@@ -34,7 +35,7 @@ mirror)
     echo "Source: $out (mirror commit $MIRROR_COMMIT, tree $MIRROR_TREE)"
     ;;
 samsung)
-    zip="${2:?path to $SAMSUNG_ZIP_NAME required}"
+    zip="${2:-$SAMSUNG_ZIP}"
     size="$(stat -c %s "$zip")"
     [[ "$size" -eq "$SAMSUNG_ZIP_SIZE" ]] \
         || { echo "Unexpected size $size (Samsung lists $SAMSUNG_ZIP_SIZE)" >&2; exit 1; }
@@ -42,22 +43,25 @@ samsung)
     out="$KROOT/src/samsung"
     rm -rf "$work" "$out.tmp"
     mkdir -p "$work" "$out.tmp"
-    sha256sum "$zip" | tee "$KROOT/src/samsung.zip.sha256"
-    unzip -q "$zip" -d "$work"
-    kernel_tar="$(find "$work" -maxdepth 2 -iname 'Kernel.tar.gz' | head -1)"
-    [[ -n "$kernel_tar" ]] || { echo "No Kernel.tar.gz in $zip" >&2; ls -R "$work" | head; exit 1; }
-    tar -xzf "$kernel_tar" -C "$out.tmp"
+    printf '%s  %s\n' "$SAMSUNG_ZIP_SHA256" "$zip" | sha256sum -c --quiet - \
+        || { echo "$zip is not the pinned $SAMSUNG_ZIP_NAME" >&2; exit 1; }
+    unzip -q "$zip" Kernel.tar.gz -d "$work"
+    printf '%s  %s\n' "$SAMSUNG_KERNEL_TAR_SHA256" "$work/Kernel.tar.gz" | sha256sum -c --quiet -
+    tar -xzf "$work/Kernel.tar.gz" -C "$out.tmp"
     # Some releases wrap the tree in one directory; unwrap it.
     if [[ ! -f "$out.tmp/Makefile" ]] && [[ "$(ls "$out.tmp" | wc -l)" -eq 1 ]]; then
         inner="$out.tmp/$(ls "$out.tmp")"
         mv "$inner" "$out.tmp.inner" && rmdir "$out.tmp" && mv "$out.tmp.inner" "$out.tmp"
     fi
-    rm -rf "$out"
+    content="$(cd "$out.tmp" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+    [[ "$content" == "$SAMSUNG_TREE_CONTENT_SHA256" ]] \
+        || { echo "Extracted tree content hash mismatch: $content" >&2; exit 1; }
+    rm -rf "$out" "$work"
     mv "$out.tmp" "$out"
-    echo "Source: $out"
+    echo "Source: $out (Samsung $SAMSUNG_ZIP_NAME, verified)"
     if [[ -d "$KROOT/src/mirror" ]]; then
-        echo "Files differing from the mirror (excluding defconfigs):"
-        diff -rq -x .git -x '.tree-*' "$out" "$KROOT/src/mirror" | grep -v '/configs/' | head -50 || true
+        echo "Files differing from the mirror (expected: only the saved defconfig):"
+        diff -rq -x .git -x '.tree-*' "$out" "$KROOT/src/mirror" || true
     fi
     ;;
 *)
