@@ -5,7 +5,7 @@
 #   scripts/wayland/moon-phone.sh install       back up the phone's Moon, install this
 #                                               branch's Moon, the demo app and the System
 #                                               app's Wayland build (beside the installed one)
-#   scripts/wayland/moon-phone.sh start [demo|system]
+#   scripts/wayland/moon-phone.sh start [demo|system] [evdev] [debug]
 #                                               restart Moon with Wayland on (the demo, or
 #                                               the Wayland System build, in the System slot)
 #   scripts/wayland/moon-phone.sh stop          restart Moon with Wayland off
@@ -51,7 +51,7 @@ install)
     su_sh "sha256sum $BIN/a26-shell $BIN/a26-shell.before-wayland $ROOT/opt/moon-wl-demo/bin/moon-wl-demo"
     echo "installed; the running Moon is unchanged until start/stop or a reboot"
     ;;
-start) su_sh "sh $DEV/moon-wayland-test.sh start ${2:-}" ;;
+start) shift; su_sh "sh $DEV/moon-wayland-test.sh start $*" ;;
 stop) su_sh "sh $DEV/moon-wayland-test.sh stop" ;;
 restore)
     su_sh "[ -e $BIN/a26-shell.before-wayland ] && cp -p $BIN/a26-shell.before-wayland $BIN/a26-shell.new && mv -f $BIN/a26-shell.new $BIN/a26-shell && rm -f $BIN/a26-shell.before-wayland && sha256sum $BIN/a26-shell"
