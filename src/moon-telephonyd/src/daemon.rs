@@ -21,7 +21,7 @@ use crate::radio::{
     self, CardStatus, Event, Indication, Radio, Registration, Response, Signal, args, req,
 };
 use crate::sms;
-use crate::store::{self, Message, Settings, SmsStore};
+use crate::store::{self, CallLog, CallRecord, Message, Settings, SmsStore};
 
 pub const VERSION: u32 = 1;
 const SLOTS: [&str; 2] = ["slot1", "slot2"];
@@ -175,8 +175,13 @@ struct Notifier {
     path: PathBuf,
     stream: Option<UnixStream>,
     output: VecDeque<u8>,
+    input: Vec<u8>,
     next_id: u64,
     retry_at: Option<Instant>,
+    /// moon-notifyd's protocol revision (`ping`), once known; `ringing`
+    /// posts need 3.
+    revision: Option<u64>,
+    ping_id: u64,
 }
 
 impl Notifier {
@@ -213,6 +218,14 @@ impl Notifier {
                     let _ = s.set_nonblocking(true);
                     self.stream = Some(s);
                     self.retry_at = None;
+                    self.input.clear();
+                    // Learn the revision first (it may have been upgraded).
+                    self.next_id += 1;
+                    self.ping_id = self.next_id;
+                    let ping = format!("{{\"id\":{},\"cmd\":\"ping\"}}\n", self.ping_id);
+                    for (i, b) in ping.bytes().enumerate() {
+                        self.output.insert(i, b);
+                    }
                 }
                 Err(_) => {
                     self.retry_at = Some(Instant::now() + Duration::from_secs(5));
@@ -230,7 +243,25 @@ impl Notifier {
                     self.stream = None;
                     return;
                 }
-                Ok(_) => continue,
+                Ok(n) => {
+                    self.input.extend_from_slice(&sink[..n]);
+                    while let Some(end) = self.input.iter().position(|b| *b == b'\n') {
+                        let line: Vec<u8> = self.input.drain(..=end).collect();
+                        let reply: Value = serde_json::from_slice(&line).unwrap_or(Value::Null);
+                        if reply["id"] == json!(self.ping_id) {
+                            self.revision = Some(reply["result"]["revision"].as_u64().unwrap_or(2));
+                        } else if reply["ok"] == json!(false) {
+                            log(format!(
+                                "moon-notifyd refused a request: {}",
+                                reply["error"]
+                            ));
+                        }
+                    }
+                    if self.input.len() > 64 * 1024 {
+                        self.input.clear();
+                    }
+                    continue;
+                }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == ErrorKind::Interrupted => continue,
                 Err(_) => {
@@ -282,6 +313,9 @@ pub struct Daemon {
     concat: HashMap<(String, u16, u8), Concat>,
     calls: Vec<TrackedCall>,
     next_call: u64,
+    call_log: CallLog,
+    /// Incoming calls the user declined (not "missed").
+    rejected: Vec<u64>,
     audio_mode: &'static str,
     speaker: bool,
     mute: bool,
@@ -312,13 +346,17 @@ pub fn run(paths: Paths) -> Result<(), Box<dyn Error>> {
     let radio = Radio::open(&SLOTS)?;
     let settings = Settings::load(&paths.state_dir.join("settings.json"));
     let sms = SmsStore::load(&paths.state_dir.join("sms.json"));
+    let call_log = CallLog::load(&paths.state_dir.join("calls.json"));
     let mut daemon = Daemon {
         notifier: Notifier {
             path: paths.notify_socket.clone(),
             stream: None,
             output: VecDeque::new(),
+            input: Vec::new(),
             next_id: 0,
             retry_at: None,
+            revision: None,
+            ping_id: 0,
         },
         paths,
         radio,
@@ -336,7 +374,10 @@ pub fn run(paths: Paths) -> Result<(), Box<dyn Error>> {
         sms_reference: (now_s() & 0xff) as u8,
         concat: HashMap::new(),
         calls: Vec::new(),
-        next_call: 1,
+        // Call ids stay unique across restarts (they key the history).
+        next_call: call_log.max_id() + 1,
+        call_log,
+        rejected: Vec::new(),
         audio_mode: "normal",
         speaker: false,
         mute: false,
@@ -346,6 +387,7 @@ pub fn run(paths: Paths) -> Result<(), Box<dyn Error>> {
         last_state: Value::Null,
         last_signal_event: Instant::now(),
     };
+    daemon.notifier.send("ping", Map::new());
     log(format!(
         "ready socket={} group={:?} messages={}",
         daemon.paths.socket.display(),
@@ -881,8 +923,24 @@ impl Daemon {
                 }
             }
         }
+        let mut history = Vec::new();
         for (id, call, started, connected) in ended {
-            let missed = call.incoming && connected.is_none();
+            let rejected = self.rejected.contains(&id);
+            self.rejected.retain(|r| *r != id);
+            let missed = call.incoming && connected.is_none() && !rejected;
+            self.call_log.records.push(CallRecord {
+                id,
+                number: (call.number_presentation == 0 && !call.number.is_empty())
+                    .then(|| store::normalize_peer(&call.number)),
+                name: (!call.name.is_empty()).then(|| call.name.clone()),
+                incoming: call.incoming,
+                started_at: started,
+                connected_at: connected,
+                ended_at: now,
+                missed,
+                rejected,
+            });
+            history.push(json!(format!("c{id}")));
             let duration = connected.map_or(0, |c| now - c);
             log(format!("call c{id} ended (missed={missed}, {duration}s)"));
             let mut ended_json = call_json(&TrackedCall {
@@ -904,6 +962,12 @@ impl Daemon {
                 }));
             }
         }
+        if !history.is_empty() {
+            if let Err(e) = self.call_log.save() {
+                log(format!("cannot save call history: {e}"));
+            }
+            self.broadcast(json!({"event": "call_history_changed", "ids": history}));
+        }
         for id in new_incoming {
             let Some(t) = self.calls.iter_mut().find(|t| t.id == id) else {
                 continue;
@@ -913,10 +977,15 @@ impl Daemon {
             let who = display_number(&t.call);
             log(format!("incoming call c{id}"));
             self.broadcast(json!({"event": "call_incoming", "call": call}));
-            self.notifier.post(json!({
+            let mut post = json!({
                 "app": "phone", "tag": format!("call-{id}"), "title": "Incoming call", "body": who,
                 "urgency": "high", "open": {"app": "phone", "target": format!("c{id}")},
-            }));
+            });
+            // moon-notifyd r3 loops the ringtone until we withdraw it.
+            if self.notifier.revision.is_some_and(|r| r >= 3) {
+                post["ringing"] = json!(true);
+            }
+            self.notifier.post(post);
         }
         // An answered call stops ringing.
         let answered: Vec<u64> = self
@@ -1523,6 +1592,8 @@ impl Daemon {
             "call.hangup" => &["id"],
             "call.dtmf" => &["digits"],
             "call.audio" => &["speaker", "mute"],
+            "call.history" => &["before", "limit"],
+            "call.history_delete" => &["ids", "all"],
             "data.set" => &["enabled", "apn", "protocol", "user", "password", "auth"],
             "radio.set" => &["airplane"],
             "sim.channel_open" => &["aid", "p2", "slot"],
@@ -1717,6 +1788,16 @@ impl Daemon {
                     Ok(s) => s,
                     Err(e) => return Some(Err(e)),
                 };
+                let ringing: Vec<u64> = self
+                    .calls
+                    .iter()
+                    .filter(|t| matches!(t.call.state, 4 | 5))
+                    .map(|t| t.id)
+                    .collect();
+                if ringing.is_empty() {
+                    return Some(Err(("invalid_state", "no incoming call".into())));
+                }
+                self.rejected.extend(ringing);
                 let code = if self.calls.iter().any(|t| t.call.state == 4) {
                     req::REJECT_CALL
                 } else {
@@ -1755,6 +1836,9 @@ impl Daemon {
                 let Some(t) = target else {
                     return Some(Err(("not_found", "no such call".into())));
                 };
+                if matches!(t.call.state, 4 | 5) {
+                    self.rejected.push(t.id);
+                }
                 if matches!(t.call.state, 4) {
                     return self.radio_command(slot, key, id, Op::Call, req::REJECT_CALL, |_| {});
                 }
@@ -1783,6 +1867,40 @@ impl Daemon {
                 self.radio_command(slot, key, id, Op::Call, req::SEND_DTMF, move |p| {
                     p.write_string(&digits)
                 })
+            }
+            "call.history" => {
+                let before = a.get("before").and_then(store::parse_call_id);
+                let limit = a
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(50)
+                    .clamp(1, 200) as usize;
+                Some(Ok(json!({"calls": self.call_log.list(before, limit)})))
+            }
+            "call.history_delete" => {
+                let all = a.get("all").and_then(Value::as_bool).unwrap_or(false);
+                let ids: Option<Vec<u64>> = a
+                    .get("ids")
+                    .and_then(Value::as_array)
+                    .map(|v| v.iter().filter_map(store::parse_call_id).collect());
+                if !all && ids.is_none() {
+                    return bad("ids or all=true is required");
+                }
+                let mut removed = Vec::new();
+                self.call_log.records.retain(|r| {
+                    let gone = all || ids.as_ref().is_some_and(|i| i.contains(&r.id));
+                    if gone {
+                        removed.push(json!(format!("c{}", r.id)));
+                    }
+                    !gone
+                });
+                if let Err(e) = self.call_log.save() {
+                    return Some(Err(("internal", format!("cannot save: {e}"))));
+                }
+                if !removed.is_empty() {
+                    self.broadcast(json!({"event": "call_history_changed", "ids": removed}));
+                }
+                Some(Ok(json!({"count": removed.len()})))
             }
             "call.audio" => {
                 if let Some(on) = a.get("speaker").and_then(Value::as_bool) {
