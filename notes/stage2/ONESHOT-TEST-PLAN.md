@@ -135,3 +135,16 @@ installed".
 
 Open question for the next step: **does a kernel panic during a recovery boot
 return to BOOT?** The round trip only proved that a *clean* exit returns.
+
+## CORRECTION (2026-10-26): `adb reboot recovery` is NOT a BCB-free one-shot
+The round-trip above proved recovery SELECTION returns to BOOT after a *clean*
+exit, but it used `adb reboot recovery`, which goes through Android init's
+DoReboot and writes `boot-recovery` into the misc BCB
+(`system/core/init/reboot.cpp:1072`). That command sticks until recovery clears
+it; my "BCB all-zero" reading was taken AFTER stock recovery had cleared it on
+"Reboot system now". A failed custom recovery that never clears it loops (the
+July 2026 v4 soft-brick). So the canary and all future recovery tests enter via
+a raw `reboot(2)` "recovery" (`reboot-recovery` tool), which the Samsung kernel
+records only in a one-shot PMU reason register and which writes NO BCB. We
+assert the BCB is all-zero before entry and first after return. Full procedure
+and the hands-only escape are in `CANARY-RUNBOOK.md`.
