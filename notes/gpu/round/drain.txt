@@ -8,3 +8,13 @@ RESULT gpu-planes-switcher-scroll-loop avg_mA=273 samples=12 range_mA=254..301 c
 RESULT sw-home-idle avg_mA=220 samples=12 range_mA=208..262 cpu_busy_pct=1 voltage_mV=4412 cap=100
 RESULT sw-switcher-scroll-loop avg_mA=443 samples=12 range_mA=396..523 cpu_busy_pct=15 voltage_mV=4396 cap=100
 RESULT sw-screen-off avg_mA=37 samples=12 range_mA=23..77 cpu_busy_pct=1 voltage_mV=4417 cap=100
+
+# Screen-off investigation (after the merge). Before: GPU mode 46 mA vs software 37 mA (60 s
+# windows). Over 30 s of screen-off in GPU mode, the session keeper (a shell polling the
+# compositor every second) used 18 CPU ticks and the phone forked 484 processes (16/s); Xorg,
+# Moon and the compositor used none; Mali was runtime-suspended, GPU clock 0, floor released.
+# Fixed: the keeper waits for the compositor as its child, the compositor guards itself with
+# alarm(), the supervisor's fallback watch wakes every 5 s. After: 115 forks in 30 s.
+RESULT gpu-screen-off-fixed-long avg_mA=36 samples=30 range_mA=20..79 cpu_busy_pct=1 voltage_mV=4431 cap=100
+RESULT gpu-screen-off-fixed-long-2 avg_mA=36 samples=30 range_mA=19..79 cpu_busy_pct=1 voltage_mV=4429 cap=100
+RESULT sw-screen-off-long avg_mA=40 samples=30 range_mA=19..89 cpu_busy_pct=1 voltage_mV=4428 cap=100

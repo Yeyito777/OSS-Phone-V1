@@ -6,7 +6,8 @@
 #   moon-gpu-session.sh start   from a26-xorg-takeover.sh, with card0 free:
 #                               exit 0 = GPU mode (start Xorg with --gpu),
 #                               anything else = the software path
-#   moon-gpu-session.sh keep    (internal) restarts a dead compositor; after
+#   moon-gpu-session.sh keep    (internal) runs the compositor and waits
+#                               for it; restarts it when it exits, and after
 #                               repeated failures falls back to the software
 #                               path in place
 #   moon-gpu-session.sh stop    before Android takes the display back
@@ -41,20 +42,6 @@ live_pid() {
 # GPU_FLOOR_KHZ (config): the GPU clock floor while frames flow.
 floor="$(sed -n 's/^GPU_FLOOR_KHZ=\([0-9]*\)$/\1/p' "$CONFIG" 2>/dev/null | tail -1)"
 
-start_compositor() {
-    rm -f "$RUN/ready"
-    "$BB" nohup "$BB" setsid "$BIN" --socket "$RUN/compositor.sock" \
-        --ready-file "$RUN/ready" ${floor:+--gpu-floor "$floor"} \
-        >>"$RUN/compositor.log" 2>&1 </dev/null &
-    echo $! >"$RUN/compositor.pid"
-    for _ in $("$BB" seq 1 40); do
-        [ -e "$RUN/ready" ] && return 0
-        live_pid "$RUN/compositor.pid" moon-compositor >/dev/null || return 1
-        "$BB" sleep 0.1
-    done
-    return 1
-}
-
 stop_compositor() {
     pid="$(live_pid "$RUN/compositor.pid" moon-compositor)" || {
         rm -f "$RUN/compositor.pid" "$RUN/ready"
@@ -71,6 +58,10 @@ stop_compositor() {
 
 case "${1:-}" in
 start)
+    # Whatever happens next, nothing from an earlier boot may claim GPU mode
+    # (the supervisor gives Moon the compositor's socket only while `active`
+    # names this boot).
+    rm -f "$RUN/active" "$RUN/fallback" "$RUN/ready"
     grep -q '^GPU_COMPOSITOR=1' "$CONFIG" 2>/dev/null || exit 1
     if [ ! -x "$BIN" ]; then
         log "enabled but $BIN is missing; software path"
@@ -86,48 +77,52 @@ start)
         log "failed earlier this boot; software path"
         exit 1
     fi
-    rm -f "$RUN/active" "$RUN/fallback"
     : >"$RUN/compositor.log"
-    if ! start_compositor; then
-        log "compositor did not become ready; software path"
-        tail -5 "$RUN/compositor.log" >>"$LOG" 2>/dev/null
-        stop_compositor
-        echo "$boot_id" >"$RUN/failed-boot"
-        exit 1
-    fi
-    : >"$RUN/active"
-    log "compositor ready pid=$(cat "$RUN/compositor.pid")"
+    echo "$boot_id" >"$RUN/active"
+    # The keeper runs the compositor as its child, so it can simply wait
+    # for it: nothing polls while the phone idles.
     "$BB" nohup "$BB" setsid /system/bin/sh "$0" keep >/dev/null 2>&1 </dev/null &
     echo $! >"$RUN/keeper.pid"
-    exit 0
+    for _ in $("$BB" seq 1 40); do
+        if [ -e "$RUN/ready" ]; then
+            log "compositor ready pid=$(cat "$RUN/compositor.pid" 2>/dev/null)"
+            exit 0
+        fi
+        [ -e "$RUN/active" ] || break
+        "$BB" sleep 0.1
+    done
+    log "compositor did not become ready; software path"
+    tail -5 "$RUN/compositor.log" >>"$LOG" 2>/dev/null
+    rm -f "$RUN/active"
+    stop_compositor
+    echo "$boot_id" >"$RUN/failed-boot"
+    exit 1
     ;;
 keep)
     restarts=0
     while [ -e "$RUN/active" ]; do
-        "$BB" sleep 1
+        rm -f "$RUN/ready"
+        "$BIN" --socket "$RUN/compositor.sock" --ready-file "$RUN/ready" \
+            ${floor:+--gpu-floor "$floor"} >>"$RUN/compositor.log" 2>&1 </dev/null &
+        pid=$!
+        echo "$pid" >"$RUN/compositor.pid"
+        # The compositor watches itself: it exits if its loop stops turning
+        # (a GPU or display hang) or the display stops flipping.
+        wait "$pid"
+        status=$?
         [ -e "$RUN/active" ] || break
-        if pid="$(live_pid "$RUN/compositor.pid" moon-compositor)"; then
-            # Alive but its loop stopped (a GPU or display hang): kill it,
-            # which the next pass treats as an exit.
-            age=$(( $("$BB" date +%s) - $("$BB" stat -c %Y "$RUN/compositor.sock.alive" 2>/dev/null || "$BB" date +%s) ))
-            if [ "$age" -gt 10 ]; then
-                log "compositor stopped answering for ${age}s; killing it"
-                kill -KILL "$pid" 2>/dev/null
-            fi
-            continue
-        fi
         restarts=$((restarts + 1))
-        log "compositor exited ($restarts/$MAX_RESTARTS): $(tail -1 "$RUN/compositor.log" 2>/dev/null)"
-        if [ "$restarts" -le "$MAX_RESTARTS" ] && start_compositor; then
+        log "compositor exited with $status ($restarts/$MAX_RESTARTS): $(tail -1 "$RUN/compositor.log" 2>/dev/null)"
+        if [ "$restarts" -le "$MAX_RESTARTS" ]; then
             # Moon reconnects by itself and re-sends its layers.
-            log "compositor restarted pid=$(cat "$RUN/compositor.pid")"
+            log "restarting the compositor"
             continue
         fi
         # Fall back in place: Xorg leaves its headless session, the takeover
         # starts it again on the panel, and the supervisor restarts Moon on
         # the software path. Wi-Fi and audio are left running.
         log "giving up on GPU mode for this boot; software path"
-        stop_compositor
+        rm -f "$RUN/compositor.pid" "$RUN/ready"
         echo "$boot_id" >"$RUN/failed-boot"
         rm -f "$RUN/active"
         : >"$RUN/fallback"
