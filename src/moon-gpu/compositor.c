@@ -20,7 +20,9 @@
  *                   [--ready-file PATH] [--gpu-floor KHZ] [--cpu]
  *                   [--no-planes] [--threads N]
  *
- * MOON_GPU_PROFILE=1 logs every flip. Exits on SIGTERM.
+ * MOON_GPU_PROFILE=1 logs every flip. SIGUSR1 writes the current frame,
+ * drawn by the GPU or CPU tier whatever path shows it, to shot.ppm next to
+ * the socket. Exits on SIGTERM.
  */
 #define _GNU_SOURCE
 #include "cpu.h"
@@ -54,10 +56,12 @@
 /* A flip that has not completed after this long is presumed lost. */
 #define FLIP_TIMEOUT_NS 250000000ull
 
-static volatile sig_atomic_t quit;
+static volatile sig_atomic_t quit, shot;
 static void on_signal(int s) {
-    (void)s;
-    quit = 1;
+    if (s == SIGUSR1)
+        shot = 1;
+    else
+        quit = 1;
 }
 
 static uint64_t now_ns(void) {
@@ -940,6 +944,53 @@ static void power(struct comp *c, int on) {
     send_msg(c, MG_POWERED, &reply, sizeof reply, -1);
 }
 
+/* Draws the current frame into a spare output buffer and writes it out
+ * (debugging: the planes path has no composed image to read back). */
+static void write_shot(struct comp *c, const char *path) {
+    if (!c->cur_valid)
+        return;
+    wait_flip(c);
+    int buf = c->next_buf; /* not on screen and not in flight */
+    int fence = draw(c, buf);
+    if (fence >= 0) {
+        struct pollfd p = {.fd = fence, .events = POLLIN};
+        poll(&p, 1, 500);
+        close(fence);
+    }
+    size_t len = (size_t)c->pitch * c->height;
+    uint8_t *m = c->out[buf].map;
+    int mapped = 0;
+    if (!m) {
+        m = mmap(NULL, len, PROT_READ, MAP_SHARED, c->out[buf].fd, 0);
+        if (m == MAP_FAILED)
+            return;
+        mapped = 1;
+    }
+    dmabuf_sync(c->out[buf].fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ);
+    FILE *f = fopen(path, "wb");
+    if (f) {
+        fprintf(f, "P6 %d %d 255\n", c->width, c->height);
+        uint8_t *row = malloc((size_t)c->width * 3);
+        for (int y = 0; y < c->height && row; y++) {
+            const uint8_t *s = m + (size_t)y * c->pitch;
+            for (int x = 0; x < c->width; x++) {
+                /* GPU output is RGBA bytes, CPU output 0xAARRGGBB (BGRA). */
+                int gpu = c->tier == TIER_GPU;
+                row[x * 3 + 0] = s[x * 4 + (gpu ? 0 : 2)];
+                row[x * 3 + 1] = s[x * 4 + 1];
+                row[x * 3 + 2] = s[x * 4 + (gpu ? 2 : 0)];
+            }
+            fwrite(row, 1, (size_t)c->width * 3, f);
+        }
+        free(row);
+        fclose(f);
+        LOG("shot: frame %u written to %s", c->cur.serial, path);
+    }
+    dmabuf_sync(c->out[buf].fd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ);
+    if (mapped)
+        munmap(m, len);
+}
+
 /* ---- setup ---- */
 
 static int outputs_init(struct comp *c) {
@@ -1032,6 +1083,7 @@ int main(int argc, char **argv) {
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGUSR1, on_signal);
 
     static struct comp c;
     c.client_fd = c.listen_fd = c.flight_fence = c.floor_fd = -1;
@@ -1152,6 +1204,15 @@ int main(int argc, char **argv) {
         if (c.client_fd >= 0 && n > 0 && (p[2].revents & (POLLIN | POLLHUP | POLLERR)))
             read_client(&c);
         maybe_submit(&c);
+        if (shot) {
+            shot = 0;
+            char path[256];
+            snprintf(path, sizeof path, "%s", socket_path);
+            char *slash = strrchr(path, '/');
+            snprintf(slash ? slash + 1 : path, sizeof path - (size_t)(slash ? slash + 1 - path : 0),
+                     "shot.ppm");
+            write_shot(&c, path);
+        }
         /* Release the clock floor once frames stop. */
         if (c.floored && !c.flip_pending && now_ns() - c.last_submit_ns > 150000000ull)
             set_floor(&c, 0);
