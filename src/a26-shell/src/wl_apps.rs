@@ -126,6 +126,8 @@ pub struct WaylandApps {
     direct_dirty: bool,
     /// Moon's overlay windows over the app: (rectangle, corner radius).
     overlays: Vec<(RectF, f32)>,
+    /// Buffers the compositor could not show (v4 MG_SURFACE_FAILED).
+    unshareable: std::collections::HashSet<ObjectId>,
 }
 
 impl WaylandApps {
@@ -179,6 +181,7 @@ impl WaylandApps {
             shown: HashMap::new(),
             direct_dirty: false,
             overlays: Vec::new(),
+            unshareable: std::collections::HashSet::new(),
         })
     }
 
@@ -640,6 +643,26 @@ impl WaylandApps {
         let Some(gpu) = gpu else {
             return;
         };
+        // Surfaces the compositor gave up on: their apps go back to X.
+        for failed in gpu.take_failed() {
+            let buffers: Vec<ObjectId> = self
+                .client_surfaces
+                .iter()
+                .filter(|(_, (_, surface))| *surface == failed)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in buffers {
+                self.client_surfaces.remove(&id);
+                self.unshareable.insert(id);
+            }
+            self.direct_dirty = true;
+        }
+        self.unshareable.retain(|id| {
+            self.proxies
+                .values()
+                .any(|p| p.current.as_ref().is_some_and(|(b, _)| &b.id() == id))
+                || self.client_surfaces.contains_key(id)
+        });
         let presented = gpu.presented_serial();
         let mut index = 0;
         while index < self.presenting.len() {
@@ -758,7 +781,11 @@ impl WaylandApps {
                 self.proxies.get(member).is_none_or(|p| {
                     // A first buffer still on its way has no `current` yet;
                     // `share` checks every buffer as it is shown.
-                    !p.has_content || p.current.as_ref().is_none_or(|(_, shm)| shm.pool.sealed)
+                    !p.has_content
+                        || p.current.as_ref().is_none_or(|(buffer, shm)| {
+                            (shm.pool.sealed || gpu.guards_foreign_memory())
+                                && !self.unshareable.contains(&buffer.id())
+                        })
                 })
             })
     }
@@ -773,7 +800,11 @@ impl WaylandApps {
         shm: &Arc<ShmBuffer>,
         rects: &[wayland::Rect],
     ) -> bool {
-        if !shm.pool.sealed {
+        // A pool that may shrink is mapped by the compositor only when it
+        // guards such memory (v4); a buffer it gave up on stays on X.
+        if (!shm.pool.sealed && !gpu.guards_foreign_memory())
+            || self.unshareable.contains(&buffer.id())
+        {
             return false;
         }
         let surface = match self.client_surfaces.get(&buffer.id()) {

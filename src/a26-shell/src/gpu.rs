@@ -52,6 +52,17 @@ use crate::present::Damage;
 /// own. Timeouts and connect errors are plain failures, retried at the top.
 const PROTO_VERSION: u32 = 3;
 const PROTO_MIN_VERSION: u32 = 2;
+/// The newest version Moon can speak; MOON_GPU_PROTO may offer it (v4 is
+/// not deployed everywhere yet, so it is not the default).
+const PROTO_MAX_KNOWN: u32 = 4;
+
+fn offered_version() -> u32 {
+    std::env::var("MOON_GPU_PROTO")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|version| (PROTO_MIN_VERSION..=PROTO_MAX_KNOWN).contains(version))
+        .unwrap_or(PROTO_VERSION)
+}
 /// Wayland client surfaces need offsets (v3 and later).
 const CLIENT_SURFACE_VERSION: u32 = 3;
 const MIRROR_ID: u32 = u32::MAX;
@@ -77,6 +88,12 @@ const NODE_FILL: u32 = 2;
 const NODE_SMOOTH: u32 = 1;
 const FRAME_HAS_BASE: u32 = 1;
 const SURFACE_DMABUF: u32 = 1;
+/// v4: memory that is not Moon's own and may shrink (a client's pool).
+const SURFACE_FOREIGN: u32 = 2;
+/// Client memory that may shrink needs v4 (the compositor guards it).
+const FOREIGN_VERSION: u32 = 4;
+const MSG_SURFACE_IDLE: u16 = 69;
+const MSG_SURFACE_FAILED: u16 = 70;
 const CAP_GPU: u32 = 1;
 const CAP_PLANES: u32 = 2;
 /// Corner radius baked into switcher card copies (see `prescale`).
@@ -551,6 +568,8 @@ pub struct GpuBackend {
     direct: Vec<Direct>,
     /// The newest frame serial the compositor reported on screen.
     presented_serial: u32,
+    /// Surfaces the compositor reported failed (v4), for the Wayland side.
+    failed: Vec<SurfaceId>,
 }
 
 impl GpuBackend {
@@ -616,9 +635,10 @@ impl GpuBackend {
             cards: Vec::new(),
             profile,
             buffer: vec![0; MAX_PACKET],
-            version: PROTO_VERSION,
+            version: offered_version(),
             direct: Vec::new(),
             presented_serial: 0,
+            failed: Vec::new(),
         };
         // The compositor starts before Moon; allow it a moment if not.
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -642,7 +662,8 @@ impl GpuBackend {
     /// a new socket inode means a new compositor, asked again).
     fn handshake<C: Connection>(&mut self, conn: &C, wait: Duration) -> Result<(), Box<dyn Error>> {
         let path = self.link.borrow().path.clone();
-        let mut version = PROTO_VERSION;
+        let top = offered_version();
+        let mut version = top;
         let mut refusals = 0;
         // A restarting compositor is asked again, but not forever.
         let mut new_compositors = 0;
@@ -650,7 +671,7 @@ impl GpuBackend {
             let inode = socket_inode(&path);
             match self.handshake_version(conn, wait, version) {
                 Ok(()) => {
-                    if version != self.version || version < PROTO_VERSION {
+                    if version != self.version || version < top {
                         eprintln!("gpu: protocol v{version}");
                     }
                     if version < CLIENT_SURFACE_VERSION {
@@ -1209,7 +1230,17 @@ impl GpuBackend {
                         eprintln!("gpu: mirror: {error}");
                     }
                 }
-                MSG_UPLOADED | MSG_POWERED | MSG_WELCOME => {}
+                MSG_SURFACE_FAILED => {
+                    // v4: the surface is gone (bad memory, a fault); frames
+                    // skip it. Client surfaces return their app to X.
+                    let wire_id = le_u32(msg, 8);
+                    if wire_id > 0 {
+                        let id = SurfaceId(wire_id as usize - 1);
+                        eprintln!("gpu: surface {wire_id} failed (reason {})", le_u32(msg, 12));
+                        self.failed.push(id);
+                    }
+                }
+                MSG_UPLOADED | MSG_POWERED | MSG_WELCOME | MSG_SURFACE_IDLE => {}
                 other => eprintln!("gpu: unexpected message {other}"),
             }
         }
@@ -1434,7 +1465,11 @@ impl GpuBackend {
             .u32(*height)
             .u32(*stride)
             .u32(if *argb { FORMAT_ARGB } else { FORMAT_XRGB })
-            .u32(0)
+            .u32(if self.version >= FOREIGN_VERSION {
+                SURFACE_FOREIGN
+            } else {
+                0
+            })
             .u32(*offset);
         let raw = fd.as_raw_fd();
         let all = [Damage {
@@ -1475,6 +1510,17 @@ impl GpuBackend {
 
     pub fn presented_serial(&self) -> u32 {
         self.presented_serial
+    }
+
+    /// Whether the compositor guards client memory that may shrink (v4):
+    /// then unsealed pools can be shown directly too.
+    pub fn guards_foreign_memory(&self) -> bool {
+        self.version >= FOREIGN_VERSION
+    }
+
+    /// Client surfaces the compositor gave up on since the last call.
+    pub fn take_failed(&mut self) -> Vec<SurfaceId> {
+        std::mem::take(&mut self.failed)
     }
 
     fn full_rect(&self) -> RectF {
