@@ -113,6 +113,10 @@ fi
 if [ -d /data/local/tmp/moon-suspend ]; then
     bind_mount /data/local/tmp/moon-suspend "$A26_ROOT/run/moon-suspend"
 fi
+# moon-telephonyd runs on the Android side (it talks to rild over hwbinder and
+# execs the bionic call-audio helper); its socket lives in here.
+$BB mkdir -p /data/local/tmp/moon-telephony
+bind_mount /data/local/tmp/moon-telephony "$A26_ROOT/run/moon-telephony"
 # GPU mode: moon-compositor (Android side) listens on a socket in here.
 if [ -d /data/local/tmp/moon-gpu ]; then
     bind_mount /data/local/tmp/moon-gpu "$A26_ROOT/run/moon-gpu"
