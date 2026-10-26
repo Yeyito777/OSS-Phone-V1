@@ -990,6 +990,140 @@ pub mod args {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binder::testing::Received;
+
+    fn incoming(objects: &[Role], object: u64, code: u32, parcel: &Parcel) -> Vec<Event> {
+        let received = Received::new(parcel);
+        let mut data = received.reader();
+        let interface = data.cstring().unwrap();
+        let mut events = VecDeque::new();
+        on_incoming(
+            objects,
+            &mut events,
+            Incoming {
+                object,
+                code,
+                interface,
+                data,
+            },
+        );
+        events.into()
+    }
+
+    fn info(p: &mut Parcel, kind: i32, serial: i32, error: i32) {
+        let mut b = Blob::new(12);
+        b.i32(0, kind).i32(4, serial).i32(8, error);
+        p.write_blob(b);
+    }
+
+    #[test]
+    fn decodes_card_status_responses() {
+        let mut p = Parcel::request(IRADIO_RESPONSE);
+        info(&mut p, 2, 42, 0);
+        let mut card = Blob::new(40);
+        card.i32(0, 1).i32(8, 0).i32(12, -1).i32(16, -1);
+        card.vec(
+            24,
+            1,
+            Blob::array(1, 64, |b, off, _| {
+                b.i32(off, 2)
+                    .i32(off + 4, 2)
+                    .string(off + 16, "A0000000871002")
+                    .string(off + 32, "USIM")
+                    .i32(off + 52, 1);
+            }),
+        );
+        p.write_blob(card);
+        let events = incoming(&[Role::Response(0)], 1, resp::GET_ICC_CARD_STATUS, &p);
+        let Event::Response {
+            serial: 42,
+            error: 0,
+            body: Response::CardStatus(card),
+            ..
+        } = &events[0]
+        else {
+            panic!("{events:?}")
+        };
+        assert_eq!(card.card_state, 1);
+        let app = card.gsm_app().unwrap();
+        assert_eq!(
+            (app.app_type, app.app_state, app.aid.as_str()),
+            (2, 2, "A0000000871002")
+        );
+        // SOLICITED_ACK_EXP asks for responseAcknowledgement.
+        assert_eq!(events[1], Event::AckWanted { slot: 0 });
+    }
+
+    #[test]
+    fn decodes_new_sms_indications() {
+        let mut p = Parcel::request(IRADIO_INDICATION);
+        p.write_i32(1);
+        let mut v = Blob::new(16);
+        v.vec(0, 3, Blob::from_bytes(vec![7, 8, 9]));
+        p.write_blob(v);
+        let events = incoming(
+            &[Role::Response(1), Role::Indication(1)],
+            2,
+            ind::NEW_SMS,
+            &p,
+        );
+        assert_eq!(
+            events[0],
+            Event::Indication {
+                slot: 1,
+                indication: Indication::NewSms(vec![7, 8, 9])
+            }
+        );
+        assert_eq!(events[1], Event::AckWanted { slot: 1 });
+    }
+
+    #[test]
+    fn decodes_registration_with_lte_cell() {
+        let mut p = Parcel::request(IRADIO_RESPONSE);
+        info(&mut p, 0, 5, 0);
+        let mut reg = Blob::new(120);
+        reg.i32(0, 1).i32(4, 14).i32(24, 0);
+        // CellIdentity at 32: type 3 (LTE), lte vector at 32 + 56.
+        reg.i32(32, 3);
+        for off in [40, 56, 72, 104] {
+            reg.vec(off, 0, Blob::new(0));
+        }
+        reg.vec(
+            88,
+            1,
+            Blob::array(1, 48, |b, o, _| {
+                b.string(o, "302")
+                    .string(o + 16, "490")
+                    .i32(o + 32, 123456)
+                    .i32(o + 40, 77);
+            }),
+        );
+        p.write_blob(reg);
+        let events = incoming(
+            &[Role::Response(0)],
+            1,
+            resp::GET_VOICE_REGISTRATION_STATE,
+            &p,
+        );
+        let Event::Response {
+            body: Response::Registration(r),
+            ..
+        } = &events[0]
+        else {
+            panic!()
+        };
+        assert!(r.registered());
+        assert_eq!(r.rat, 14);
+        assert_eq!(
+            r.cell,
+            Some(Cell {
+                mcc: "302".into(),
+                mnc: "490".into(),
+                area: 77,
+                id: 123456
+            })
+        );
+    }
 
     #[test]
     fn signal_levels_follow_android_defaults() {
