@@ -1363,7 +1363,7 @@ impl Daemon {
                     Err(e) => self.radio_failed(slot, e),
                 }
             }
-            DataState::Connected if !self.data_wanted() && !self.settings.data_enabled => {
+            DataState::Connected if !self.settings.data_enabled || self.settings.airplane => {
                 let cid = self.data.call.as_ref().map_or(0, |c| c.cid);
                 match self.radio.request(slot, req::DEACTIVATE_DATA_CALL, |p| {
                     p.write_i32(cid);
