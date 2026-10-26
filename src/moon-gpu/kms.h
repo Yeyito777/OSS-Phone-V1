@@ -34,6 +34,10 @@ struct kms {
     uint32_t conn_crtc_prop;
     struct kms_plane planes[KMS_MAX_PLANES];
     int nplanes, primary, nscalers;
+    /* The writeback connector and the CRTC it hangs off (0 if absent):
+     * a readback of what the display planes compose (kms_writeback). */
+    uint32_t wb_conn, wb_crtc, wb_conn_crtc, wb_fb_prop, wb_fence_prop;
+    uint32_t wb_crtc_active, wb_crtc_mode;
 };
 
 /* One plane's worth of a frame, bottom first. Coordinates in pixels; the
@@ -96,6 +100,15 @@ int kms_commit_blocking(struct kms *k, uint32_t fb);
 /* Turns the CRTC off (ACTIVE=0, keeping the mode, like DPMS off), or on
  * with `fb` full screen. */
 int kms_set_active(struct kms *k, int active, uint32_t fb);
+
+/* Composes `layers` (planes assigned, none in use on the panel's CRTC) on
+ * the writeback CRTC into `fb` and waits for it: what the display hardware
+ * makes of them, for verification. Returns 0 or -errno. */
+int kms_writeback(struct kms *k, const struct kms_layer *layers, int n,
+                  uint32_t fb);
+/* kms_assign, avoiding the planes in `busy` (a bit per plane index). */
+int kms_assign_except(struct kms *k, struct kms_layer *layers, int n,
+                      unsigned busy);
 
 /* Waits up to timeout_ms for a flip event. 1 got one, 0 timeout, <0 error. */
 int kms_wait_flip(struct kms *k, int timeout_ms, struct kms_flip *out);

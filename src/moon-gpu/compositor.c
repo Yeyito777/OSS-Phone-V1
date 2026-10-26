@@ -20,6 +20,10 @@
  *                   [--ready-file PATH] [--gpu-floor KHZ] [--cpu]
  *                   [--no-planes] [--threads N]
  *
+ * SIGHUP turns the planes tier off or on. SIGWINCH writes what the display
+ * planes make of the current frame (planes off: the composed frame through
+ * a spare plane), read back through the writeback connector, to wb.ppm next
+ * to the socket (the panel itself cannot be read).
  * MOON_GPU_PROFILE=1 (or SIGUSR2, a toggle) logs every flip, and a count of
  * flips by path every 10 s. SIGUSR1 writes the current frame,
  * drawn by the GPU or CPU tier whatever path shows it, to shot.ppm next to
@@ -61,12 +65,16 @@
 #define IDLE_WAKE_MS 20000
 #define WATCHDOG_S 60
 
-static volatile sig_atomic_t quit, shot, toggle_profile;
+static volatile sig_atomic_t quit, shot, toggle_profile, toggle_planes, wb_shot;
 static void on_signal(int s) {
     if (s == SIGUSR1)
         shot = 1;
     else if (s == SIGUSR2)
         toggle_profile = 1;
+    else if (s == SIGHUP)
+        toggle_planes = 1;
+    else if (s == SIGWINCH)
+        wb_shot = 1;
     else
         quit = 1;
 }
@@ -164,6 +172,7 @@ struct comp {
     uint64_t path_counts[4];
     const char *flight_miss;
     uint32_t client_version;
+    unsigned busy_planes; /* plane indexes the panel's last commit used */
 };
 
 static void dmabuf_sync(int fd, uint64_t flags) {
@@ -882,8 +891,11 @@ static void submit(struct comp *c, uint32_t serial) {
                     layers[i].premultiplied ? " premultiplied" : "");
         }
     }
-    else if (n > 0)
-        r = commit_retry(c, layers, n, tag);
+    else if (n > 0 && !(r = commit_retry(c, layers, n, tag))) {
+        c->busy_planes = 0;
+        for (int i = 0; i < n; i++)
+            c->busy_planes |= 1u << layers[i].plane;
+    }
     else if (!n)
         plane_miss = "nothing visible";
     c->flight_miss = plane_miss;
@@ -896,8 +908,10 @@ static void submit(struct comp *c, uint32_t serial) {
                               .dh = c->height, .alpha = 0xffff,
                               .in_fence = fence, .plane = c->k.primary};
         r = commit_retry(c, &l, 1, tag);
-        if (!r)
+        if (!r) {
             c->next_buf = (buf + 1) % NBUF;
+            c->busy_planes = 1u << c->k.primary;
+        }
     }
     if (r) {
         LOG("commit: %s", strerror(-r));
@@ -1079,6 +1093,73 @@ static void write_shot(struct comp *c, const char *path) {
         munmap(m, len);
 }
 
+/* Composes the current frame on spare planes of the writeback CRTC, as the
+ * planes path would show it, and writes the result out (debugging: the
+ * panel's own output cannot be read back). */
+static void write_wb(struct comp *c, const char *path) {
+    if (!c->cur_valid || !c->k.wb_conn) {
+        LOG("writeback: %s", c->k.wb_conn ? "no frame" : "no writeback connector");
+        return;
+    }
+    wait_flip(c);
+    struct kms_layer layers[KMS_MAX_PLANES];
+    plane_miss = NULL;
+    int n;
+    if (c->planes)
+        n = plan_planes(c, layers);
+    else { /* the composed frame on the panel, through another DPP */
+        n = 1;
+        layers[0] = (struct kms_layer){.fb = c->out[(c->next_buf + NBUF - 1) % NBUF].fb,
+                                       .sw = (float)c->width, .sh = (float)c->height,
+                                       .dw = c->width, .dh = c->height,
+                                       .alpha = 0xffff, .in_fence = -1};
+    }
+    if (n <= 0 || kms_assign_except(&c->k, layers, n, c->busy_planes)) {
+        LOG("writeback: the frame does not fit the spare planes (%s)",
+            plane_miss ? plane_miss : "plane count");
+        return;
+    }
+    size_t len = (size_t)c->pitch * c->height;
+    int fd = gpu_dmabuf_alloc("system", len);
+    uint32_t fb = 0;
+    if (fd < 0 || kms_add_fb(&c->k, fd, (uint32_t)c->width, (uint32_t)c->height,
+                             (uint32_t)c->pitch, DRM_FORMAT_ABGR8888, &fb)) {
+        LOG("writeback: no output buffer");
+        if (fd >= 0)
+            close(fd);
+        return;
+    }
+    char planes[64] = "";
+    for (int i = 0; i < n; i++)
+        snprintf(planes + strlen(planes), sizeof planes - strlen(planes), " %u",
+                 c->k.planes[layers[i].plane].id);
+    int r = kms_writeback(&c->k, layers, n, fb);
+    LOG("writeback of %d layers on planes%s: %s", n, planes, r ? strerror(-r) : "ok");
+    if (!r) {
+        uint8_t *m = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
+        FILE *f = m != MAP_FAILED ? fopen(path, "wb") : NULL;
+        if (f) {
+            dmabuf_sync(fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ);
+            fprintf(f, "P6 %d %d 255\n", c->width, c->height);
+            uint8_t *row = malloc((size_t)c->width * 3);
+            for (int y = 0; y < c->height && row; y++) {
+                const uint8_t *s = m + (size_t)y * c->pitch;
+                for (int x = 0; x < c->width; x++)
+                    memcpy(row + x * 3, s + x * 4, 3); /* ABGR8888: R, G, B bytes */
+                fwrite(row, 1, (size_t)c->width * 3, f);
+            }
+            free(row);
+            fclose(f);
+            dmabuf_sync(fd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ);
+            LOG("writeback: written to %s", path);
+        }
+        if (m != MAP_FAILED)
+            munmap(m, len);
+    }
+    kms_rm_fb(&c->k, fb);
+    close(fd);
+}
+
 /* ---- setup ---- */
 
 static int outputs_init(struct comp *c) {
@@ -1173,6 +1254,8 @@ int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN);
     signal(SIGUSR1, on_signal);
     signal(SIGUSR2, on_signal);
+    signal(SIGHUP, on_signal);
+    signal(SIGWINCH, on_signal);
 
     static struct comp c;
     c.client_fd = c.listen_fd = c.flight_fence = c.floor_fd = -1;
@@ -1306,6 +1389,21 @@ int main(int argc, char **argv) {
         if (c.client_fd >= 0 && n > 0 && (p[2].revents & (POLLIN | POLLHUP | POLLERR)))
             read_client(&c);
         maybe_submit(&c);
+        if (toggle_planes) {
+            toggle_planes = 0;
+            c.planes = !c.planes;
+            c.dirty = c.cur_valid;
+            LOG("planes %s", c.planes ? "on" : "off");
+        }
+        if (wb_shot) {
+            wb_shot = 0;
+            char path[256];
+            snprintf(path, sizeof path, "%s", socket_path);
+            char *slash = strrchr(path, '/');
+            snprintf(slash ? slash + 1 : path,
+                     sizeof path - (size_t)(slash ? slash + 1 - path : 0), "wb.ppm");
+            write_wb(&c, path);
+        }
         if (toggle_profile) {
             toggle_profile = 0;
             c.profile = !c.profile;

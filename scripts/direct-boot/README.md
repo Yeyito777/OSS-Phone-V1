@@ -99,7 +99,8 @@ including the 240 s deadline and three consecutive failures.
 * `scripts/gpu/install.sh --disable|--enable`: `GPU_COMPOSITOR=0|1` in
   `/data/adb/moon/config`; GPU mode is the default. A compositor that dies is
   restarted twice per boot, then the session returns to Xorg on the panel in
-  place (`notes/gpu/DESIGN.md`).
+  place (`notes/gpu/DESIGN.md`). `--no-planes|--planes`: `GPU_PLANES=0`
+  (or not), the GPU composes every frame without display planes.
 * `/data/adb/moon/config`: `DIRECT_BOOT=0` returns to the legacy post-boot
   takeover without reflashing; `DIRECT_OVERRIDE_SECONDS`, `AUDIO_STREAM_INDEX`.
 * Without the flashed ramdisk, everything here is inert and the Magisk

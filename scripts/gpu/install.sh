@@ -3,9 +3,11 @@
 # moon-compositor, its session script, the session scripts that know about
 # it, Xorg's headless (dummy driver) configuration and the dummy driver
 # itself. GPU mode is the default (install-autostart.sh runs this):
-#   scripts/gpu/install.sh [--enable | --disable]
+#   scripts/gpu/install.sh [--enable | --disable | --no-planes | --planes]
 # --disable only writes GPU_COMPOSITOR=0 (the opt-out); --enable or a plain
-# install clears it. Takes effect at the next boot. The software path is
+# install clears it. --no-planes only writes GPU_PLANES=0 (the GPU composes
+# every frame, no display planes for Moon's buffers); --planes clears it.
+# Takes effect at the next boot. The software path is
 # untouched and remains the automatic fallback.
 set -euo pipefail
 
@@ -13,7 +15,10 @@ PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$PROJECT_ROOT/scripts/a26-shell/common.sh"
 SERIAL="$(a26_resolve_serial)"
 MODE="${1:-}"
-case "$MODE" in ''|--enable|--disable) ;; *) echo "usage: $0 [--enable|--disable]" >&2; exit 2 ;; esac
+case "$MODE" in
+''|--enable|--disable|--no-planes|--planes) ;;
+*) echo "usage: $0 [--enable|--disable|--no-planes|--planes]" >&2; exit 2 ;;
+esac
 
 su_sh() { adb -s "$SERIAL" shell su; }
 
@@ -24,6 +29,17 @@ echo "GPU_COMPOSITOR=0" >>/data/adb/moon/config
 grep GPU_COMPOSITOR /data/adb/moon/config
 EOF
     echo "GPU mode disabled from the next session start."
+    exit 0
+fi
+
+if [[ "$MODE" == --no-planes || "$MODE" == --planes ]]; then
+    su_sh <<EOF
+sed -i '/^GPU_PLANES=/d' /data/adb/moon/config
+[ "$MODE" = --planes ] || echo "GPU_PLANES=0" >>/data/adb/moon/config
+grep GPU_PLANES /data/adb/moon/config || echo "GPU_PLANES unset (planes on)"
+EOF
+    [[ "$MODE" == --planes ]] && state=on || state=off
+    echo "Display planes $state from the next compositor start."
     exit 0
 fi
 

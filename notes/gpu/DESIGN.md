@@ -230,6 +230,24 @@ Xorg, and nothing in the compositor has to change.
 - **A hung compositor** (alive, no flips) is not detected yet: Moon keeps
   running (its frame watchdog moves on after 250 ms) but the screen
   freezes. Moon could report it to the session script; not built.
+- **Display planes are off on the phone (2026-10-26).** With the lock
+  screen's notification list (a 1080x1280 ARGB layer at y=860, pitch 4352,
+  offset 0) on a plane, the panel showed garbage and kept doing so across
+  reboots while the GPU tier's own frame (SIGUSR1) was right. The DECON's
+  writeback connector (connector 115 on CRTC 121, `SIGWINCH` below) shows
+  why: every DPP tried (82, 89, 75, 61) fetches that buffer 27520 bytes
+  (6880 pixels) past its start, the same in a fresh compositor process and
+  with the text changing, while the CPU view of the same dmabuf is right.
+  The wallpaper, clock and status bar layers are read correctly, the same
+  frame without the notification is byte-exact through the planes, and the
+  GPU tier's composed frame through a DPP is byte-exact (each writeback
+  leaves the last 74880 bytes black, a writeback quirk seen on every path).
+  `underrun_cnt` and `err_event` (debugfs `crtc-0`) stay 0. Cause not found;
+  until it is, `GPU_PLANES=0` in the config (`scripts/gpu/install.sh
+  --no-planes`, `--planes` clears it) starts the compositor with
+  `--no-planes`. Debugging: `SIGHUP` toggles planes, `SIGWINCH` writes what
+  the planes path would show (or, planes off, the panel's frame through a
+  spare DPP) to `wb.ppm` beside the socket.
 - **Kernel hazards.** Every commit sets `HDR_FD=-1` on every plane it
   touches and a modeset `DQE_FD=-1` (see the panic below). The mode is never
   changed and the CRTC never disabled other than through `ACTIVE`.

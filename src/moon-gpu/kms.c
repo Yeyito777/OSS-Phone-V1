@@ -123,6 +123,9 @@ int kms_open(struct kms *k, const char *path, int want_hz) {
         fprintf(stderr, "kms: no atomic: %s\n", strerror(-r));
         goto fail;
     }
+    /* Optional: the writeback connector, for readback (kms_writeback). */
+    cap.capability = DRM_CLIENT_CAP_WRITEBACK_CONNECTORS;
+    xioctl(fd, DRM_IOCTL_SET_CLIENT_CAP, &cap);
 
     struct drm_mode_card_res res = {0};
     if ((r = xioctl(fd, DRM_IOCTL_MODE_GETRESOURCES, &res)))
@@ -148,8 +151,24 @@ int kms_open(struct kms *k, const char *path, int want_hz) {
         struct drm_mode_get_connector c = {.connector_id = conns[i]};
         if (xioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &c))
             continue;
-        if (c.connection != 1 || !c.count_modes ||
-            c.connector_type == DRM_MODE_CONNECTOR_WRITEBACK)
+        if (c.connector_type == DRM_MODE_CONNECTOR_WRITEBACK && !k->wb_conn) {
+            struct drm_mode_get_encoder we = {.encoder_id = c.encoder_id};
+            k->wb_conn = conns[i];
+            if (!we.encoder_id) {
+                uint32_t eid = 0;
+                struct drm_mode_get_connector c2 = {.connector_id = conns[i],
+                                                    .count_encoders = 1,
+                                                    .encoders_ptr = U64(&eid)};
+                if (!xioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &c2))
+                    we.encoder_id = eid;
+            }
+            if (we.encoder_id && !xioctl(fd, DRM_IOCTL_MODE_GETENCODER, &we))
+                for (uint32_t j = 0; j < res.count_crtcs; j++)
+                    if (we.possible_crtcs & (1u << j))
+                        k->wb_crtc = crtcs[j];
+            continue;
+        }
+        if (c.connection != 1 || !c.count_modes)
             continue;
         struct drm_mode_modeinfo *modes = calloc(c.count_modes, sizeof *modes);
         uint32_t *enc_ids = calloc(c.count_encoders + 1, sizeof *enc_ids);
@@ -247,6 +266,17 @@ int kms_open(struct kms *k, const char *path, int want_hz) {
     k->crtc_dqe_fd = prop_id(fd, k->crtc_id, DRM_MODE_OBJECT_CRTC, "DQE_FD", NULL);
     k->conn_crtc_prop =
         prop_id(fd, k->conn_id, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID", NULL);
+    if (k->wb_conn && k->wb_crtc && k->wb_crtc != k->crtc_id) {
+        k->wb_conn_crtc = prop_id(fd, k->wb_conn, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID", NULL);
+        k->wb_fb_prop = prop_id(fd, k->wb_conn, DRM_MODE_OBJECT_CONNECTOR,
+                                "WRITEBACK_FB_ID", NULL);
+        k->wb_fence_prop = prop_id(fd, k->wb_conn, DRM_MODE_OBJECT_CONNECTOR,
+                                   "WRITEBACK_OUT_FENCE_PTR", NULL);
+        k->wb_crtc_active = prop_id(fd, k->wb_crtc, DRM_MODE_OBJECT_CRTC, "ACTIVE", NULL);
+        k->wb_crtc_mode = prop_id(fd, k->wb_crtc, DRM_MODE_OBJECT_CRTC, "MODE_ID", NULL);
+    } else {
+        k->wb_conn = 0;
+    }
     if (!k->crtc_active_prop || !k->crtc_mode_prop || !k->conn_crtc_prop) {
         fprintf(stderr, "kms: missing atomic properties\n");
         r = -ENOTSUP;
@@ -373,10 +403,18 @@ static uint64_t fixed(float v) {
     return (uint64_t)llroundf(v * 65536.0f);
 }
 
+static void plane_on_crtc(struct req *q, const struct kms_plane *p,
+                          const struct kms_layer *l, int zpos, uint32_t crtc);
+
 static void plane_on(struct kms *k, struct req *q, const struct kms_plane *p,
                      const struct kms_layer *l, int zpos) {
+    plane_on_crtc(q, p, l, zpos, k->crtc_id);
+}
+
+static void plane_on_crtc(struct req *q, const struct kms_plane *p,
+                          const struct kms_layer *l, int zpos, uint32_t crtc) {
     add(q, p->id, p->p_fb, l->fb);
-    add(q, p->id, p->p_crtc, k->crtc_id);
+    add(q, p->id, p->p_crtc, crtc);
     add(q, p->id, p->p_sx, fixed(l->sx));
     add(q, p->id, p->p_sy, fixed(l->sy));
     add(q, p->id, p->p_sw, fixed(l->sw));
@@ -475,9 +513,16 @@ void kms_probe_scalers(struct kms *k, uint32_t fb) {
 }
 
 int kms_assign(struct kms *k, struct kms_layer *layers, int n) {
+    return kms_assign_except(k, layers, n, 0);
+}
+
+int kms_assign_except(struct kms *k, struct kms_layer *layers, int n,
+                      unsigned busy) {
     if (n > k->nplanes)
         return -1;
     int taken[KMS_MAX_PLANES] = {0};
+    for (int p = 0; p < k->nplanes; p++)
+        taken[p] = (busy >> p) & 1;
     for (int i = 0; i < n; i++) {
         struct kms_layer *l = &layers[i];
         int scaled = fabsf(l->sw - (float)l->dw) > 0.5f ||
@@ -504,6 +549,40 @@ int kms_assign(struct kms *k, struct kms_layer *layers, int n) {
         l->plane = pick;
     }
     return 0;
+}
+
+int kms_writeback(struct kms *k, const struct kms_layer *layers, int n,
+                  uint32_t fb) {
+    if (!k->wb_conn || !k->wb_fb_prop || !k->wb_crtc_active)
+        return -ENOTSUP;
+    int32_t fence = -1;
+    struct req q = {0};
+    add(&q, k->wb_crtc, k->wb_crtc_active, 1);
+    add(&q, k->wb_crtc, k->wb_crtc_mode, k->mode_blob);
+    add(&q, k->wb_conn, k->wb_conn_crtc, k->wb_crtc);
+    add(&q, k->wb_conn, k->wb_fb_prop, fb);
+    add(&q, k->wb_conn, k->wb_fence_prop, U64(&fence));
+    for (int i = 0; i < n; i++)
+        plane_on_crtc(&q, &k->planes[layers[i].plane], &layers[i], i, k->wb_crtc);
+    int r = submit(k, &q, DRM_MODE_ATOMIC_ALLOW_MODESET, 0);
+    if (!r && fence >= 0) {
+        struct pollfd p = {.fd = fence, .events = POLLIN};
+        if (poll(&p, 1, 1000) <= 0)
+            r = -ETIMEDOUT;
+    }
+    if (fence >= 0)
+        close(fence);
+    /* Off again, whatever happened. */
+    struct req off = {0};
+    for (int i = 0; i < n; i++)
+        plane_off(&off, &k->planes[layers[i].plane]);
+    add(&off, k->wb_conn, k->wb_conn_crtc, 0);
+    add(&off, k->wb_crtc, k->wb_crtc_active, 0);
+    add(&off, k->wb_crtc, k->wb_crtc_mode, 0);
+    int r2 = submit(k, &off, DRM_MODE_ATOMIC_ALLOW_MODESET, 0);
+    if (r2)
+        fprintf(stderr, "kms: writeback teardown: %s\n", strerror(-r2));
+    return r;
 }
 
 int kms_commit(struct kms *k, uint32_t fb, int in_fence, int modeset,

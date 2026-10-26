@@ -42,6 +42,10 @@ live_pid() {
 
 # GPU_FLOOR_KHZ (config): the GPU clock floor while frames flow.
 floor="$(sed -n 's/^GPU_FLOOR_KHZ=\([0-9]*\)$/\1/p' "$CONFIG" 2>/dev/null | tail -1)"
+# GPU_PLANES=0 (config, scripts/gpu/install.sh --no-planes): the GPU composes
+# every frame; Moon's own buffers never go to display planes.
+no_planes=
+grep -q '^GPU_PLANES=0' "$CONFIG" 2>/dev/null && no_planes=--no-planes
 
 stop_compositor() {
     pid="$(live_pid "$RUN/compositor.pid" moon-compositor)" || {
@@ -110,7 +114,7 @@ keep)
     while [ -e "$RUN/active" ]; do
         rm -f "$RUN/ready"
         "$BIN" --socket "$RUN/compositor.sock" --ready-file "$RUN/ready" \
-            ${floor:+--gpu-floor "$floor"} >>"$RUN/compositor.log" 2>&1 </dev/null &
+            ${floor:+--gpu-floor "$floor"} $no_planes >>"$RUN/compositor.log" 2>&1 </dev/null &
         pid=$!
         echo "$pid" >"$RUN/compositor.pid"
         # The compositor watches itself: it exits if its loop stops turning
