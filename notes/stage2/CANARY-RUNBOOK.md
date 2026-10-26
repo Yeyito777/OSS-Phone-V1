@@ -1,17 +1,14 @@
 # Recovery-slot test runbook: canary v2, then Moon and stage 2 from the slot
 
-> ⏸ **ON HOLD until the new `oss-rebootmode-clear.ko` exists, passes on the
-> device, and the images are rebuilt with its sha256 pin.** The new module
-> (requested 2026-10-26): clears only the mode bits 2:0 of reboot-cmd 0x810
-> (the bootloader owns the other bits; a normal boot reads 0x48), reads every
-> register back and fails the load unless they select NORMAL, and with
-> `require_mode=1` fails unless this load actually found and cleared a
-> recovery-style mode. The canary loads it with `require_mode=1` and treats
-> "already loaded" as failure, so it panics only on concrete evidence that it
-> cleared the real selector; in every other case it does not panic and boots
-> stock recovery, and its log is the measurement. oss-init and oss-pid1 load
-> with default parameters. The current images (pinned to the old module
-> `a18606a8`) must not be used for the canary.
+> ✅ **Ready; waiting for the user** (2026-10-26). `oss-rebootmode-clear.ko`
+> v2 (sha256 `7130cf3c…`, branch `rebootmode-clear` 0a40464, merging to main)
+> passed its on-device re-test: on a normal boot `require_mode=1` cleanly
+> refused (`-ENOENT`, mode bits 0) and a dry run read 0x810 = 0x48. v2 clears
+> only the mode bits 2:0 of reboot-cmd, verifies the read-back (`-EIO` unless
+> mode 0, magic 0x4E, panic-inform 0x12345670) and logs `before:`/`after:` then
+> `OK:`/`FAIL:`. The canary loads it with `require_mode=1` (and treats "already
+> loaded" as failure), so it panics only after this load cleared a real mode;
+> oss-init and oss-pid1 load it with default parameters.
 
 ## Why it is built this way (history in one paragraph)
 `adb reboot recovery` writes a sticky `boot-recovery` BCB, so recovery is
@@ -29,11 +26,11 @@ back to a stock init instead. Stage 0 is retired: its question is answered.
 ## Artifacts (built unflashed, deterministic, whitelisted in `flash-recovery-inplace.sh`)
 | File | sha256 | What |
 | --- | --- | --- |
-| `canary/recovery-canary-A266MUBU1AYB8.img` | `0e4e70b2…f0c06bbe` | Stock recovery (kernel, dtb, dtbo, full ramdisk) with `/init` = canary v2 and `/oss-rebootmode-clear.ko` |
+| `canary/recovery-canary-A266MUBU1AYB8.img` | `71d68ced…8f54edfc` | Stock recovery (kernel, dtb, dtbo, full ramdisk) with `/init` = canary (`require_mode=1`) and `/oss-rebootmode-clear.ko` v2 |
 | `canary/reboot-recovery` | `89c036e0…a823c40e` | BCB-free recovery entry |
-| `recovery-slot/recovery-slot-moon-A266MUBU1AYB8.img` | `583ad993…3e25e9c` | Today's boot from the slot: `/init` = oss-pid1 (clear → magiskinit as `/init` → Moon) + recovery-slot marker |
-| `recovery-slot/recovery-slot-stage2-v4-A266MUBU1AYB8.img` | `84768b63…f4108c0` | Stage 2: `/init` = oss-init v4 (clear → Android in a PID+mount namespace) |
-| `oss-rebootmode-clear.ko` (inside each image) | `a18606a8…cba4054` | kernel agent's module, `src/oss-rebootmode-clear` |
+| `recovery-slot/recovery-slot-moon-A266MUBU1AYB8.img` | `cc406f02…3a30b86e` | Today's boot from the slot: `/init` = oss-pid1 (clear → magiskinit as `/init` → Moon) + recovery-slot marker |
+| `recovery-slot/recovery-slot-stage2-v4-A266MUBU1AYB8.img` | `f0b7263a…036022a1` | Stage 2: `/init` = oss-init v4 (clear → Android in a PID+mount namespace) |
+| `oss-rebootmode-clear.ko` v2 (inside each image) | `7130cf3c…054e2568` | kernel agent's module, `src/oss-rebootmode-clear` (0a40464) |
 | `a26-rescue/misc-clean/misc-bcb-clear.img` | `42ba364c…4ab1ddac` | escape: MISC with an empty BCB |
 | `a26-rescue/A266MUBU1AYB8-current/recovery.img` | `9ab6cefe…a91a7e8` | stock recovery (restore target) |
 
@@ -64,7 +61,8 @@ back to a stock init instead. Stage 0 is retired: its question is answered.
      | `0x49` | bootloader flags + mode 1 | clears mode bits → `after:` `0x48`; verified | **panics** | BOOT, hands-free |
      | `0x48` | no mode in 0x810: the bootloader consumed it, or the selector is elsewhere | no mode found → load **fails** | **no panic**; stock recovery | leave via "Reboot system now"; then the selector must be found elsewhere before any panic test |
      | other / read-back mismatch | unknown layout | load **fails** | **no panic**; stock recovery | report the value |
-     When it panics, the log also shows `magic-inform` bits 23:16 → `0x4e` and `panic-inform` `0x12345674` →
+     The module then logs `OK: NORMAL boot selected (cleared a reboot mode)` (panic
+     path) or `FAIL: …` (no-panic path). When it panics, the log also shows `magic-inform` bits 23:16 → `0x4e` and `panic-inform` `0x12345674` →
      `0x12345670`, then
      ```
      OSS-CANARY: PMU reboot state cleared; exiting PID 1 now to force a panic/reset (expected: return to BOOT)

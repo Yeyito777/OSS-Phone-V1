@@ -28,13 +28,14 @@ set -euo pipefail
 
 declare -A KNOWN=(
   [9ab6cefe06b18ddd7d2410f8ce06233fb0c14a39687fe085b4e74ad18a91a7e8]='stock recovery (rescue baseline)'
-  # Recovery-slot test images are added here only once built against the
-  # verify-after-write oss-rebootmode-clear.ko (masked mode clear,
-  # require_mode). Images pinned to the first module (a18606a8) are withdrawn:
-  # it reports success while leaving an unrecognised reboot-cmd (e.g. 0x49)
-  # unchanged, so a failed slot boot could still loop. Withdrawn: 0e4e70b2
-  # (canary), 583ad993 (slot moon), 84768b63 (slot stage 2), and earlier
-  # 25540aa1, aab7a301, fc974667, 5a445db7, b67b68d3.
+  # Recovery-slot test images, each /init loading oss-rebootmode-clear.ko v2
+  # (sha256 7130cf3c, masked mode clear + verified read-back + require_mode)
+  # as its first action. Images built against the first module (a18606a8) are
+  # withdrawn: 0e4e70b2, 583ad993, 84768b63, and earlier 25540aa1, aab7a301,
+  # fc974667, 5a445db7, b67b68d3.
+  [71d68ced3dccbb7d6eabfa695ef9792c856418267d4563a474db3a4f8f54edfc]='panic canary v3 (clear with require_mode=1; else stock recovery, no panic)'
+  [cc406f02c52968354da0a67ace51a28b7ae138051dcf9cc75ac2af3c8a30b86e]='recovery-slot plain boot (oss-pid1 clear -> magiskinit -> Moon)'
+  [f0b7263acbcd32dbfd8daaa11edf59a95cc8eccbc7929e706509ce04036022a1]='recovery-slot stage-2 v4 (clear -> oss-init containment)'
 )
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -49,8 +49,8 @@ MAGISKBOOT="${MAGISKBOOT:-$R/tools/magiskboot-x86_64}"
 KO="${A26_REBOOTMODE_CLEAR_KO:-$HOME/oss-kernel/out/modules/oss-rebootmode-clear/oss-rebootmode-clear.ko}"
 # Pin of the verify-after-write module (masked clear, require_mode).
 # The first module a18606a8 is withdrawn; set this when the kernel agent
-# reports the new .ko. Builds refuse until then.
-KO_SHA=AWAITING-NEW-OSS-REBOOTMODE-CLEAR-KO
+# reported the new .ko: v2, branch rebootmode-clear 0a40464.
+KO_SHA=7130cf3c04626745b1036262bf264053539906058948c95b7dbda344054e2568
 SALT=9413599eee2c3c4ad1a16b47eb3dc5036d93c908c656b18881680b979e1e547c
 PARTITION_SIZE=$((24576 * 4096))   # RECOVERY, PIT entry #22
 VENDOR_BOOT_SHA=74723185dc3ae25be122418e8d401b91cfd27eac688395e97067f77a849692d2

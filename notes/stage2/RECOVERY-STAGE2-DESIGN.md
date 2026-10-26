@@ -102,13 +102,13 @@ the no-A/B brick risk that stopped the BOOT-partition attempts. BOOT stays
 - The boot-reason → Android policy (above): decide whether to add a trusted
   recovery-marker exception so Moon (not plain Android) comes up from recovery.
 
-## Status (2026-10-26, clear-first rebuild)
+## Status (2026-10-26, rebuilt with oss-rebootmode-clear.ko v2 `7130cf3c`)
 Built, deterministic, whitelisted, unflashed; every image loads
 `oss-rebootmode-clear.ko` first (RECOVERY-PERSISTENCE-ROOTCAUSE.md):
-1. Canary v2 `0e4e70b2` (CANARY-RUNBOOK.md Stage 1).
-2. System-from-recovery `583ad993` (`build-slot-image.sh plain`: oss-pid1 →
+1. Canary `71d68ced` (CANARY-RUNBOOK.md Stage 1; module loaded with `require_mode=1`).
+2. System-from-recovery `cc406f02` (`build-slot-image.sh plain`: oss-pid1 →
    magiskinit → Moon, with the `oss-recovery-slot` marker for the policy).
-3. Stage-2 v4 containment `84768b63` (`build-slot-image.sh containment`).
+3. Stage-2 v4 containment `f0b7263a` (`build-slot-image.sh containment`).
 The earlier OSS-kernel calibration (`aab7a301`) and slot images without the
 clear (`fc974667`, `5a445db7`, `b67b68d3`) are retired and off the whitelist.
 Order: module on-device test (kernel agent) → canary → 2 → 3. Stage 2 needs the

@@ -7,8 +7,8 @@ bench `scripts/native-init/test/run-tests.sh`.
 ## Images (deterministic, whitelisted in flash-recovery-inplace.sh)
 | Image | sha256 | What it is |
 | --- | --- | --- |
-| `recovery-slot-stage2-v4-A266MUBU1AYB8.img` | `84768b63…f4108c0` | Today's BOOT (`8c0461ee`) + vendor_boot in the recovery slot; ramdisk `/init` = oss-init v4, `/init.magisk` = magiskinit, `/init.stock` = static stock init, `overlay.d/oss-contain.rc`, recovery-slot marker |
-| `recovery-slot-moon-A266MUBU1AYB8.img` | `583ad993…3e25e9c` | The same with `/init` = oss-pid1 instead of oss-init (clear, then magiskinit as `/init`): today's boot from the slot, plus the marker so Moon comes up |
+| `recovery-slot-stage2-v4-A266MUBU1AYB8.img` | `f0b7263a…036022a1` | Today's BOOT (`8c0461ee`) + vendor_boot in the recovery slot; ramdisk `/init` = oss-init v4, `/init.magisk` = magiskinit, `/init.stock` = static stock init, `overlay.d/oss-contain.rc`, recovery-slot marker |
+| `recovery-slot-moon-A266MUBU1AYB8.img` | `cc406f02…3a30b86e` | The same with `/init` = oss-pid1 instead of oss-init (clear, then magiskinit as `/init`): today's boot from the slot, plus the marker so Moon comes up |
 
 Both are in `images/oss-stage2/recovery-slot/` (Mac) and on whale. Built twice,
 byte-identical.
@@ -69,7 +69,7 @@ depend on that, so CLOEXEC is cleared just before the exec.
   namespace clone; the x86 build of the same source can and did).
 
 ## Test order on the phone (after the canary passes)
-1. `recovery-slot-moon` (`583ad993`): the normal boot from the recovery slot,
+1. `recovery-slot-moon` (`cc406f02`): the normal boot from the recovery slot,
    Moon via the marker. Proves the slot boots a full system.
 2. `recovery-slot-stage2-v4`: oss-init containment. adb runs **inside** the
    container, so its `/proc/1` is Android's init and the real PID 1 is not
@@ -83,7 +83,9 @@ Each run: `--check-bcb`, `flash-recovery-inplace.sh <image>`,
 ## Update 2026-10-26: the PMU clear comes first (images above rebuilt)
 Stage 0 showed the recovery selection survives a reset or panic
 (RECOVERY-PERSISTENCE-ROOTCAUSE.md). oss-init, oss-pid1 and the canary now load
-the kernel agent's `oss-rebootmode-clear.ko` (sha256 `a18606a8…`) as their very
+the kernel agent's `oss-rebootmode-clear.ko` (now v2, sha256 `7130cf3c…`: masked
+mode clear, verified read-back, `require_mode`; the first module `a18606a8` is
+withdrawn) as their very
 first action (`scripts/native-init/rebootmode-clear.h`). If the load fails they
 never panic or reboot on purpose: oss-init skips containment and execs the stock
 init with no reboot fallback; oss-pid1 execs the stock init; the canary execs
@@ -104,3 +106,12 @@ containment cases fake a successful clear and the *-noclear cases call the real
 | each built image's exact aarch64 `/init` (qemu; finit_module = ENOSYS there) | canary → `execve("/system/bin/init")`; moon → `execve("/init.stock")`; stage 2 → `execveat(held fd)`: all no-clear fallbacks, none panics |
 The successful clear itself (the module writing the PMU) is only provable on
 the device: the kernel agent's insmod test, then the canary.
+
+### Rebuild with module v2 (2026-10-26)
+Images rebuilt against `7130cf3c` (on-device re-test passed): canary `71d68ced`
+(loads with `require_mode=1`, EEXIST counts as failure), recovery-slot-moon
+`cc406f02`, stage-2 v4 `f0b7263a`; all built twice, byte-identical. Bench: all
+ten cases pass. Exact-binary checks: each image carries the v2 `.ko`, only the
+canary's `/init` contains `require_mode=1`, and each `/init` (qemu, no module
+load possible) took its fallback without panicking: canary → `/system/bin/init`,
+moon → `/init.stock`, stage 2 → `execveat(held fd)`.
