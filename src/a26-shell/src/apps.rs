@@ -37,6 +37,8 @@ struct ManagedWindow {
 struct Application {
     id: AppId,
     executable: PathBuf,
+    /// Phone and Messages are the System app's binary with `--app NAME`.
+    args: Vec<String>,
     child: Option<Child>,
     pidfd: Option<OwnedFd>,
     lifecycle: AppLifecycle,
@@ -47,9 +49,14 @@ struct Application {
 
 impl Application {
     fn new(id: AppId, executable: PathBuf) -> Self {
+        let args = match id {
+            AppId::Phone | AppId::Messages => vec!["--app".into(), id.cgroup_name().into()],
+            AppId::System | AppId::Browser => Vec::new(),
+        };
         Self {
             id,
             executable,
+            args,
             child: None,
             pidfd: None,
             lifecycle: AppLifecycle::Stopped,
@@ -106,7 +113,7 @@ impl Application {
 }
 
 pub struct AppRegistry {
-    applications: [Application; 2],
+    applications: [Application; AppId::COUNT],
     active: Option<AppId>,
     leases: LeaseManager,
 }
@@ -125,8 +132,10 @@ impl AppRegistry {
     fn new(system: PathBuf, browser: PathBuf) -> Self {
         Self {
             applications: [
-                Application::new(AppId::System, system),
+                Application::new(AppId::System, system.clone()),
                 Application::new(AppId::Browser, browser),
+                Application::new(AppId::Phone, system.clone()),
+                Application::new(AppId::Messages, system),
             ],
             active: None,
             leases: LeaseManager::default(),
@@ -277,7 +286,7 @@ impl AppRegistry {
         // An app with a lease remains thawed while backgrounded. As soon as its
         // final bounded lease expires, the ordinary reconciliation pass puts
         // it back into the freezer even if another app is foreground.
-        for id in [AppId::System, AppId::Browser] {
+        for id in AppId::ALL {
             let needs_freeze = {
                 let application = self.app(id);
                 desired != Some(id)
@@ -344,6 +353,7 @@ impl AppRegistry {
             AppLifecycle::Stopped => {
                 let mut command = Command::new(&application.executable);
                 command
+                    .args(&application.args)
                     .env(
                         "DISPLAY",
                         env::var("DISPLAY").unwrap_or_else(|_| ":0".into()),
@@ -487,7 +497,7 @@ impl AppRegistry {
     /// Apps with a live process, least recently used first (the order of
     /// the app switcher's cards).
     pub fn running_by_recency(&self) -> Vec<AppId> {
-        let mut running: Vec<(AppId, Instant)> = [AppId::System, AppId::Browser]
+        let mut running: Vec<(AppId, Instant)> = AppId::ALL
             .into_iter()
             .filter(|id| self.app(*id).lifecycle != AppLifecycle::Stopped)
             .map(|id| (id, self.app(id).last_used))
@@ -510,7 +520,7 @@ impl AppRegistry {
     pub fn evict_lru_background(&mut self, now: Instant) -> Option<AppId> {
         self.leases.expire(now);
         let mut candidate: Option<(AppId, Instant)> = None;
-        for id in [AppId::System, AppId::Browser] {
+        for id in AppId::ALL {
             let background = self.app(id).lifecycle == AppLifecycle::Background;
             let leased = self.leases.active(id, now);
             let last_used = self.app(id).last_used;

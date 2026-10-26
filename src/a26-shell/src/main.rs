@@ -4,6 +4,7 @@ mod audio;
 mod backdrop;
 mod banner;
 mod brightness;
+mod calls;
 mod clock;
 mod compositor;
 mod config;
@@ -19,6 +20,7 @@ mod ipc;
 mod keyboard;
 mod lease;
 mod light;
+mod line_client;
 mod memory;
 mod model;
 mod motion;
@@ -28,6 +30,7 @@ mod settings;
 mod status;
 mod status_bar;
 mod suspend;
+mod telephony_client;
 mod text;
 mod ui;
 mod volume;
@@ -407,6 +410,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(notify_client::DEFAULT_SOCKET)),
     );
+    // moon-telephonyd (MOON_TELEPHONY_SOCKET likewise).
+    let mut telephonyd = telephony_client::TelephonyClient::new(
+        env::var_os("MOON_TELEPHONY_SOCKET")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(telephony_client::DEFAULT_SOCKET)),
+    );
     let audio_volume = match AudioVolume::open("/run/moon-audio/volume") {
         Ok(control) => Some(control),
         Err(error) => {
@@ -577,11 +586,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Some(device) = power_key.as_mut() {
             match device.poll_presses() {
                 Ok(count) => {
-                    // While an alarm or timer rings the power key snoozes
-                    // or stops it instead.
+                    // While a call, an alarm or a timer rings the power key
+                    // silences, snoozes or stops it instead.
                     if count > 0 {
                         state.note_input();
-                        if !(state.screen_awake && state.alerts_power_key()) {
+                        if !(state.screen_awake
+                            && (state.calls_power_key() || state.alerts_power_key()))
+                        {
                             state.power_key();
                         }
                     }
@@ -706,10 +717,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         state.notify_connected(notifyd.connected());
-        // A notification that must be seen, or an alarm or timer ringing,
-        // turns the screen on through the same wake as the power key.
-        let wake =
-            std::mem::take(&mut state.alerts.pending_wake) || state.alerts.ringing().is_some();
+        for incoming in telephonyd.service(Instant::now()) {
+            match incoming {
+                telephony_client::Incoming::Event(event) => state.telephony_event(event),
+                telephony_client::Incoming::Failed { cmd, code } => {
+                    eprintln!("moon-telephonyd refused {cmd}: {code}");
+                }
+            }
+        }
+        state.telephony_connected(telephonyd.connected());
+        // A notification that must be seen, an alarm or timer ringing, or
+        // a call, turns the screen on through the same wake as the power
+        // key.
+        let wake = std::mem::take(&mut state.alerts.pending_wake)
+            || std::mem::take(&mut state.calls.pending_wake)
+            || state.alerts.ringing().is_some()
+            || state.calls.ringing().is_some();
         if wake && !state.screen_awake {
             state.screen_on();
             state.notify_woke_screen(Instant::now());
@@ -858,6 +881,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 alerts::Outgoing::SetDnd(on) => notifyd.set_do_not_disturb(on),
             }
         }
+        for command in std::mem::take(&mut state.calls.outbox) {
+            telephonyd.send(command);
+        }
+        send_app_pointer(&conn, root, std::mem::take(&mut state.app_pointer));
 
         if Instant::now() >= next_device_status {
             let device_status = status::DeviceStatus::read();
@@ -1156,8 +1183,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Some(at) = auto_lock_deadline(&state) {
             deadline = deadline.min(at.max(now));
         }
-        if let Some(notify_deadline) = notifyd.next_deadline() {
-            deadline = deadline.min(notify_deadline.max(now));
+        for client_deadline in [notifyd.next_deadline(), telephonyd.next_deadline()]
+            .into_iter()
+            .flatten()
+        {
+            deadline = deadline.min(client_deadline.max(now));
+        }
+        if state.screen_awake
+            && let Some(at) = state.calls_deadline(now)
+        {
+            deadline = deadline.min(at.max(now));
         }
         if banner_shown.is_some() && state.alerts_animating(now) {
             // The banner window moves at the panel's refresh rate.
@@ -1178,6 +1213,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 app_fds: &app_fds,
                 notify: notifyd.poll_fd(),
                 light: brightness.sensor_fd(),
+                telephony: telephonyd.poll_fd(),
             },
             deadline.saturating_duration_since(now),
         )?;
@@ -1352,7 +1388,8 @@ fn auto_lock_timeout(state: &ShellState) -> Option<Duration> {
         && state.screen_awake
         && state.fade.is_none()
         && state.pointer.is_none()
-        && state.alerts.ringing().is_none())
+        && state.alerts.ringing().is_none()
+        && state.calls.ringing().is_none())
     .then(|| Duration::from_secs(u64::from(seconds)))
 }
 
@@ -1376,6 +1413,8 @@ struct WaitSources<'a> {
     notify: Option<(RawFd, bool)>,
     /// The ambient light sensor, while the screen is on.
     light: Option<RawFd>,
+    /// moon-telephonyd's, likewise.
+    telephony: Option<(RawFd, bool)>,
 }
 
 fn wait_for_activity(sources: &WaitSources, timeout: Duration) -> io::Result<()> {
@@ -1388,6 +1427,7 @@ fn wait_for_activity(sources: &WaitSources, timeout: Duration) -> io::Result<()>
         app_fds,
         notify,
         light,
+        telephony,
     } = *sources;
     let mut descriptors = Vec::with_capacity(5 + app_fds.len());
     let mut add = |fd: RawFd| {
@@ -1414,7 +1454,7 @@ fn wait_for_activity(sources: &WaitSources, timeout: Duration) -> io::Result<()>
     if let Some(fd) = light {
         add(fd);
     }
-    if let Some((fd, writing)) = notify {
+    for (fd, writing) in [notify, telephony].into_iter().flatten() {
         descriptors.push(libc::pollfd {
             fd,
             events: if writing {
@@ -1935,6 +1975,15 @@ fn pointer_begin(
         state.keyboard.release_key_index(index);
     }
     let (pointer, action) = new_pointer_gesture(state, keyboard_geometry, x, y, repeat_timing);
+    if !pointer.keyboard_owned
+        && !state.control.visible(Instant::now())
+        && state.call_pointer_begin(f32::from(x), f32::from(y))
+    {
+        // The call screen, or the status-bar pill that brings it back.
+        state.pointer = Some(pointer);
+        state.last_action = "pointer_begin".into();
+        return None;
+    }
     if !pointer.keyboard_owned && state.control_pointer_begin(f32::from(x), f32::from(y)) {
         // Control Centre.
         state.pointer = Some(pointer);
@@ -2010,6 +2059,7 @@ fn new_pointer_gesture(
             keyboard_initial_sent: repeatable_action.is_some(),
             keyboard_repeat_uppercase: state.keyboard.shift(),
             keyboard_next_repeat_at: repeatable_action.map(|_| started + repeat_timing.delay),
+            forwarding: false,
         },
         repeatable_action,
     )
@@ -2022,8 +2072,10 @@ fn pointer_move(
     x: i16,
     y: i16,
 ) {
-    if state.control_touch_active() || state.alerts_touch_active() {
-        if state.control_touch_active() {
+    if state.call_touch_active() || state.control_touch_active() || state.alerts_touch_active() {
+        if state.call_touch_active() {
+            state.call_pointer_move(f32::from(x), f32::from(y));
+        } else if state.control_touch_active() {
             state.control_pointer_move(f32::from(x), f32::from(y));
         } else {
             state.alerts_pointer_move(f32::from(x), f32::from(y));
@@ -2057,6 +2109,7 @@ fn pointer_move(
             .then_some(pointer.keyboard_key_index)
             .flatten()
     });
+    forward_app_drag(state, height, x, y);
     if state.pressed.is_some()
         && let Some(pointer) = state.pointer.as_ref()
         && (i32::from(x) - i32::from(pointer.start_x))
@@ -2085,6 +2138,79 @@ fn pointer_move(
                 state.keyboard.release_key_index(index);
             }
         }
+    }
+}
+
+/// A drag over one of Moon's own apps goes to the app as a held button,
+/// once it has moved past the tap slop and unless it began on the bottom
+/// edge (the home gesture's).
+fn forward_app_drag(state: &mut ShellState, height: u16, x: i16, y: i16) {
+    let eligible = state.view.takes_drags()
+        && state.gesture.is_none()
+        && state.switcher.is_none()
+        && !state.shell_covers_app();
+    let Some(pointer) = state.pointer.as_mut() else {
+        return;
+    };
+    if pointer.keyboard_owned {
+        return;
+    }
+    if pointer.forwarding {
+        state.app_pointer.push(model::AppPointer::Motion(x, y));
+        return;
+    }
+    let moved = (i32::from(x) - i32::from(pointer.start_x))
+        .abs()
+        .max((i32::from(y) - i32::from(pointer.start_y)).abs())
+        > PRESS_SLOP;
+    let bottom_start = i32::from(pointer.start_y) >= i32::from(height) - 180;
+    if eligible && moved && !bottom_start {
+        pointer.forwarding = true;
+        state.app_pointer.extend([
+            model::AppPointer::Press(pointer.start_x, pointer.start_y),
+            model::AppPointer::Motion(x, y),
+        ]);
+    }
+}
+
+/// Sends queued drag events to the app in front.
+fn send_app_pointer(conn: &RustConnection, root: u32, events: Vec<model::AppPointer>) {
+    if events.is_empty() {
+        return;
+    }
+    let send = || -> Result<(), Box<dyn Error>> {
+        for event in events {
+            match event {
+                model::AppPointer::Press(x, y) => {
+                    let _ =
+                        conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, CURRENT_TIME, root, x, y, 0)?;
+                    let _ =
+                        conn.xtest_fake_input(BUTTON_PRESS_EVENT, 1, CURRENT_TIME, root, 0, 0, 0)?;
+                }
+                model::AppPointer::Motion(x, y) => {
+                    let _ =
+                        conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, CURRENT_TIME, root, x, y, 0)?;
+                }
+                model::AppPointer::Release(x, y) => {
+                    let _ =
+                        conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, CURRENT_TIME, root, x, y, 0)?;
+                    let _ = conn.xtest_fake_input(
+                        BUTTON_RELEASE_EVENT,
+                        1,
+                        CURRENT_TIME,
+                        root,
+                        0,
+                        0,
+                        0,
+                    )?;
+                }
+            }
+        }
+        conn.flush()?;
+        Ok(())
+    };
+    if let Err(error) = send() {
+        eprintln!("cannot forward a drag: {error}");
     }
 }
 
@@ -2286,11 +2412,17 @@ fn cancel_stale_pointer(state: &mut ShellState, raw_touch: &mut RawTouchTracker,
         .is_some_and(|pointer| now.duration_since(pointer.last_activity) >= STALE_POINTER_TIMEOUT);
     let mut recovered = false;
     if legacy_stale {
-        if let Some(pointer) = state.pointer.take()
-            && pointer.keyboard_pressed
-            && let Some(index) = pointer.keyboard_key_index
-        {
-            state.keyboard.release_key_index(index);
+        if let Some(pointer) = state.pointer.take() {
+            if pointer.forwarding {
+                state
+                    .app_pointer
+                    .push(model::AppPointer::Release(pointer.last_x, pointer.last_y));
+            }
+            if pointer.keyboard_pressed
+                && let Some(index) = pointer.keyboard_key_index
+            {
+                state.keyboard.release_key_index(index);
+            }
         }
         raw_touch.touch_id = None;
         recovered = true;
@@ -2360,6 +2492,12 @@ fn pointer_end(
     };
     pointer.last_x = x;
     pointer.last_y = y;
+    if pointer.forwarding {
+        // A drag the app had: it ends there.
+        state.app_pointer.push(model::AppPointer::Release(x, y));
+        state.last_action = "app_drag_forwarded".into();
+        return;
+    }
     if pointer.keyboard_owned {
         if pointer.keyboard_pressed
             && let Some(index) = pointer.keyboard_key_index
@@ -2367,6 +2505,10 @@ fn pointer_end(
             state.keyboard.release_key_index(index);
         }
         finish_keyboard_pointer(conn, state, pointer, keyboard_geometry, key_injector);
+        return;
+    }
+    if state.call_touch_active() {
+        state.call_pointer_end(f32::from(x), f32::from(y));
         return;
     }
     if state.control_touch_active() {
@@ -2506,16 +2648,11 @@ fn handle_tap(
             None => state.last_action = "lock_tap_outside".into(),
         },
         View::Launcher => match ui::launcher_app_at(x, y) {
-            Some(AppId::System) => state.launch_system(),
-            Some(AppId::Browser) => state.launch_browser(),
+            Some(app) => state.open_app(app),
             None => state.last_action = "launcher_tap_outside".into(),
         },
-        View::System | View::Browser => {
-            let app_name = if state.view == View::System {
-                "system"
-            } else {
-                "browser"
-            };
+        View::System | View::Browser | View::Phone | View::Messages => {
+            let app_name = AppId::from_view(state.view).map_or("app", AppId::cgroup_name);
             let Some(_window) = state.managed_windows.first().copied() else {
                 state.last_action = format!("{app_name}_tap_no_window");
                 state.redraw = true;
@@ -2630,8 +2767,7 @@ fn apply_command(
         Command::Lock => state.lock(),
         Command::Home => state.home(),
         Command::Switcher => state.pending_switcher = true,
-        Command::LaunchSystem => state.launch_system(),
-        Command::LaunchBrowser => state.launch_browser(),
+        Command::Launch(app) => state.open_app(app),
         Command::KeyboardShow(purpose) => {
             state.show_keyboard(purpose);
         }
@@ -2648,9 +2784,10 @@ fn apply_command(
         // Handled with the brightness backend before apply_command.
         Command::Brightness(_) => {}
         Command::Power => {
-            // Exactly the physical key (it snoozes or stops what rings).
+            // Exactly the physical key (it silences, snoozes or stops what
+            // rings).
             state.note_input();
-            if !(state.screen_awake && state.alerts_power_key()) {
+            if !(state.screen_awake && (state.calls_power_key() || state.alerts_power_key())) {
                 state.power_key();
             }
         }
@@ -2873,6 +3010,7 @@ mod touch_tests {
             keyboard_initial_sent: true,
             keyboard_repeat_uppercase: false,
             keyboard_next_repeat_at: Some(now),
+            forwarding: false,
         });
         let mut raw_touch = RawTouchTracker {
             touch_id: Some(7),
