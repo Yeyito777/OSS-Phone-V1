@@ -78,5 +78,12 @@ if /system/bin/toybox lsof /dev/dri/card0 2>/dev/null | grep -q /dev/dri/card0; 
     fail "DRM card still open"
 fi
 [ "$brightness" -gt 0 ] 2>/dev/null || echo 128 >/sys/class/backlight/panel/brightness
+
+# The init-level fallback (moon-direct-boot.rc) starts the framework when
+# moon-session stops. It must still be running: moon-session.sh is blocked in
+# `wait` on the frozen supervisor. And nothing of Android's display stack may
+# have come back.
+sleep 2
+sh /data/local/tmp/a26-wayland/a26-wayland-check.sh || fail "post-handoff check failed"
 echo "handoff done: Xorg and Moon stopped, card0 free, supervisor frozen. Restore with adb reboot."
 echo ok >&2

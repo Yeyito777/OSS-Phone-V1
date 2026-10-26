@@ -6,6 +6,7 @@
 //   kmsbench planes [opts]         a switcher-like animation composed only by DPU planes
 //                                  (background + scaled, fading cards), no CPU pixels
 //   kmsbench bw                    CPU bandwidth into dumb (uncached) and heap (cached) buffers
+//   kmsbench dpms [--cycles N]     screen off/on as ACTIVE=0/1 commits (what DPMS does), timed
 //   kmsbench gbm                   can mesa's GBM allocate scanout buffers here (wlroots/smithay need it)
 //
 // Options: --seconds S, --mpx M (flip: changed Mpx per frame), --op src|over|scale,
@@ -538,26 +539,36 @@ static int cmd_planes(void)
 	if (band > H) band = H;
 	struct plane *pri = primary();
 	int ylast[2] = { -1, -1 };
-	int nc = 0;
+	initial_commit(bgs[0].fb);
+	/* Ask the kernel which planes scale, and use those first. */
+	struct plane *cand[MAXP];
+	int ncand = 0, cscal[MAXP];
+	struct buf tb;
+	buf_dumb(&tb, W, H, DRM_FORMAT_ARGB8888);
+	for (int pass = 0; pass < 2; pass++)
+		for (int i = 0; i < nplanes; i++) {
+			if (&planes[i] == primary()) continue;
+			if (pass == 0) {
+				drmModeAtomicReqPtr r = drmModeAtomicAlloc();
+				plane_set(r, &planes[i], tb.fb, 0, 0, W, H, 100, 200, W * 6 / 10, H * 6 / 10, 0xffff);
+				cscal[i] = drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_TEST_ONLY, NULL) == 0;
+				drmModeAtomicFree(r);
+				if (cscal[i]) cand[ncand++] = &planes[i];
+			} else if (!cscal[i]) {
+				cand[ncand++] = &planes[i];
+			}
+		}
+	int nc = 0, scal[6];
 	struct plane *cp[6];
-	for (int i = 0; i < nplanes && nc < opt_cards; i++) {
-		if (&planes[i] == primary()) continue;
-		cp[nc] = &planes[i];
+	for (int k = 0; k < ncand && nc < opt_cards; k++) {
+		cp[nc] = cand[k];
+		scal[nc] = cscal[cand[k] - planes];
 		if (!strcmp(opt_buf, "dumb")) buf_dumb(&cards[nc], W, H, DRM_FORMAT_ARGB8888);
 		else buf_heap(&cards[nc], W, H, DRM_FORMAT_ARGB8888, opt_buf);
 		heap_sync(&cards[nc], 1);
 		paint_pattern(cards[nc].map, cards[nc].pitch / 4, W, H, 10 + nc, 255);
 		heap_sync(&cards[nc], 0);
 		nc++;
-	}
-	initial_commit(bgs[0].fb);
-	/* Pick the scaling-capable planes by asking the kernel. */
-	int scal[6];
-	for (int c = 0; c < nc; c++) {
-		drmModeAtomicReqPtr r = drmModeAtomicAlloc();
-		plane_set(r, cp[c], cards[c].fb, 0, 0, W, H, 100, 200, W * 6 / 10, H * 6 / 10, 0xffff);
-		scal[c] = drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_TEST_ONLY, NULL) == 0;
-		drmModeAtomicFree(r);
 	}
 	struct stats st = { 0 };
 	double t_start = now_ms(), t_end = t_start + opt_seconds * 1e3, prev = 0;
@@ -732,6 +743,50 @@ static int cmd_bw(void)
 	return 0;
 }
 
+static int opt_cycles = 5;
+
+/* Screen off and on the way Moon's DPMS does it, from a compositor that owns
+ * KMS: ACTIVE=0 keeps MODE_ID, so ACTIVE=1 brings the same mode back. */
+static int cmd_dpms(void)
+{
+	struct buf b;
+	buf_dumb(&b, W, H, DRM_FORMAT_XRGB8888);
+	paint_pattern(b.map, b.pitch / 4, W, H, 7, 255);
+	initial_commit(b.fb);
+	struct plane *P = primary();
+	for (int c = 0; c < opt_cycles; c++) {
+		drmModeAtomicReqPtr r = drmModeAtomicAlloc();
+		drmModeAtomicAddProperty(r, crtc_id, p_crtc_active, 0);
+		plane_off(r, P);
+		double t0 = now_ms();
+		int ret = drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
+		double toff = now_ms() - t0;
+		drmModeAtomicFree(r);
+		if (ret) die("ACTIVE=0");
+		usleep(1500 * 1000);
+		r = drmModeAtomicAlloc();
+		drmModeAtomicAddProperty(r, crtc_id, p_crtc_active, 1);
+		plane_set(r, P, b.fb, 0, 0, W, H, 0, 0, W, H, 0xffff);
+		t0 = now_ms();
+		ret = drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
+		double ton = now_ms() - t0;
+		drmModeAtomicFree(r);
+		if (ret) die("ACTIVE=1");
+		/* First flip after power-up: the panel is really showing frames again. */
+		r = drmModeAtomicAlloc();
+		drmModeAtomicAddProperty(r, P->id, P->p_fb, b.fb);
+		flip_pending = 1;
+		if (drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT, NULL)) die("flip after on");
+		drmModeAtomicFree(r);
+		wait_flip();
+		printf("dpms cycle %d: off commit %.1f ms, on commit %.1f ms, first flip %.1f ms after on\n", c + 1, toff,
+		       ton, now_ms() - t0);
+		fflush(stdout);
+		usleep(500 * 1000);
+	}
+	return 0;
+}
+
 static int cmd_gbm(void)
 {
 	struct gbm_device *g = gbm_create_device(fd);
@@ -750,7 +805,7 @@ static int cmd_gbm(void)
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "usage: kmsbench probe|flip|planes|bw|gbm [--seconds S] [--mpx M] [--op src|over|scale] "
+		fprintf(stderr, "usage: kmsbench probe|flip|planes|bw|gbm|dpms [--seconds S] [--mpx M] [--op src|over|scale] "
 				"[--threads T] [--buf dumb|system] [--nbuf N] [--cards N] [--noshadow 1] [--bg-mpx M] [--log FILE]\n");
 		return 2;
 	}
@@ -765,6 +820,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--log")) logfp = fopen(argv[i + 1], "w");
 		else if (!strcmp(argv[i], "--noshadow")) opt_noshadow = atoi(argv[i + 1]);
 		else if (!strcmp(argv[i], "--bg-mpx")) opt_bg_mpx = atof(argv[i + 1]);
+		else if (!strcmp(argv[i], "--cycles")) opt_cycles = atoi(argv[i + 1]);
 	}
 	if (nthreads < 1) nthreads = 1;
 	if (nthreads > 8) nthreads = 8;
@@ -778,6 +834,7 @@ int main(int argc, char **argv)
 	else if (!strcmp(argv[1], "planes")) rc = cmd_planes();
 	else if (!strcmp(argv[1], "bw")) rc = cmd_bw();
 	else if (!strcmp(argv[1], "gbm")) rc = cmd_gbm();
+	else if (!strcmp(argv[1], "dpms")) rc = cmd_dpms();
 	if (logfp) fclose(logfp);
 	/* Leave the CRTC as it is: never disable it on this firmware. */
 	return rc;
