@@ -206,7 +206,7 @@ cycles:
 
 ## Candidates
 
-`build-rootfs.sh`): weston 14.0.2 (+ backend-drm, xwayland, shells), sway
+All of these are Alpine 3.24 aarch64 packages: weston 14.0.2 (+ backend-drm, xwayland, shells), sway
 1.12_rc3, cage 0.3.0, labwc 0.20.0, wlroots 0.19.3 / 0.20.2, libliftoff
 0.5.0, phoc 0.55.1, phosh 0.55.0, squeekboard 1.43.1, wvkbd 0.19.4,
 Xwayland 24.1.14, seatd/libseat 0.9.3, libudev-zero 1.0.4. Smithay is a crate
