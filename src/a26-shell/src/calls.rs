@@ -9,16 +9,15 @@
 
 use std::time::{Duration, Instant};
 
-use crate::gfx::{self, Canvas, Path, RectF};
+use crate::gfx::{Canvas, Path, RectF};
 use crate::model::{AppId, ShellState, View};
-use crate::motion::Spring;
+use crate::motion::{Sheet, Spring};
 use crate::telephony_client::{Call, CallCommand, Event, TelStore};
 use crate::text::{self, Weight};
 use crate::ui::{GREEN, RED, SECONDARY, SECONDARY_ALPHA, WHITE};
 
 const SCREEN_W: f32 = 1080.0;
 pub const SCREEN_H: f32 = 2340.0;
-const RISE: Duration = Duration::from_millis(380);
 /// "Call Ended" stays this long before the screen goes.
 const ENDED_FOR: Duration = Duration::from_millis(1200);
 const TAP_SLOP: f32 = 30.0;
@@ -112,8 +111,12 @@ pub struct CallUi {
     pub mute: bool,
     pub speaker: bool,
     pub pressed: Option<CallButton>,
-    /// The screen on display and when it appeared (for its rise).
-    on_screen: Option<(String, Instant)>,
+    /// The kind of screen on display ("incoming:ID" or "call").
+    on_screen: Option<String>,
+    /// Its rise and departure.
+    pub sheet: Sheet,
+    /// The next departure goes up (tucked away), not down.
+    tuck: bool,
     /// The last call ended: shown as "Call Ended" for a moment.
     ended: Option<(Call, Instant)>,
     /// The slide-to-answer knob's offset while dragged, or springing back.
@@ -168,16 +171,6 @@ impl CallUi {
 
     pub fn ringing(&self) -> Option<&Call> {
         self.store.calls().iter().find(|c| c.ringing())
-    }
-
-    /// How far the call screen has risen (0 to 1).
-    pub fn rise(&self, now: Instant) -> f32 {
-        match &self.on_screen {
-            Some((_, at)) => {
-                gfx::ease_out(now.saturating_duration_since(*at).as_secs_f32() / RISE.as_secs_f32())
-            }
-            None => 0.0,
-        }
     }
 
     /// The slide-to-answer knob's offset along its track.
@@ -293,21 +286,19 @@ impl ShellState {
             CallView::InCall { .. } | CallView::Ended { .. } => "call".to_owned(),
         });
         match (kind, &self.calls.on_screen) {
-            (Some(kind), Some((shown, _))) if *shown == kind => {}
+            (Some(kind), Some(shown)) if *shown == kind => {}
             (Some(kind), previous) => {
                 // A ringing call answered keeps the screen in place.
-                let at = if previous.is_some() {
-                    now - RISE
-                } else {
+                if previous.is_none() {
                     if let Some(app) = AppId::from_view(self.view)
                         && self.screen_awake
                         && !self.alerts_cover_app(now)
                     {
                         self.pending_capture = Some(app);
                     }
-                    now
-                };
-                self.calls.on_screen = Some((kind, at));
+                    self.calls.sheet.show(now, self.screen_awake);
+                }
+                self.calls.on_screen = Some(kind);
                 self.calls.pressed = None;
                 self.calls.knob_drag = None;
                 self.calls.knob_spring = None;
@@ -318,17 +309,20 @@ impl ShellState {
                 self.calls.on_screen = None;
                 self.calls.pressed = None;
                 self.calls.touch = None;
+                let up = std::mem::take(&mut self.calls.tuck);
+                self.calls.sheet.hide(now, up, self.screen_awake);
             }
             (None, None) => {}
         }
     }
 
+    /// The call screen is up, or still leaving.
     pub fn calls_cover(&self) -> bool {
-        self.calls.on_screen.is_some()
+        self.calls.sheet.visible()
     }
 
     pub fn calls_animating(&self, now: Instant) -> bool {
-        (self.calls.on_screen.is_some() && self.calls.rise(now) < 1.0)
+        self.calls.sheet.animating(now)
             || self
                 .calls
                 .knob_spring
@@ -354,6 +348,9 @@ impl ShellState {
     }
 
     pub fn calls_tick(&mut self, now: Instant) {
+        if self.calls.sheet.tick(now) {
+            self.redraw = true;
+        }
         if self
             .calls
             .ended
@@ -503,6 +500,7 @@ impl ShellState {
                     && matches!(self.call_view(), Some(CallView::InCall { .. }));
                 if tuck {
                     self.calls.shown = false;
+                    self.calls.tuck = true;
                     self.calls.keypad = false;
                     self.sync_call_screen(now);
                     self.last_action = "call_screen_tucked".into();

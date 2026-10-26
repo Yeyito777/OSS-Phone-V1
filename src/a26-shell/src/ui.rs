@@ -607,7 +607,7 @@ impl Renderer {
             }
         }
         self.update_background(conn, state, display_time)?;
-        if state.alerts.ringing().is_some()
+        if state.alerts.ring_sheet.visible()
             || state.alerts.centre.visible(display_time)
             || state.calls_cover()
         {
@@ -1026,32 +1026,33 @@ impl Renderer {
             radius: 0.0,
             smooth: false,
         });
-        // The ringing screen rises from the bottom the same way.
-        let rise = state.alerts.ring_rise(t);
-        let top = (SCREEN_H * (1.0 - rise)).round();
-        let ringing = state.alerts.ringing().is_some();
-        let alpha = if ringing { 1.0 } else { 0.0 };
-        nodes.push(clipped(deep, top, SCREEN_H, alpha));
-        nodes.push(clipped(self.ring.id, top, SCREEN_H, alpha));
-        // The call screen rises the same way, over everything but the
-        // banner and Control Centre.
-        let call = state.call_view();
-        let rise = state.calls.rise(t);
-        let top = (SCREEN_H * (1.0 - rise)).round();
-        let alpha = if call.is_some() { 1.0 } else { 0.0 };
-        nodes.push(clipped(deep, top, SCREEN_H, alpha));
-        nodes.push(clipped(self.call.id, top, SCREEN_H, alpha));
-        let line = calls::LINE;
-        nodes.push(Node::Image {
-            surface: self.call_line.id,
-            src: RectF::new(0.0, 0.0, line.w, line.h),
-            dst: RectF::new(0.0, line.y + top, line.w, line.h),
-            alpha: if line.y + top < SCREEN_H { alpha } else { 0.0 },
-            radius: 0.0,
-            smooth: false,
-        });
+        // The ringing screen and the call screen rise from the bottom and
+        // leave the same way, as curtains.
+        let (top, bottom) = state.alerts.ring_sheet.bounds(t, SCREEN_H);
+        let ringing = state.alerts.ring_sheet.visible();
+        nodes.push(clipped(deep, top, bottom, 1.0));
+        nodes.push(clipped(self.ring.id, top, bottom, 1.0));
+        let (top, bottom) = state.calls.sheet.bounds(t, SCREEN_H);
+        nodes.push(clipped(deep, top, bottom, 1.0));
+        nodes.push(clipped(self.call.id, top, bottom, 1.0));
+        // Its status line and slide knob are layers of their own, shown
+        // through the same curtain.
+        let within = |surface, rect: RectF, alpha: f32| {
+            let y0 = rect.y.max(top);
+            let y1 = (rect.y + rect.h).min(bottom);
+            let h = (y1 - y0).max(0.0);
+            Node::Image {
+                surface,
+                src: RectF::new(0.0, y0 - rect.y, rect.w, h),
+                dst: RectF::new(rect.x, y0, rect.w, h),
+                alpha: if h > 0.0 { alpha } else { 0.0 },
+                radius: 0.0,
+                smooth: false,
+            }
+        };
+        nodes.push(within(self.call_line.id, calls::LINE, 1.0));
         let sliding = matches!(
-            call,
+            state.call_view(),
             Some(calls::CallView::Incoming {
                 locked: true,
                 waiting: false,
@@ -1059,18 +1060,11 @@ impl Renderer {
             })
         );
         let (knob_x, knob_y) = calls::knob_origin(state.calls.knob_offset(t).round());
-        nodes.push(Node::Image {
-            surface: self.call_knob.id,
-            src: RectF::new(0.0, 0.0, calls::KNOB, calls::KNOB),
-            dst: RectF::new(knob_x, knob_y + top, calls::KNOB, calls::KNOB),
-            alpha: if sliding && knob_y + top < SCREEN_H {
-                1.0
-            } else {
-                0.0
-            },
-            radius: 0.0,
-            smooth: false,
-        });
+        nodes.push(within(
+            self.call_knob.id,
+            RectF::new(knob_x, knob_y, calls::KNOB, calls::KNOB),
+            if sliding { 1.0 } else { 0.0 },
+        ));
         // Banners: drawn here unless they float over an app in their own
         // window (main.rs).
         let banner = state

@@ -2001,6 +2001,13 @@ fn pointer_begin(
     {
         state.keyboard.press_key_index(index);
     }
+    let mut pointer = pointer;
+    if !pointer.keyboard_owned && app_takes_touch(state, y) {
+        // Moon's own apps get the touch itself from the start, so they
+        // highlight what is under the finger and scroll their lists.
+        pointer.forwarding = true;
+        state.app_pointer.push(model::AppPointer::Press(x, y));
+    }
     if !pointer.keyboard_owned {
         state.pressed = press_target(state, x, y);
         if state.pressed.is_some() {
@@ -2109,7 +2116,7 @@ fn pointer_move(
             .then_some(pointer.keyboard_key_index)
             .flatten()
     });
-    forward_app_drag(state, height, x, y);
+    forward_app_drag(state, x, y);
     if state.pressed.is_some()
         && let Some(pointer) = state.pointer.as_ref()
         && (i32::from(x) - i32::from(pointer.start_x))
@@ -2141,35 +2148,26 @@ fn pointer_move(
     }
 }
 
-/// A drag over one of Moon's own apps goes to the app as a held button,
-/// once it has moved past the tap slop and unless it began on the bottom
-/// edge (the home gesture's).
-fn forward_app_drag(state: &mut ShellState, height: u16, x: i16, y: i16) {
-    let eligible = state.view.takes_drags()
+/// A touch on one of Moon's own apps (System, Phone, Messages) is theirs,
+/// unless it starts on the bottom edge (the home gesture's) or the shell is
+/// in front.
+fn app_takes_touch(state: &ShellState, y: i16) -> bool {
+    state.view.takes_drags()
+        && f32::from(y) < interaction::SCREEN_H - 180.0
         && state.gesture.is_none()
         && state.switcher.is_none()
-        && !state.shell_covers_app();
-    let Some(pointer) = state.pointer.as_mut() else {
-        return;
-    };
-    if pointer.keyboard_owned {
-        return;
-    }
-    if pointer.forwarding {
+        && state.launch().is_none()
+        && !state.shell_covers_app()
+}
+
+/// The finger moved on a touch the app has.
+fn forward_app_drag(state: &mut ShellState, x: i16, y: i16) {
+    if state
+        .pointer
+        .as_ref()
+        .is_some_and(|pointer| pointer.forwarding)
+    {
         state.app_pointer.push(model::AppPointer::Motion(x, y));
-        return;
-    }
-    let moved = (i32::from(x) - i32::from(pointer.start_x))
-        .abs()
-        .max((i32::from(y) - i32::from(pointer.start_y)).abs())
-        > PRESS_SLOP;
-    let bottom_start = i32::from(pointer.start_y) >= i32::from(height) - 180;
-    if eligible && moved && !bottom_start {
-        pointer.forwarding = true;
-        state.app_pointer.extend([
-            model::AppPointer::Press(pointer.start_x, pointer.start_y),
-            model::AppPointer::Motion(x, y),
-        ]);
     }
 }
 
@@ -2625,6 +2623,11 @@ fn handle_tap(
     if state.switcher.is_some() {
         state.switcher_touch_begin(f32::from(x), f32::from(y));
         state.switcher_touch_end();
+        return;
+    }
+    if state.call_pointer_begin(f32::from(x), f32::from(y)) {
+        // The call screen (a `ctl tap`; touches reach it in pointer_begin).
+        state.call_pointer_end(f32::from(x), f32::from(y));
         return;
     }
     if keyboard_geometry.owns_touch(&state.keyboard, x, y) {

@@ -58,7 +58,6 @@ const CENTRE_BOTTOM: f32 = 2220.0;
 /// Ringing-screen buttons.
 pub const RING_PRIMARY: RectF = RectF::new(120.0, 1560.0, 840.0, 190.0);
 pub const RING_SECONDARY: RectF = RectF::new(120.0, 1800.0, 840.0, 190.0);
-const RING_RISE: Duration = Duration::from_millis(380);
 
 const TAP_SLOP: f32 = 30.0;
 /// How long a notification keeps the screen on by itself (as on iPhone).
@@ -222,8 +221,10 @@ pub struct Alerts {
     pub store: NotifyStore,
     pub banner: Option<Banner>,
     pub centre: Centre,
-    /// The ringing alert on screen and when it appeared.
-    ring_shown: Option<(String, Instant)>,
+    /// The ringing alert on screen.
+    ring_shown: Option<String>,
+    /// The ringing screen's rise and departure.
+    pub ring_sheet: crate::motion::Sheet,
     pub ring_pressed: Option<RingButton>,
     pub outbox: Vec<Outgoing>,
     /// A lock-screen notification tapped: opened once unlocked.
@@ -242,16 +243,6 @@ impl Alerts {
     /// The alarm or timer ringing on screen, if any.
     pub fn ringing(&self) -> Option<&Ringing> {
         self.store.ringing.first()
-    }
-
-    /// How far the ringing screen has risen (0 to 1).
-    pub fn ring_rise(&self, now: Instant) -> f32 {
-        match &self.ring_shown {
-            Some((_, at)) if self.ringing().is_some() => crate::gfx::ease_out(
-                now.saturating_duration_since(*at).as_secs_f32() / RING_RISE.as_secs_f32(),
-            ),
-            _ => 0.0,
-        }
     }
 
     pub fn unseen(&self) -> Vec<&Notification> {
@@ -365,9 +356,10 @@ impl ShellState {
     fn sync_ring_screen(&mut self, now: Instant) {
         let current = self.alerts.ringing().map(|ring| ring.id.clone());
         match (current, &self.alerts.ring_shown) {
-            (Some(id), Some((shown, _))) if *shown == id => {}
+            (Some(id), Some(shown)) if *shown == id => {}
             (Some(id), _) => {
-                self.alerts.ring_shown = Some((id, now));
+                self.alerts.ring_shown = Some(id);
+                self.alerts.ring_sheet.show(now, self.screen_awake);
                 self.alerts.ring_pressed = None;
                 if let Some(app) = AppId::from_view(self.view)
                     && self.screen_awake
@@ -380,6 +372,7 @@ impl ShellState {
             (None, Some(_)) => {
                 self.alerts.ring_shown = None;
                 self.alerts.ring_pressed = None;
+                self.alerts.ring_sheet.hide(now, false, self.screen_awake);
             }
             (None, None) => {}
         }
@@ -398,7 +391,7 @@ impl ShellState {
     /// The centre, Control Centre or the ringing screen is up: the shell
     /// covers the foreground app.
     pub fn alerts_cover_app(&self, now: Instant) -> bool {
-        self.alerts.ringing().is_some()
+        self.alerts.ring_sheet.visible()
             || self.alerts.centre.visible(now)
             || self.control.visible(now)
             || self.calls_cover()
@@ -414,7 +407,7 @@ impl ShellState {
                 .as_ref()
                 .and_then(|s| s.fly)
                 .is_some_and(|fly| !fly.settled(now, 1.0))
-            || (alerts.ringing().is_some() && alerts.ring_rise(now) < 1.0)
+            || alerts.ring_sheet.animating(now)
     }
 
     pub fn alerts_deadline(&self) -> Option<Instant> {
@@ -440,6 +433,9 @@ impl ShellState {
 
     /// Banner timeouts, finished animations, and the centre opening.
     pub fn alerts_tick(&mut self, now: Instant) {
+        if self.alerts.ring_sheet.tick(now) {
+            self.redraw = true;
+        }
         let covering = self.view.is_app() && self.alerts_cover_app(now);
         if self.alerts.covering_app && !covering {
             // The app is back on top of the shell.

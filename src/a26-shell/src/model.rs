@@ -174,7 +174,7 @@ pub struct PointerGesture {
     pub keyboard_initial_sent: bool,
     pub keyboard_repeat_uppercase: bool,
     pub keyboard_next_repeat_at: Option<Instant>,
-    /// The touch is a drag handed to the app in front (see `AppPointer`).
+    /// The touch belongs to the app in front (see `AppPointer`).
     pub forwarding: bool,
 }
 
@@ -209,8 +209,8 @@ pub struct PublicOpenTarget {
 }
 
 /// Pointer events for the app in front, sent through XTEST by the main
-/// loop. Moon's own apps (System, Phone, Messages) get drags as a held
-/// button so their lists scroll; taps reach every app on release.
+/// loop. Moon's own apps (System, Phone, Messages) get each touch as a held
+/// button from touch-down to release; the Browser gets taps on release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppPointer {
     Press(i16, i16),
@@ -297,7 +297,7 @@ pub struct ShellState {
     pub last_input: Instant,
     /// The app shown before the current one (the bottom-edge swipe).
     previous_app: Option<AppId>,
-    /// Drag events for the app in front, drained by the main loop.
+    /// Touch events for the app in front, drained by the main loop.
     pub app_pointer: Vec<AppPointer>,
     pub open_target: Option<OpenTarget>,
     active_app_focused: bool,

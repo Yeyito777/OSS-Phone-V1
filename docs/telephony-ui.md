@@ -39,6 +39,9 @@ from screen-off:
 - **In call**: caller (number formatted, `+1 (647) 555-1234`), status
   (`calling…`, `ringing…`, the timer, `on hold`), mute, keypad (DTMF),
   speaker, swap when a call is held, end. "Call Ended" shows for 1.2 s.
+- The call and ringing screens rise from the bottom and leave downward
+  (upward when tucked away) as curtains (`motion::Sheet`): content static,
+  only the edge moves.
 - A swipe up from the bottom edge tucks the in-call screen away; the
   status bar's clock then sits in a green pill, and tapping it brings the
   screen back.
@@ -70,13 +73,14 @@ A tapped `messages`/`phone` notification opens its target
 (`app`, `target`, `serial`, `age_ms`), where the app looks when it starts or
 comes forward.
 
-## Drags for Moon's own apps
+## Touches for Moon's own apps
 
-Moon used to hand apps taps only. The System, Phone and Messages apps now
-also get drags: once a touch outside the bottom gesture edge moves past the
-tap slop, Moon sends the app a button press at the start point, the motion,
-and the release (XTEST), so lists scroll with momentum. The Browser keeps
-taps only.
+Moon used to hand apps taps only, on release. The System, Phone and Messages
+apps now get each touch itself: a button press at touch-down, the motion,
+and the release (XTEST), unless the touch starts on the bottom gesture edge
+or the shell is in front. So they highlight what is under the finger at
+once, and their lists scroll with momentum. The Browser keeps taps on
+release.
 
 ## Preview
 
