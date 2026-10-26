@@ -32,6 +32,7 @@ mod status_bar;
 mod suspend;
 mod telephony_client;
 mod text;
+mod touch;
 mod ui;
 mod volume;
 mod wallpaper;
@@ -564,6 +565,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut suspend_coordinator =
         SuspendCoordinator::new(true, platform_suspend.is_some(), persisted_suspend);
     let mut raw_touch = RawTouchTracker::default();
+    // MOON_TOUCH=evdev: Moon reads the touchscreen itself (multi-touch
+    // protocol B) instead of taking XInput 2 raw touches from Xorg; the
+    // step towards sessions without Xorg. MOON_TOUCH_DEVICE names it.
+    let mut evdev_touch = if env::var("MOON_TOUCH").is_ok_and(|value| value == "evdev") {
+        let name = env::var("MOON_TOUCH_DEVICE").unwrap_or_else(|_| "sec_touchscreen".into());
+        match touch::Touchscreen::find(&name, width, height) {
+            Ok(device) => {
+                eprintln!("touch: reading {} directly", device.path().display());
+                Some(device)
+            }
+            Err(error) => {
+                eprintln!("touch: {error}; staying on XInput 2");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut app_viewport: Option<(u32, u16)> = None;
     renderer.render(&conn, &state, Instant::now())?;
     if let Some(device) = touchscreen.as_ref()
@@ -594,6 +613,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 continue;
             }
             if renderer.compositor.handle_event(&event) {
+                continue;
+            }
+            if evdev_touch.is_some()
+                && matches!(
+                    event,
+                    Event::XinputRawTouchBegin(_)
+                        | Event::XinputRawTouchUpdate(_)
+                        | Event::XinputRawTouchEnd(_)
+                )
+            {
+                // Moon reads the touchscreen itself.
                 continue;
             }
             handle_x_event(
@@ -701,6 +731,52 @@ fn main() -> Result<(), Box<dyn Error>> {
                 && (state.gesture.is_some() || !state.view.is_app() || state.shell_covers_app())
             {
                 server.cancel_touch();
+            }
+        }
+
+        if let Some(device) = evdev_touch.as_mut() {
+            match device.poll() {
+                Ok(contacts) => {
+                    for contact in contacts {
+                        match contact {
+                            touch::Contact::Begin(id, x, y) => touch_begin(
+                                &conn,
+                                &mut state,
+                                &mut raw_touch,
+                                &keyboard_geometry,
+                                &key_injector,
+                                key_repeat_timing,
+                                id,
+                                x,
+                                y,
+                            ),
+                            touch::Contact::Update(id, x, y) => touch_update(
+                                &mut state,
+                                &mut raw_touch,
+                                &keyboard_geometry,
+                                height,
+                                id,
+                                Some(x),
+                                Some(y),
+                            ),
+                            touch::Contact::End(id) => touch_end(
+                                &conn,
+                                root,
+                                &mut state,
+                                &mut raw_touch,
+                                (width, height),
+                                &keyboard_geometry,
+                                &config,
+                                &key_injector,
+                                id,
+                            ),
+                        }
+                    }
+                }
+                Err(error) => {
+                    eprintln!("touch: reading the touchscreen failed: {error}; back to XInput 2");
+                    evdev_touch = None;
+                }
             }
         }
 
@@ -1367,6 +1443,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             deadline = deadline.min(brightness_deadline.max(now));
         }
         let mut app_fds = apps.poll_fds();
+        if let Some(device) = evdev_touch.as_ref() {
+            app_fds.push(device.raw_fd());
+        }
         if let Some(server) = wayland.as_mut() {
             app_fds.extend(server.poll_fds());
             if let Some(frame) = server.tick(Instant::now(), state.screen_awake) {
@@ -1702,85 +1781,42 @@ fn handle_x_event(
             let x = raw_axis(&event, 0, width.saturating_sub(1));
             let y = raw_axis(&event, 1, height.saturating_sub(1));
             if let (Some(x), Some(y)) = (x, y) {
-                if keyboard_geometry.owns_touch(&state.keyboard, x, y) {
-                    if let Some(action) = begin_raw_keyboard_contact(
-                        state,
-                        raw_touch,
-                        event.detail,
-                        keyboard_geometry,
-                        x,
-                        y,
-                        key_repeat_timing,
-                    ) {
-                        handle_keyboard_action(conn, state, action, key_injector);
-                    }
-                } else if raw_touch.touch_id.is_none() && state.pointer.is_none() {
-                    // Non-keyboard app/close gestures remain deliberately
-                    // single-finger even while the keyboard supports rollover.
-                    raw_touch.touch_id = Some(event.detail);
-                    raw_touch.x = x;
-                    raw_touch.y = y;
-                    if let Some(action) =
-                        pointer_begin(state, keyboard_geometry, x, y, key_repeat_timing)
-                    {
-                        handle_keyboard_action(conn, state, action, key_injector);
-                    }
-                }
+                touch_begin(
+                    conn,
+                    state,
+                    raw_touch,
+                    keyboard_geometry,
+                    key_injector,
+                    key_repeat_timing,
+                    event.detail,
+                    x,
+                    y,
+                );
             }
         }
         Event::XinputRawTouchUpdate(event) => {
-            if raw_touch
-                .keyboard_contacts
-                .iter()
-                .any(|(touch_id, _)| *touch_id == event.detail)
-            {
-                update_raw_keyboard_contact(
-                    state,
-                    raw_touch,
-                    event.detail,
-                    keyboard_geometry,
-                    raw_axis(&event, 0, width.saturating_sub(1)),
-                    raw_axis(&event, 1, height.saturating_sub(1)),
-                );
-            } else if raw_touch.touch_id == Some(event.detail) {
-                if let Some(x) = raw_axis(&event, 0, width.saturating_sub(1)) {
-                    raw_touch.x = x;
-                }
-                if let Some(y) = raw_axis(&event, 1, height.saturating_sub(1)) {
-                    raw_touch.y = y;
-                }
-                pointer_move(state, keyboard_geometry, height, raw_touch.x, raw_touch.y);
-            }
+            touch_update(
+                state,
+                raw_touch,
+                keyboard_geometry,
+                height,
+                event.detail,
+                raw_axis(&event, 0, width.saturating_sub(1)),
+                raw_axis(&event, 1, height.saturating_sub(1)),
+            );
         }
         Event::XinputRawTouchEnd(event) => {
-            if raw_touch
-                .keyboard_contacts
-                .iter()
-                .any(|(touch_id, _)| *touch_id == event.detail)
-            {
-                end_raw_keyboard_contact(
-                    conn,
-                    state,
-                    raw_touch,
-                    event.detail,
-                    keyboard_geometry,
-                    key_injector,
-                );
-            } else if raw_touch.touch_id == Some(event.detail) {
-                pointer_end(
-                    conn,
-                    root,
-                    state,
-                    raw_touch.x,
-                    raw_touch.y,
-                    width,
-                    height,
-                    keyboard_geometry,
-                    config,
-                    key_injector,
-                );
-                raw_touch.touch_id = None;
-            }
+            touch_end(
+                conn,
+                root,
+                state,
+                raw_touch,
+                dimensions,
+                keyboard_geometry,
+                config,
+                key_injector,
+                event.detail,
+            );
         }
         Event::Expose(event) if event.window == shell_window => {
             state.shell_exposed = true;
@@ -2040,6 +2076,105 @@ fn manage_window(
         raise_shell(conn, shell_window)?;
     }
     Ok(())
+}
+
+/// A finger touched down (XI2 raw touch, or Moon's own evdev reader).
+#[allow(clippy::too_many_arguments)]
+fn touch_begin(
+    conn: &RustConnection,
+    state: &mut ShellState,
+    raw_touch: &mut RawTouchTracker,
+    keyboard_geometry: &KeyboardGeometry,
+    key_injector: &XtestInjector,
+    key_repeat_timing: KeyRepeatTiming,
+    id: u32,
+    x: i16,
+    y: i16,
+) {
+    if keyboard_geometry.owns_touch(&state.keyboard, x, y) {
+        if let Some(action) = begin_raw_keyboard_contact(
+            state,
+            raw_touch,
+            id,
+            keyboard_geometry,
+            x,
+            y,
+            key_repeat_timing,
+        ) {
+            handle_keyboard_action(conn, state, action, key_injector);
+        }
+    } else if raw_touch.touch_id.is_none() && state.pointer.is_none() {
+        // Non-keyboard app/close gestures remain deliberately
+        // single-finger even while the keyboard supports rollover.
+        raw_touch.touch_id = Some(id);
+        raw_touch.x = x;
+        raw_touch.y = y;
+        if let Some(action) = pointer_begin(state, keyboard_geometry, x, y, key_repeat_timing) {
+            handle_keyboard_action(conn, state, action, key_injector);
+        }
+    }
+}
+
+fn touch_update(
+    state: &mut ShellState,
+    raw_touch: &mut RawTouchTracker,
+    keyboard_geometry: &KeyboardGeometry,
+    height: u16,
+    id: u32,
+    x: Option<i16>,
+    y: Option<i16>,
+) {
+    if raw_touch
+        .keyboard_contacts
+        .iter()
+        .any(|(touch_id, _)| *touch_id == id)
+    {
+        update_raw_keyboard_contact(state, raw_touch, id, keyboard_geometry, x, y);
+    } else if raw_touch.touch_id == Some(id) {
+        if let Some(x) = x {
+            raw_touch.x = x;
+        }
+        if let Some(y) = y {
+            raw_touch.y = y;
+        }
+        pointer_move(state, keyboard_geometry, height, raw_touch.x, raw_touch.y);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn touch_end(
+    conn: &RustConnection,
+    root: u32,
+    state: &mut ShellState,
+    raw_touch: &mut RawTouchTracker,
+    dimensions: (u16, u16),
+    keyboard_geometry: &KeyboardGeometry,
+    config: &Config,
+    key_injector: &XtestInjector,
+    id: u32,
+) {
+    let (width, height) = dimensions;
+    if raw_touch
+        .keyboard_contacts
+        .iter()
+        .any(|(touch_id, _)| *touch_id == id)
+    {
+        end_raw_keyboard_contact(conn, state, raw_touch, id, keyboard_geometry, key_injector);
+    } else if raw_touch.touch_id == Some(id) {
+        pointer_end(
+            conn,
+            root,
+            state,
+            raw_touch.x,
+            raw_touch.y,
+            width,
+            height,
+            keyboard_geometry,
+            config,
+            key_injector,
+        );
+        raw_touch.touch_id = None;
+    }
 }
 
 fn raw_axis(event: &xinput::RawTouchBeginEvent, wanted: usize, maximum: u16) -> Option<i16> {
