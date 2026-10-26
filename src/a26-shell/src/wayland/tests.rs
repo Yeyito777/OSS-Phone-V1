@@ -10,6 +10,7 @@ use wayland_client::protocol::{
     wl_touch,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, delegate_noop};
+use wayland_protocols::wp::presentation_time::client::{wp_presentation, wp_presentation_feedback};
 use wayland_protocols::wp::text_input::zv3::client::{
     zwp_text_input_manager_v3, zwp_text_input_v3,
 };
@@ -31,6 +32,8 @@ struct Client {
     touches: Vec<String>,
     keys: Vec<u32>,
     committed: Arc<Mutex<String>>,
+    presentation: Option<wp_presentation::WpPresentation>,
+    presented: Vec<(u64, u32, u32)>,
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for Client {
@@ -54,6 +57,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Client {
                 "xdg_wm_base" => c.wm = Some(r.bind(name, version, qh, ())),
                 "wl_seat" => c.seat = Some(r.bind(name, version, qh, ())),
                 "zwp_text_input_manager_v3" => c.text = Some(r.bind(name, 1, qh, ())),
+                "wp_presentation" => c.presentation = Some(r.bind(name, 1, qh, ())),
                 _ => {}
             }
         }
@@ -170,6 +174,33 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for Client {
     }
 }
 
+impl Dispatch<wp_presentation_feedback::WpPresentationFeedback, ()> for Client {
+    fn event(
+        c: &mut Self,
+        _: &wp_presentation_feedback::WpPresentationFeedback,
+        e: wp_presentation_feedback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wp_presentation_feedback::Event::Presented {
+            tv_sec_lo,
+            tv_nsec,
+            seq_lo,
+            refresh,
+            ..
+        } = e
+        {
+            c.presented.push((
+                u64::from(tv_sec_lo) * 1_000_000_000 + u64::from(tv_nsec),
+                seq_lo,
+                refresh,
+            ));
+        }
+    }
+}
+
+delegate_noop!(Client: ignore wp_presentation::WpPresentation);
 delegate_noop!(Client: ignore wl_compositor::WlCompositor);
 delegate_noop!(Client: ignore wl_surface::WlSurface);
 delegate_noop!(Client: ignore wl_shm::WlShm);
@@ -288,6 +319,12 @@ fn toplevel_configure_commit_release_touch_and_text() {
     let buffer = pool.create_buffer(0, w, h_px, w * 4, wl_shm::Format::Xrgb8888, &qh, ());
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, 10, 10);
+    let _feedback = h
+        .client
+        .presentation
+        .as_ref()
+        .unwrap()
+        .feedback(&surface, &qh, ());
     surface.commit();
     h.pump();
     let resource = match h.server.take_events().pop() {
@@ -304,9 +341,12 @@ fn toplevel_configure_commit_release_touch_and_text() {
         }
         other => panic!("expected a commit, got {other:?}"),
     };
+    h.server.buffer_presented(&resource, 3_000_000_123, 7, true);
     h.server.release(&resource);
     h.pump();
     assert_eq!(h.client.released, 1);
+    // Presented at the flip's time, with the panel's 120 Hz period.
+    assert_eq!(h.client.presented, vec![(3_000_000_123, 7, 8_333_333)]);
 
     // Touch and keyboard need the seat; text input follows keyboard focus.
     let seat = h.client.seat.clone().unwrap();

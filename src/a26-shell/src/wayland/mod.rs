@@ -13,6 +13,7 @@
 //! Like the rest of Moon, nothing here ever blocks: the listening socket and
 //! the clients are nonblocking and polled by the main loop.
 
+mod presentation;
 mod seat;
 mod shell;
 mod shm;
@@ -172,6 +173,7 @@ pub struct WlState {
     /// The panel's integer scale: logical units are this many pixels.
     pub(crate) scale: i32,
     pub(crate) outputs: Vec<wayland_server::protocol::wl_output::WlOutput>,
+    pub(crate) feedbacks: presentation::Feedbacks,
     pub(crate) serial: u32,
 }
 
@@ -270,6 +272,7 @@ impl WaylandServer {
         shell::create_globals(&handle);
         seat::create_globals(&handle);
         text_input::create_globals(&handle);
+        presentation::create_globals(&handle);
         Ok(Self {
             display,
             listener,
@@ -288,6 +291,7 @@ impl WaylandServer {
                 refresh_mhz,
                 scale: scale.max(1),
                 outputs: Vec::new(),
+                feedbacks: presentation::Feedbacks::default(),
                 serial: 0,
             },
             socket_path,
@@ -382,6 +386,19 @@ impl WaylandServer {
         self.state
             .surface_by_key(surface)
             .is_some_and(|data| !data.frame_callbacks.is_empty())
+    }
+
+    /// The buffer's content is on the panel since `time_ns` (CLOCK_MONOTONIC):
+    /// presentation feedback for it is answered. `vsync`: the time is a
+    /// page flip's (else the time the content was handed on).
+    pub fn buffer_presented(
+        &mut self,
+        buffer: &WlBuffer,
+        time_ns: u64,
+        sequence: u64,
+        vsync: bool,
+    ) {
+        presentation::presented(&mut self.state, buffer, time_ns, sequence, vsync);
     }
 
     /// Moon has copied the buffer: the client may reuse it.

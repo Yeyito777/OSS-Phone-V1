@@ -128,6 +128,8 @@ pub struct WaylandApps {
     overlays: Vec<(RectF, f32)>,
     /// Buffers the compositor could not show (v4 MG_SURFACE_FAILED).
     unshareable: std::collections::HashSet<ObjectId>,
+    /// While settling flipped buffers: that flip's time and counter.
+    flip: Option<(u64, u64)>,
 }
 
 impl WaylandApps {
@@ -182,6 +184,7 @@ impl WaylandApps {
             direct_dirty: false,
             overlays: Vec::new(),
             unshareable: std::collections::HashSet::new(),
+            flip: None,
         })
     }
 
@@ -664,6 +667,8 @@ impl WaylandApps {
                 || self.client_surfaces.contains_key(id)
         });
         let presented = gpu.presented_serial();
+        let (flip_ns, flip_sequence) = gpu.presented_at();
+        self.flip = Some((flip_ns, u64::from(flip_sequence)));
         let mut index = 0;
         while index < self.presenting.len() {
             if presented.wrapping_sub(self.presenting[index].0) < u32::MAX / 2 {
@@ -678,6 +683,7 @@ impl WaylandApps {
                 index += 1;
             }
         }
+        self.flip = None;
         let target = window
             .and_then(|window| self.windows.get(&window).copied())
             .filter(|key| self.can_go_direct(*key, gpu));
@@ -931,6 +937,15 @@ impl WaylandApps {
 
     /// A copied buffer is the one on screen; the one it replaces goes back.
     fn make_current(&mut self, surface: SurfaceKey, buffer: WlBuffer, shm: Arc<ShmBuffer>) {
+        // Presentation feedback: a flip's time in direct mode, otherwise the
+        // time the copy into the X proxy finished.
+        match self.flip {
+            Some((time_ns, sequence)) => {
+                self.server
+                    .buffer_presented(&buffer, time_ns, sequence, true);
+            }
+            None => self.server.buffer_presented(&buffer, now_ns(), 0, false),
+        }
         let Some(proxy) = self.proxies.get_mut(&surface) else {
             self.server.release(&buffer);
             return;
@@ -1256,6 +1271,16 @@ fn proxy_events() -> EventMask {
         | EventMask::BUTTON_PRESS
         | EventMask::BUTTON_RELEASE
         | EventMask::BUTTON_MOTION
+}
+
+fn now_ns() -> u64 {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime writes one timespec.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) };
+    now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64
 }
 
 fn intersect(a: wayland::Rect, b: wayland::Rect) -> Option<wayland::Rect> {

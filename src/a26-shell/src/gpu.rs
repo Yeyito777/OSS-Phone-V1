@@ -570,6 +570,8 @@ pub struct GpuBackend {
     presented_serial: u32,
     /// Surfaces the compositor reported failed (v4), for the Wayland side.
     failed: Vec<SurfaceId>,
+    /// The vblank time and counter of the newest flip reported.
+    presented_at: (u64, u32),
 }
 
 impl GpuBackend {
@@ -639,6 +641,7 @@ impl GpuBackend {
             direct: Vec::new(),
             presented_serial: 0,
             failed: Vec::new(),
+            presented_at: (0, 0),
         };
         // The compositor starts before Moon; allow it a moment if not.
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -1298,6 +1301,7 @@ impl GpuBackend {
         let serial = le_u32(msg, 8);
         if serial > self.presented_serial || self.presented_serial - serial > u32::MAX / 2 {
             self.presented_serial = serial;
+            self.presented_at = (le_u64(msg, 16), le_u32(msg, 12));
         }
         let sequence = le_u32(msg, 12);
         let time_ns = le_u64(msg, 16);
@@ -1510,6 +1514,11 @@ impl GpuBackend {
 
     pub fn presented_serial(&self) -> u32 {
         self.presented_serial
+    }
+
+    /// CLOCK_MONOTONIC time (ns) and vblank counter of that flip.
+    pub fn presented_at(&self) -> (u64, u32) {
+        self.presented_at
     }
 
     /// Whether the compositor guards client memory that may shrink (v4):

@@ -220,6 +220,7 @@ fn destroy_surface(state: &mut WlState, id: &wayland_server::backend::ObjectId) 
         parent.children.retain(|child| *child != data.key);
     }
     state.seat.forget_surface(data.key);
+    state.feedbacks.forget_surface(data.key);
     state.text_input.forget_surface(&data.resource);
     if data.placement.is_some() {
         state.outbox.push(Event::Destroyed {
@@ -327,6 +328,7 @@ fn commit(state: &mut WlState, resource: &WlSurface) {
                         rects = vec![bounds(&rects)];
                     }
                     data.buffer = Some((buffer.clone(), shm.clone()));
+                    state.feedbacks.commit(key, Some(&buffer));
                     event = Some(Event::Commit {
                         surface: key,
                         buffer: shm.clone(),
@@ -360,6 +362,10 @@ fn commit(state: &mut WlState, resource: &WlSurface) {
         buffer.release();
     }
     let children = data.children.clone();
+    if !matches!(event, Some(Event::Commit { .. })) {
+        // Nothing new reaches the panel for this commit.
+        state.feedbacks.commit(key, None);
+    }
     if let Some(event) = event {
         state.outbox.push(event);
     }
