@@ -60,6 +60,26 @@ data from the Linux side. Protocol: `docs/telephony-protocol.md`.
   `ril.removableEsim1/2=0`: the SM-A266M (GTO) is dual physical nano-SIM. A
   Freedom line needs a physical SIM in this phone.
 
+## 1b. Hardening checks on the phone (2026-10-26, no SIM, GPU tier)
+
+* **Idle cost:** the daemon run by hand, 180 s after its 10 s start-up
+  window: **0 CPU ticks** (utime/stime unchanged), 4 voluntary context
+  switches (the status query that ended the run), no involuntary ones.
+  Indications for the whole run: `rilConnected` and `radioStateChanged(ON)`
+  per slot at connect, and one `cellInfoList`. There is no polling. With no
+  SIM, rild sends a `networkStateChanged` about every 1–2 h.
+* **Airplane cycle:** `radio.set airplane=true` → `setRadioPower(false)` on
+  both slots, `ril.radiostate` 10 → 0, registration `none`; `airplane=false`
+  → power on, back to `radiostate` 10, `denied`/emergency-only within 10 s;
+  unchanged after the daemon exits.
+* **Call-audio mode switch, no call:** `moon-call-audio mode in_call` →
+  `Phone state: AUDIO_MODE_IN_CALL`, the HAL logs `adev_set_mode … (in_call
+  mode)` and `AudioRil: ### Audio Mode Setting!! modeType = [2]` (the HAL's
+  RIL client gets the mode, so the voice path is set up the way Android's is);
+  `mode normal` reverses it. Afterwards: music index 5 (speaker and
+  default), Moon's volume 42, force-use none, and a moon-audiod track still
+  runs ABOX RDMA0 (`pcm0p RUNNING`). audioserver did not restart.
+
 ## 2. Architecture
 
 ```
@@ -176,7 +196,8 @@ is a research project of its own; see §6.
 | 3 | SMS receive/send, threads, notifications | built, awaiting phone + user OK for a real SMS |
 | 4 | Voice calls, call audio (earpiece, speaker, mute) | built, awaiting phone + user help |
 | 5 | Mobile data | built, awaiting phone + OK |
-| 6 | Boot integration: start after Moon is ready, stop before the framework | hooks in moon-post-ready.sh, a26-enter-chroot.sh, a26-android-graphics-restore.sh and `install-telephony.sh`; not yet installed |
+| 6 | Boot integration: start after Moon is ready, stop before the framework | hooks in moon-post-ready.sh, a26-enter-chroot.sh, a26-android-graphics-restore.sh and `install-telephony.sh`; with the device lead for review/install |
+| — | No-SIM experience | verified: emergency-only state, airplane cycle, zero idle CPU (§1b) |
 | — | eSIM | no eUICC on this phone; lpac bridge built for hardware that has one |
 | 7 | VoLTE/IMS | research |
 
