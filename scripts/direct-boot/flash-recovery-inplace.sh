@@ -57,10 +57,14 @@ phone() { adb -s "$SERIAL" shell "/data/local/tmp/su -c '$1'" | tr -d '\r'; }
 fail() { echo "flash-recovery-inplace: $*" >&2; exit 1; }
 sha256() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}' || sha256sum "$1" | awk '{print $1}'; }
 
-bcb_zero() { # 0 = all-zero (clean), 1 = non-zero (sticky command present)
-  local h; h="$(phone "dd if=/dev/block/by-name/misc bs=4096 count=1 2>/dev/null | sha256sum | cut -d' ' -f1")"
-  local z; z="$(phone "dd if=/dev/zero bs=4096 count=1 2>/dev/null | sha256sum | cut -d' ' -f1")"
-  [[ "$h" == "$z" ]]
+# 0 = all-zero (clean). Fails closed: anything but two real 64-hex hashes that
+# match (adb error, su failure, quoting slip) counts as NOT clean. No single
+# quotes inside: phone() already wraps the command in them.
+ZERO4K_SHA=ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7
+bcb_zero() {
+  local h; h="$(phone "dd if=/dev/block/by-name/misc bs=4096 count=1 2>/dev/null | sha256sum | cut -c1-64")"
+  [[ "$h" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot read the misc BCB (got: ${h:0:80})" >&2; return 1; }
+  [[ "$h" == "$ZERO4K_SHA" ]]
 }
 
 if (( CHECK_BCB )); then

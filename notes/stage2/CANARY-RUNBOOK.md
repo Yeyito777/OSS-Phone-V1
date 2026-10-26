@@ -27,6 +27,13 @@ bootloader then boots BOOT. We assert the BCB is all-zero before and after.
 Scripts: `scripts/direct-boot/flash-recovery-inplace.sh` (write/restore RECOVERY
 with backup + read-back verify; `--check-bcb`, `--restore-stock`, `--dry-run`).
 
+## GPU mode (2026-10-26)
+GPU mode (Moon drawing through `moon-compositor`) changes nothing here: the
+canary and the OSS-kernel calibration boot from the RECOVERY slot with their own
+ramdisk, and `flash-recovery-inplace.sh` only reads/writes block devices. Nothing
+in this path assumes Xorg owns KMS. Only the post-return expectation is affected:
+the first boot back may be plain Android by policy (recovery reason / panic).
+
 ## Preconditions
 - Attended, phone on USB, battery ≥ 50 %.
 - `adb shell su -c 'sha256sum /dev/block/by-name/boot'` == `8c0461ee…` (BOOT good).
@@ -39,11 +46,16 @@ Proves recovery entry + "a reset during recovery returns to BOOT", using the
 **stock** recovery already installed (cannot loop — stock recovery always boots).
 1. `--check-bcb` → all zero.
 2. Push and run the BCB-free entry tool:
-   `adb push images/oss-stage2/canary/reboot-recovery /data/local/tmp/ && adb shell su -c '/data/local/tmp/reboot-recovery'`
+   `adb push images/oss-stage2/canary/reboot-recovery /data/local/tmp/ && adb shell su -c 'chmod 0755 /data/local/tmp/reboot-recovery'`,
+   verify `adb shell sha256sum /data/local/tmp/reboot-recovery` == `89c036e0…`, then
+   `adb shell su -c /data/local/tmp/reboot-recovery`
    (this writes no partition; it just calls `reboot(2)`).
 3. Phone enters **stock recovery** (Android Recovery screen).
 4. **Force-restart while in recovery:** hold **Power + Volume Down** ~7–10 s.
-5. Expected: the phone boots the **normal system** (Moon), NOT recovery.
+5. Expected: the phone boots the **normal system** from BOOT, NOT recovery.
+   It may come up as **plain Android rather than Moon**: `moon-direct-policy.sh`
+   sends a boot whose reason contains `recovery` to Android once (line 48).
+   Pass = BOOT booted (adb authorized, `/proc/1/comm=init`, BOOT sha), not Moon.
 6. Back in the system: `--check-bcb` → still all zero; BOOT and RECOVERY hashes
    unchanged.
 → If step 5 lands in the system, the PMU-reason entry is one-shot even across a
@@ -57,7 +69,7 @@ the canary is unsafe; go to Escape.
 3. **Flash the canary to RECOVERY** (BOOT untouched; backs up stock recovery to
    phone + Mac, writes, reads back and verifies sha):
    `scripts/direct-boot/flash-recovery-inplace.sh images/oss-stage2/canary/recovery-canary-A266MUBU1AYB8.img`
-4. **Enter recovery BCB-free:** `adb shell su -c '/data/local/tmp/reboot-recovery'`.
+4. **Enter recovery BCB-free:** `adb shell su -c /data/local/tmp/reboot-recovery` (pushed and hash-checked in Stage 0).
 5. Expected within ~10–60 s, hands-off:
    - the bootloader's unlocked-orange warning, briefly,
    - a kernel panic ~1 s into the recovery boot (the canary exits as PID 1),
