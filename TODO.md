@@ -8,5 +8,5 @@
 8. [x] Replace Moon’s idle 8 ms polling with blocking event waits.
 9. [x] Add a device-local suspend coordinator with safe lock, display, and app sequencing.
 10. [x] Enter deep suspend on screen-off and wake safely from approved hardware sources.
-11. Add a central alarm and notification service with RTC wake scheduling.
-12. Measure and document foreground, background, audio, and suspended battery use.
+11. [x] Add a central alarm and notification service with RTC wake scheduling (moon-notifyd, `docs/notifications-protocol.md`).
+12. [x] Measure and document foreground, background, audio, and suspended battery use (`docs/battery.md`).
