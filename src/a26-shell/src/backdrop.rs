@@ -2,116 +2,161 @@
 //!
 //! Blending a dim over a 1080x2340 background every frame does not fit a
 //! 120 Hz refresh on the A26's unaccelerated Xorg. Instead each background
-//! has a few pre-darkened copies (`DimLevels`, rendered once server-side),
-//! and a fade between two neighbouring levels is an ordered dither: 1-pixel
-//! rows interleave the two levels, and each step of the fade switches one
-//! row in every sixteen (`compositor::Node::Stripes`). A step therefore
-//! redraws a sixteenth of the screen, spread evenly over it, and the eye
-//! sees a uniform in-between brightness rather than edges.
+//! has pre-darkened copies (`DimLevels`, rendered server-side while idle)
+//! a few percent apart, and every screen row shows one of them
+//! (`compositor::Node::Rows`). A fade moves rows from copy to copy, a few
+//! hundred rows a frame spread evenly over the screen, so the eye sees one
+//! uniform in-between brightness.
 //!
-//! A whole fade costs one full-screen redraw per level it crosses, so the
-//! levels are few and far apart (rows that far apart in brightness are
-//! still too fine to see at the panel's ~400 ppi) and every resting dim is
-//! a level of its own, never a dither.
+//! Neighbouring rows never differ by more than one level (under 4%, below
+//! what the eye resolves as grain at the panel's ~400 ppi). Within that
+//! rule a row can still jump two levels when both its neighbours sit one
+//! above it, so a fade redraws the screen once per two levels it crosses.
+//! A background that comes to rest shows a single copy, never a mix.
 
 use std::error::Error;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use x11rb::connection::Connection;
 
-use crate::compositor::{Compositor, Node, STRIPE_PHASES, SurfaceId};
+use crate::compositor::{Compositor, SurfaceId};
 
-/// Stripe steps per frame (a sixteenth of the screen each; `ctl profile
-/// steps N`), doubled while more than a level behind so a fast gesture's
-/// background trails it by only a few frames.
-pub static FADE_STEPS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+/// Largest brightness step between neighbouring levels (relative): with
+/// 8-bit copies, rows then differ by at most about 4%.
+pub const LEVEL_STEP: f32 = 0.035;
 
-fn steps_per_frame(behind: u32) -> u32 {
-    let steps = FADE_STEPS.load(std::sync::atomic::Ordering::Relaxed);
-    if behind > u32::from(STRIPE_PHASES) {
-        steps * 2
-    } else {
-        steps
+/// Pixels a frame may redraw in all (`ctl profile budget KPX`): a fade
+/// takes what the rest of the frame leaves of it. About 0.75 Mpx fits one
+/// 120 Hz refresh on the A26.
+pub static FRAME_BUDGET_KPX: AtomicU32 = AtomicU32::new(600);
+/// Rows a fade always gets per frame (a sixteenth of the screen), and at
+/// most.
+const MIN_ROWS: usize = 146;
+const MAX_ROWS: usize = 560;
+
+/// Rows a fade may change this frame, given the rest of the last frame's
+/// redrawn pixels.
+pub fn row_budget(foreground_area: i64, width: u16) -> usize {
+    let budget = i64::from(FRAME_BUDGET_KPX.load(Ordering::Relaxed)) * 1000;
+    (((budget - foreground_area).max(0) / i64::from(width.max(1))) as usize)
+        .clamp(MIN_ROWS, MAX_ROWS)
+}
+
+/// Dims from 0 through each of `stops` (ascending), with neighbouring
+/// levels at most `step` apart in relative brightness; every stop is a
+/// level of its own.
+pub fn level_dims(stops: &[f32], step: f32) -> Vec<f32> {
+    let mut dims = Vec::new();
+    let mut factor = 1.0_f32;
+    for &stop in stops {
+        let goal = 1.0 - stop;
+        let count = ((goal / factor).ln() / (1.0 - step).ln()).ceil().max(1.0) as u32;
+        for index in 1..=count {
+            let level = factor * (goal / factor).powf(index as f32 / count as f32);
+            dims.push(if index == count { stop } else { 1.0 - level });
+        }
+        factor = goal;
     }
+    dims
 }
 
 /// Pre-darkened copies of a surface: level `k` (from 1) is darkened by
-/// `dims[k - 1]`; level 0 is the surface itself.
+/// `dims[k - 1]`; level 0 is the surface itself. Copies are drawn a few at
+/// a time while idle, or when a fade first needs one.
 pub struct DimLevels {
     source: SurfaceId,
-    dims: &'static [f32],
-    levels: Vec<SurfaceId>,
-    stale: bool,
+    dims: Vec<f32>,
+    levels: Vec<Option<SurfaceId>>,
+    fresh: Vec<bool>,
 }
 
 impl DimLevels {
-    pub fn new(source: SurfaceId, dims: &'static [f32]) -> Self {
+    pub fn new(source: SurfaceId, dims: Vec<f32>) -> Self {
         Self {
             source,
+            levels: vec![None; dims.len()],
+            fresh: vec![false; dims.len()],
             dims,
-            levels: Vec::new(),
-            stale: true,
         }
     }
 
-    pub fn max_level(&self) -> u32 {
-        self.dims.len() as u32
+    pub fn max_level(&self) -> u8 {
+        self.dims.len() as u8
     }
 
     /// The (fractional) level showing `dim`: linear between levels.
     pub fn level_of(&self, dim: f32) -> f32 {
-        level_of(self.dims, dim)
+        level_of(&self.dims, dim)
     }
 
     /// The source changed; the copies are redrawn before their next use.
     pub fn invalidate(&mut self) {
-        self.stale = true;
+        self.fresh.fill(false);
     }
 
     pub fn stale(&self) -> bool {
-        self.stale
+        self.fresh.contains(&false)
     }
 
-    /// Creates or redraws every level (about one full-screen composite each).
+    /// Draws up to `count` stale copies (about one full-screen composite
+    /// each).
+    pub fn refresh_some<C: Connection>(
+        &mut self,
+        conn: &C,
+        compositor: &mut Compositor,
+        count: usize,
+    ) -> Result<(), Box<dyn Error>> {
+        let stale: Vec<u8> = (1..=self.max_level())
+            .filter(|level| !self.fresh[usize::from(*level) - 1])
+            .take(count)
+            .collect();
+        for level in stale {
+            self.refresh(conn, compositor, level)?;
+        }
+        Ok(())
+    }
+
+    /// Makes sure the copies for `levels` are current.
     pub fn ensure<C: Connection>(
         &mut self,
         conn: &C,
         compositor: &mut Compositor,
+        levels: std::ops::RangeInclusive<u8>,
     ) -> Result<(), Box<dyn Error>> {
-        if !self.stale {
-            return Ok(());
-        }
-        for (index, dim) in self.dims.iter().copied().enumerate() {
-            match self.levels.get(index) {
-                Some(id) => compositor.refresh_dimmed(conn, *id, self.source, dim)?,
-                None => self
-                    .levels
-                    .push(compositor.create_dimmed(conn, self.source, dim)?),
+        for level in levels {
+            if level > 0 && level <= self.max_level() && !self.fresh[usize::from(level) - 1] {
+                self.refresh(conn, compositor, level)?;
             }
         }
-        self.stale = false;
+        Ok(())
+    }
+
+    fn refresh<C: Connection>(
+        &mut self,
+        conn: &C,
+        compositor: &mut Compositor,
+        level: u8,
+    ) -> Result<(), Box<dyn Error>> {
+        let index = usize::from(level) - 1;
+        let dim = self.dims[index];
+        match self.levels[index] {
+            Some(id) => compositor.refresh_dimmed(conn, id, self.source, dim)?,
+            None => self.levels[index] = Some(compositor.create_dimmed(conn, self.source, dim)?),
+        }
+        self.fresh[index] = true;
         Ok(())
     }
 
     /// The surface for `level` (0 is the undimmed source).
-    pub fn surface(&self, level: u32) -> SurfaceId {
+    pub fn surface(&self, level: u8) -> SurfaceId {
         match level {
             0 => self.source,
             level => self
                 .levels
-                .get((level as usize - 1).min(self.levels.len().saturating_sub(1)))
+                .get(usize::from(level) - 1)
                 .copied()
+                .flatten()
                 .unwrap_or(self.source),
-        }
-    }
-
-    /// The full-screen node for a position in stripe steps.
-    pub fn node(&self, steps: u32) -> Node {
-        let per_level = u32::from(STRIPE_PHASES);
-        let level = steps / per_level;
-        Node::Stripes {
-            low: self.surface(level),
-            high: self.surface(level + 1),
-            phases: (steps % per_level) as u8,
         }
     }
 }
@@ -127,120 +172,297 @@ fn level_of(dims: &[f32], dim: f32) -> f32 {
     dims.len() as f32
 }
 
-/// A background's position in sixteenths of a dim level, stepping toward a
-/// (fractional) target level a stripe or two per frame. A target that holds
-/// still (a finger resting mid-swipe) settles on the nearest whole level, so
-/// the dither never stays on screen.
-#[derive(Debug, Clone, Default)]
-pub struct StripeFade {
-    steps: u32,
-    goal: u32,
-    /// Updates the goal has stayed the same for.
-    still: u32,
-}
-
+/// Target resolution: sixteenths of a level.
+const GOAL_SCALE: u32 = 16;
 /// Updates (~250 ms) after which an unchanging goal rounds to a level; long
 /// enough that a slow drag keeps following the finger.
 const REST_FRAMES: u32 = 30;
 
-fn goal_steps(target: f32, max: u32) -> u32 {
-    (target.clamp(0.0, max as f32) * f32::from(STRIPE_PHASES)).round() as u32
+/// Which level each screen row of a background shows, moved toward a
+/// (fractional) target level a bounded number of rows per frame.
+#[derive(Debug, Clone)]
+pub struct RowFade {
+    levels: Vec<u8>,
+    /// Rows in the order they change: even rows, then odd ones, each in a
+    /// low-discrepancy order so any prefix is spread evenly over the
+    /// screen.
+    order: Vec<u16>,
+    goal: u32,
+    /// Updates the goal has stayed the same for.
+    still: u32,
+    settled: bool,
 }
 
-impl StripeFade {
-    /// Advances toward `target` (in levels, 0..=max) and returns the
-    /// current position in stripe steps.
-    pub fn update(&mut self, target: f32, max: u32) -> u32 {
-        // A step of jitter (a resting finger is never perfectly still)
+impl RowFade {
+    pub fn new(rows: usize) -> Self {
+        // Golden-ratio (Kronecker) sequence: every prefix is spread evenly
+        // and, unlike a bit-reversed order, never forms a regular grating.
+        let spread = |offset: f64| {
+            move |index: usize| (index as f64 * 0.618_033_988_749_895 + offset).fract()
+        };
+        let mut order = Vec::with_capacity(rows);
+        for (parity, offset) in [(0, 0.0), (1, 0.5)] {
+            let key = spread(offset);
+            let mut class: Vec<u16> = (parity..rows).step_by(2).map(|row| row as u16).collect();
+            class.sort_by(|a, b| key(usize::from(*a) / 2).total_cmp(&key(usize::from(*b) / 2)));
+            order.extend(class);
+        }
+        Self {
+            levels: vec![0; rows],
+            order,
+            goal: 0,
+            still: 0,
+            settled: true,
+        }
+    }
+
+    pub fn levels(&self) -> &[u8] {
+        &self.levels
+    }
+
+    /// The lowest and highest level on screen.
+    pub fn span(&self) -> std::ops::RangeInclusive<u8> {
+        let low = self.levels.iter().copied().min().unwrap_or(0);
+        let high = self.levels.iter().copied().max().unwrap_or(0);
+        low..=high
+    }
+
+    /// Moves at most `budget` rows toward `target` (in levels, 0..=max).
+    pub fn update(&mut self, target: f32, max: u8, budget: usize) {
+        let goal = goal_units(target, max);
+        // A sixteenth of jitter (a resting finger is never perfectly still)
         // does not count as moving.
-        let goal = goal_steps(target, max);
-        if goal.abs_diff(self.goal) <= 1 && goal % u32::from(STRIPE_PHASES) != 0 {
+        if goal.abs_diff(self.goal) <= 1 && goal % GOAL_SCALE != 0 {
             self.still = self.still.saturating_add(1);
         } else {
             self.goal = goal;
             self.still = 0;
         }
-        let aim = self.aim();
-        let behind = aim.abs_diff(self.steps);
-        let step = behind.min(steps_per_frame(behind));
-        if aim > self.steps {
-            self.steps += step;
+        let rest = if self.goal % GOAL_SCALE == 0 {
+            Some((self.goal / GOAL_SCALE) as u8)
+        } else if self.still >= REST_FRAMES {
+            Some(((self.goal + GOAL_SCALE / 2) / GOAL_SCALE) as u8)
         } else {
-            self.steps -= step;
-        }
-        self.steps
+            None
+        };
+        self.settled = match rest {
+            Some(level) => {
+                let mut budget = budget;
+                self.lower(level, u64::MAX, &mut budget);
+                self.raise(level, 0, &mut budget);
+                self.levels.iter().all(|row| *row == level)
+            }
+            None => {
+                let rows = self.levels.len() as u64;
+                let target = u64::from(self.goal) * rows / u64::from(GOAL_SCALE);
+                // Half a sixteenth of a level either way is close enough.
+                let slack = rows / u64::from(2 * GOAL_SCALE);
+                let sum: u64 = self.levels.iter().map(|row| u64::from(*row)).sum();
+                let mut budget = budget;
+                if sum + slack < target {
+                    self.raise(max, target, &mut budget);
+                } else if sum > target + slack {
+                    self.lower(0, target, &mut budget);
+                }
+                let sum: u64 = self.levels.iter().map(|row| u64::from(*row)).sum();
+                sum.abs_diff(target) <= slack
+            }
+        };
     }
 
-    fn aim(&self) -> u32 {
-        let per_level = u32::from(STRIPE_PHASES);
-        if self.still >= REST_FRAMES {
-            (self.goal + per_level / 2) / per_level * per_level
-        } else {
-            self.goal
+    /// Raises the lowest rows (up to `cap`) until the level sum reaches
+    /// `target` or the budget runs out. A row may rise until it is one
+    /// level above its lower neighbour, at most two levels at a time.
+    fn raise(&mut self, cap: u8, target: u64, budget: &mut usize) {
+        let mut sum: u64 = self.levels.iter().map(|row| u64::from(*row)).sum();
+        let Some(low) = self.levels.iter().copied().min() else {
+            return;
+        };
+        for level in low..cap {
+            for index in 0..self.order.len() {
+                if *budget == 0 || (target > 0 && sum >= target) {
+                    return;
+                }
+                let row = usize::from(self.order[index]);
+                if self.levels[row] != level {
+                    continue;
+                }
+                let neighbours = self.neighbours(row).min();
+                let up = (neighbours + 1)
+                    .saturating_sub(level)
+                    .min(2)
+                    .min(cap - level);
+                if up > 0 {
+                    self.levels[row] += up;
+                    sum += u64::from(up);
+                    *budget -= 1;
+                }
+            }
         }
     }
 
-    /// True while frames are still needed to reach the goal (or, for a
-    /// goal between levels, to notice that it holds still).
+    /// Lowers the highest rows (down to `floor`) until the level sum falls
+    /// to `target` or the budget runs out; the mirror of `raise`.
+    fn lower(&mut self, floor: u8, target: u64, budget: &mut usize) {
+        let mut sum: u64 = self.levels.iter().map(|row| u64::from(*row)).sum();
+        let Some(high) = self.levels.iter().copied().max() else {
+            return;
+        };
+        for level in (floor + 1..=high).rev() {
+            for index in 0..self.order.len() {
+                if *budget == 0 || (target != u64::MAX && sum <= target) {
+                    return;
+                }
+                let row = usize::from(self.order[index]);
+                if self.levels[row] != level {
+                    continue;
+                }
+                let neighbours = self.neighbours(row).max();
+                let down = level
+                    .saturating_sub(neighbours.saturating_sub(1))
+                    .min(2)
+                    .min(level - floor);
+                if down > 0 {
+                    self.levels[row] -= down;
+                    sum -= u64::from(down);
+                    *budget -= 1;
+                }
+            }
+        }
+    }
+
+    fn neighbours(&self, row: usize) -> Neighbours {
+        let above = row.checked_sub(1).map(|r| self.levels[r]);
+        let below = self.levels.get(row + 1).copied();
+        Neighbours(above, below, self.levels[row])
+    }
+
+    /// True while rows are still moving (or a goal between levels has not
+    /// yet held still long enough to settle on one).
     pub fn settling(&self) -> bool {
-        self.steps != self.aim()
-            || (self.goal % u32::from(STRIPE_PHASES) != 0 && self.still < REST_FRAMES)
+        !self.settled || (self.goal % GOAL_SCALE != 0 && self.still < REST_FRAMES)
     }
 
     /// Jumps straight to a level (entering a screen, not a transition).
-    pub fn snap(&mut self, target: f32, max: u32) {
-        self.goal = goal_steps(target, max);
-        self.steps = self.goal;
+    pub fn snap(&mut self, target: f32, max: u8) {
+        self.goal = goal_units(target, max);
         self.still = 0;
+        let level = ((self.goal + GOAL_SCALE / 2) / GOAL_SCALE) as u8;
+        self.levels.fill(level);
+        self.settled = true;
     }
+}
+
+/// The levels of a row's neighbours (its own level where it has none).
+struct Neighbours(Option<u8>, Option<u8>, u8);
+
+impl Neighbours {
+    fn min(&self) -> u8 {
+        self.0.unwrap_or(self.2).min(self.1.unwrap_or(self.2))
+    }
+
+    fn max(&self) -> u8 {
+        self.0.unwrap_or(self.2).max(self.1.unwrap_or(self.2))
+    }
+}
+
+fn goal_units(target: f32, max: u8) -> u32 {
+    (target.clamp(0.0, f32::from(max)) * GOAL_SCALE as f32).round() as u32
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn fades_step_a_bounded_number_of_stripes_per_frame() {
-        let mut fade = StripeFade::default();
-        // Two levels behind: two stripes a frame until within a level.
-        assert_eq!(fade.update(2.0, 2), 2);
-        let mut frames = 1;
-        while fade.settling() {
-            fade.update(2.0, 2);
-            frames += 1;
-        }
-        assert_eq!(fade.update(2.0, 2), 2 * u32::from(STRIPE_PHASES));
-        assert_eq!(frames, 8 + 16);
-        // Back down a stripe at a time, and clamped to the range.
-        fade.snap(0.5, 2);
-        assert_eq!(fade.update(-3.0, 2), 7);
+    fn max_neighbour_gap(fade: &RowFade) -> u8 {
+        fade.levels
+            .windows(2)
+            .map(|pair| pair[0].abs_diff(pair[1]))
+            .max()
+            .unwrap_or(0)
     }
 
     #[test]
-    fn a_resting_target_settles_on_a_whole_level() {
-        let mut fade = StripeFade::default();
-        // A finger held at 1.3 levels: the dither reaches it, then the
-        // background moves on to level 1 and stops.
-        let mut frames = 0;
-        while frames == 0 || fade.settling() {
-            fade.update(1.3, 2);
-            frames += 1;
-            assert!(frames < 100);
+    fn levels_are_close_and_every_stop_is_one() {
+        let dims = level_dims(&[0.42, 0.55], LEVEL_STEP);
+        let mut factor = 1.0;
+        for dim in &dims {
+            let next = 1.0 - dim;
+            assert!(1.0 - next / factor <= LEVEL_STEP + 1e-4, "{dims:?}");
+            factor = next;
         }
-        assert_eq!(fade.update(1.3, 2), u32::from(STRIPE_PHASES));
-        // A step of jitter keeps it there; moving on follows the finger.
-        assert_eq!(fade.update(1.36, 2), u32::from(STRIPE_PHASES));
-        assert_eq!(fade.update(1.5, 2), u32::from(STRIPE_PHASES) + 1);
-    }
-
-    #[test]
-    fn resting_dims_are_whole_levels() {
-        let dims = [0.21, 0.42, 0.55];
+        assert!(dims.contains(&0.42) && *dims.last().unwrap() == 0.55);
         assert_eq!(level_of(&dims, 0.0), 0.0);
-        assert_eq!(level_of(&dims, 0.42), 2.0);
-        assert_eq!(level_of(&dims, 0.55), 3.0);
-        assert!((level_of(&dims, 0.105) - 0.5).abs() < 1e-6);
-        assert!((level_of(&dims, 0.485) - 2.5).abs() < 1e-5);
-        assert_eq!(level_of(&dims, 0.9), 3.0);
+        let keypad = dims.iter().position(|d| *d == 0.42).unwrap() + 1;
+        assert_eq!(level_of(&dims, 0.42), keypad as f32);
+    }
+
+    #[test]
+    fn a_fade_keeps_neighbouring_rows_one_level_apart() {
+        let mut fade = RowFade::new(2340);
+        let mut frames = 0;
+        let mut changed_rows = 0;
+        loop {
+            let before = fade.levels.clone();
+            fade.update(14.0, 14, 300);
+            changed_rows += before
+                .iter()
+                .zip(&fade.levels)
+                .filter(|(a, b)| a != b)
+                .count();
+            assert!(max_neighbour_gap(&fade) <= 1);
+            frames += 1;
+            if !fade.settling() {
+                break;
+            }
+            assert!(frames < 1000);
+        }
+        assert!(fade.levels.iter().all(|row| *row == 14));
+        // Two levels per changed row most of the way: about 7.5 screens
+        // of rows, not 14.
+        assert!(changed_rows <= 2340 * 8, "{changed_rows}");
+        assert!(frames <= changed_rows.div_ceil(300) * 3 / 2 + 4, "{frames}");
+    }
+
+    #[test]
+    fn a_fractional_target_tracks_the_mean_and_rests_on_a_level() {
+        let mut fade = RowFade::new(2340);
+        for _ in 0..20 {
+            fade.update(3.4, 14, 560);
+            assert!(max_neighbour_gap(&fade) <= 1);
+        }
+        let mean = fade.levels.iter().map(|r| f32::from(*r)).sum::<f32>() / 2340.0;
+        assert!((mean - 3.4).abs() < 0.05, "{mean}");
+        // Held still, it settles on the nearest level.
+        let mut frames = 0;
+        while fade.settling() {
+            fade.update(3.4, 14, 560);
+            frames += 1;
+            assert!(frames < 200);
+        }
+        assert!(fade.levels.iter().all(|row| *row == 3));
+        // And back down, to rest at 0.
+        while {
+            fade.update(0.0, 14, 560);
+            fade.settling()
+        } {
+            assert!(max_neighbour_gap(&fade) <= 1);
+        }
+        assert!(fade.levels.iter().all(|row| *row == 0));
+    }
+
+    #[test]
+    fn each_frame_changes_rows_spread_over_the_screen() {
+        let mut fade = RowFade::new(2340);
+        let before = fade.levels.clone();
+        fade.update(5.0, 14, 146);
+        let changed: Vec<usize> = (0..2340)
+            .filter(|r| before[*r] != fade.levels[*r])
+            .collect();
+        assert_eq!(changed.len(), 146);
+        // No two within 8 rows of each other, and no gap above 40 rows.
+        for pair in changed.windows(2) {
+            assert!((8..=40).contains(&(pair[1] - pair[0])), "{pair:?}");
+        }
     }
 }

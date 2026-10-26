@@ -66,84 +66,31 @@ pub enum Node {
         alpha: f32,
         radius: f32,
     },
-    /// A full-screen background between two opaque surfaces: in every
-    /// period of `STRIPE_PHASES` stripes, the first `phases`
-    /// stripes come from `high` and the rest from `low`. Stepping `phases`
-    /// by one redraws one stripe in each period, spread over the screen, so
-    /// a cross-fade costs a sixteenth of the screen per step and reads as a
-    /// uniform in-between level (an ordered dither).
-    Stripes {
-        low: SurfaceId,
-        high: SurfaceId,
-        phases: u8,
-    },
+    /// A full-screen background whose every row comes from one of several
+    /// opaque surfaces (`Compositor::set_rows`); `generation` changes
+    /// whenever any row does.
+    Rows { generation: u32 },
 }
 
-/// Rows per stripe (1 by default; `ctl profile stripes N` for 1..=4):
-/// thinner stripes make the in-between pattern finer but give the server
-/// more clip boxes.
-pub static STRIPE_ROWS: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
-
-pub fn stripe_rows_height() -> i32 {
-    STRIPE_ROWS.load(std::sync::atomic::Ordering::Relaxed)
-}
-pub const STRIPE_PHASES: u8 = 16;
-
-/// The step at which each stripe of a period switches (bit reversal, an
-/// ordered dither): with k of 16 steps taken the switched stripes are
-/// spread as evenly as possible, e.g. every other stripe at eight.
-const STRIPE_RANK: [u8; 16] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
-
-impl Node {
-    /// The surface stripe phase `phase` of a Stripes node shows.
-    fn stripe_surface(&self, phase: u8) -> Option<SurfaceId> {
-        match *self {
-            Node::Stripes { low, high, phases } => Some(if phase < phases { high } else { low }),
-            _ => None,
-        }
+/// Appends screen row `y` to a list of row runs, extending the last run
+/// when adjacent.
+fn push_row(runs: &mut Vec<Damage>, width: i32, y: i32) {
+    match runs.last_mut() {
+        Some(last) if last.y1 == y => last.y1 = y + 1,
+        _ => runs.push(Damage {
+            x0: 0,
+            y0: y,
+            x1: width,
+            y1: y + 1,
+        }),
     }
-}
-
-/// Screen rows of the stripes whose step is in `steps` (bit i = step i),
-/// within `area`; adjacent rows merge.
-fn stripe_rows(steps: u16, area: Damage) -> Vec<Damage> {
-    let mut rows: Vec<Damage> = Vec::new();
-    if steps == 0 {
-        return rows;
-    }
-    let stripe_rows = stripe_rows_height();
-    let stripe_period = stripe_rows * i32::from(STRIPE_PHASES);
-    let mut period = area.y0.div_euclid(stripe_period) * stripe_period;
-    while period < area.y1 {
-        for stripe in 0..STRIPE_PHASES {
-            if steps & (1 << STRIPE_RANK[usize::from(stripe)]) == 0 {
-                continue;
-            }
-            let y0 = (period + i32::from(stripe) * stripe_rows).max(area.y0);
-            let y1 = (period + i32::from(stripe + 1) * stripe_rows).min(area.y1);
-            if y0 >= y1 {
-                continue;
-            }
-            match rows.last_mut() {
-                Some(last) if last.y1 == y0 => last.y1 = y1,
-                _ => rows.push(Damage {
-                    x0: area.x0,
-                    y0,
-                    x1: area.x1,
-                    y1,
-                }),
-            }
-        }
-        period += stripe_period;
-    }
-    rows
 }
 
 impl Node {
     fn bounds(&self, width: i32, height: i32) -> Option<Damage> {
         let dst = match self {
             Node::Image { dst, .. } | Node::Fill { dst, .. } => *dst,
-            Node::Stripes { .. } => RectF::new(0.0, 0.0, width as f32, height as f32),
+            Node::Rows { .. } => RectF::new(0.0, 0.0, width as f32, height as f32),
         };
         rect_damage(dst, width, height)
     }
@@ -151,7 +98,7 @@ impl Node {
     fn alpha(&self) -> f32 {
         match self {
             Node::Image { alpha, .. } | Node::Fill { alpha, .. } => *alpha,
-            Node::Stripes { .. } => 1.0,
+            Node::Rows { .. } => 1.0,
         }
     }
 }
@@ -329,6 +276,13 @@ pub struct Compositor {
     clip: Vec<Damage>,
     /// Diagnostics (`ctl profile skip MASK`): frame nodes not to draw.
     pub skip_nodes: u64,
+    /// The surface each screen row of a `Node::Rows` background shows.
+    rows: Vec<SurfaceId>,
+    rows_generation: u32,
+    /// Rows whose surface changed since the last composed frame.
+    row_changes: Vec<Damage>,
+    /// Pixels the last frame redrew besides changed background rows.
+    pub foreground_area: i64,
     /// MOON_DEBUG_FRAMES=1 logs every frame's node list.
     pub debug_frames: bool,
     pub stats: FrameStats,
@@ -382,7 +336,7 @@ impl PresentState {
 const PRESENT_WATCHDOG: Duration = Duration::from_millis(120);
 /// Frame interval of the timer fallback (120 Hz).
 const DIRECT_FRAME_INTERVAL: Duration = Duration::from_micros(8_333);
-/// Above this many exact (stripe) rectangles a frame redraws everything.
+/// Above this many exact (row) rectangles a frame redraws everything.
 const MAX_EXACT_RECTS: usize = 1200;
 /// A layer with more content tiles than this damages its bounds instead.
 const MAX_TILE_DAMAGE: usize = 1024;
@@ -487,6 +441,10 @@ impl Compositor {
             next_direct_frame: Instant::now(),
             profile,
             skip_nodes: 0,
+            rows: Vec::new(),
+            rows_generation: 0,
+            row_changes: Vec::new(),
+            foreground_area: 0,
             clip: Vec::new(),
             debug_frames: std::env::var_os("MOON_DEBUG_FRAMES").is_some(),
             stats: FrameStats::default(),
@@ -890,6 +848,7 @@ impl Compositor {
         frame: Frame,
     ) -> Result<bool, Box<dyn Error>> {
         let started = Instant::now();
+        let row_changes = std::mem::take(&mut self.row_changes);
         let (w, h) = (i32::from(self.width), i32::from(self.height));
         let full = Damage {
             x0: 0,
@@ -911,7 +870,7 @@ impl Compositor {
         // touch only pixels that changed, which on this unaccelerated Xorg
         // is what a frame costs.
         let mut damage: Vec<Damage> = Vec::new();
-        // Thin stripe rows, kept exact (the grid would widen them to cells).
+        // Background rows, kept exact (the grid would widen them to cells).
         let mut exact: Vec<Damage> = Vec::new();
         if self.force_full || structure_changed {
             damage.push(full);
@@ -919,20 +878,15 @@ impl Compositor {
             damage.extend(frame.base.and_then(|base| self.pending(base)));
             let last = self.last.as_ref().expect("checked above");
             for (old, new) in last.nodes.iter().zip(&frame.nodes) {
-                if let (Node::Stripes { .. }, Node::Stripes { .. }) = (old, new) {
-                    // The stripes whose source changed, or whose unchanged
-                    // source was redrawn while on screen.
-                    let mut changed = 0_u16;
-                    for phase in 0..STRIPE_PHASES {
-                        let (before, after) =
-                            (old.stripe_surface(phase), new.stripe_surface(phase));
-                        if before != after
-                            || after.is_some_and(|surface| self.pending(surface).is_some())
-                        {
-                            changed |= 1 << phase;
+                if let (Node::Rows { .. }, Node::Rows { .. }) = (old, new) {
+                    // The rows that changed copy, and those whose copy was
+                    // redrawn while on screen.
+                    exact.extend(row_changes.iter().copied());
+                    for surface in self.row_surfaces() {
+                        if self.pending(surface).is_some() {
+                            exact.extend(self.rows_showing(surface));
                         }
                     }
-                    exact.extend(stripe_rows(changed, full));
                     continue;
                 }
                 if old != new {
@@ -980,6 +934,7 @@ impl Compositor {
         // different offsets would otherwise fragment the server's clip
         // region into thousands of tiny boxes, each costing setup time.
         let mut damage = grid_cells(&damage, w, h);
+        self.foreground_area = damage.iter().map(|d| area(Some(*d))).sum();
         if exact.len() > MAX_EXACT_RECTS {
             damage = vec![full];
         } else {
@@ -1066,7 +1021,7 @@ impl Compositor {
             }
             let radius = match node {
                 Node::Image { radius, .. } | Node::Fill { radius, .. } => radius,
-                Node::Stripes { .. } => 0.0,
+                Node::Rows { .. } => 0.0,
             };
             if radius >= 1.0 {
                 self.repair_corners(conn, &frame, index, target, redraw)?;
@@ -1079,7 +1034,7 @@ impl Compositor {
             .into_iter()
             .chain(frame.nodes.iter().flat_map(|node| match node {
                 Node::Image { surface, .. } => vec![*surface],
-                Node::Stripes { low, high, .. } => vec![*low, *high],
+                Node::Rows { .. } => self.row_surfaces(),
                 Node::Fill { .. } => Vec::new(),
             }))
             .collect();
@@ -1245,9 +1200,13 @@ impl Compositor {
     /// The whole pixels a node covers opaquely, if it does.
     fn opaque_interior(&self, node: &Node) -> Option<Damage> {
         let (dst, alpha) = match *node {
-            Node::Stripes { low, high, .. } => {
-                let opaque = |id| self.surface(id).is_some_and(|s| s.opaque);
-                if !(opaque(low) && opaque(high)) {
+            Node::Rows { .. } => {
+                if self.rows.is_empty()
+                    || !self
+                        .row_surfaces()
+                        .into_iter()
+                        .all(|id| self.surface(id).is_some_and(|s| s.opaque))
+                {
                     return None;
                 }
                 (
@@ -1416,6 +1375,59 @@ impl Compositor {
             .and_then(|surface| surface.content.as_ref())
     }
 
+    /// Sets the surface each screen row of the background shows and returns
+    /// the node that draws it; only rows that changed are redrawn.
+    pub fn set_rows(&mut self, rows: &[SurfaceId]) -> Node {
+        let width = i32::from(self.width);
+        let mut changed = false;
+        if self.rows.len() != rows.len() {
+            self.rows = rows.to_vec();
+            self.row_changes.push(Damage {
+                x0: 0,
+                y0: 0,
+                x1: width,
+                y1: rows.len() as i32,
+            });
+            changed = true;
+        } else {
+            for (y, (old, new)) in self.rows.iter_mut().zip(rows).enumerate() {
+                if old != new {
+                    *old = *new;
+                    push_row(&mut self.row_changes, width, y as i32);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.rows_generation = self.rows_generation.wrapping_add(1);
+        }
+        Node::Rows {
+            generation: self.rows_generation,
+        }
+    }
+
+    /// The distinct surfaces the background rows show.
+    fn row_surfaces(&self) -> Vec<SurfaceId> {
+        let mut surfaces: Vec<SurfaceId> = Vec::new();
+        for surface in &self.rows {
+            if surfaces.last() != Some(surface) && !surfaces.contains(surface) {
+                surfaces.push(*surface);
+            }
+        }
+        surfaces
+    }
+
+    /// The background rows showing `surface`, merged into runs.
+    fn rows_showing(&self, surface: SurfaceId) -> Vec<Damage> {
+        let mut runs = Vec::new();
+        for (y, row) in self.rows.iter().enumerate() {
+            if *row == surface {
+                push_row(&mut runs, i32::from(self.width), y as i32);
+            }
+        }
+        runs
+    }
+
     fn pending(&self, id: SurfaceId) -> Option<Damage> {
         self.surfaces
             .get(id.0)
@@ -1518,7 +1530,7 @@ impl Compositor {
         };
         let (w, h) = ((area.x1 - area.x0) as u16, (area.y1 - area.y0) as u16);
         match *node {
-            Node::Stripes { low, high, phases } => {
+            Node::Rows { .. } => {
                 let screen = RectF::new(0.0, 0.0, f32::from(self.width), f32::from(self.height));
                 let image = |surface| Node::Image {
                     surface,
@@ -1528,31 +1540,40 @@ impl Compositor {
                     radius: 0.0,
                     smooth: false,
                 };
-                if phases < STRIPE_PHASES {
-                    self.draw_node(conn, &image(low), target, area, mask)?;
-                }
-                if phases > 0 {
-                    let high_image = image(high);
-                    if phases >= STRIPE_PHASES {
-                        self.draw_node(conn, &high_image, target, area, mask)?;
-                    } else {
-                        // The high stripes, within the frame's clip.
-                        let set = ((1_u32 << phases) - 1) as u16;
-                        let rows: Vec<Rectangle> = self
-                            .clip
-                            .iter()
-                            .filter_map(|c| intersect(*c, area))
-                            .flat_map(|c| stripe_rows(set, c))
-                            .map(rectangle)
-                            .collect();
-                        if !rows.is_empty() {
-                            let restore: Vec<Rectangle> =
-                                self.clip.iter().map(|d| rectangle(*d)).collect();
-                            conn.render_set_picture_clip_rectangles(target, 0, 0, &rows)?;
-                            self.draw_node(conn, &high_image, target, area, mask)?;
-                            conn.render_set_picture_clip_rectangles(target, 0, 0, &restore)?;
+                // The clipped rows, grouped by the surface they show.
+                let mut groups: Vec<(SurfaceId, Vec<Rectangle>)> = Vec::new();
+                for clip in self.clip.iter().filter_map(|c| intersect(*c, area)) {
+                    let mut y = clip.y0;
+                    while y < clip.y1 {
+                        let Some(&surface) = self.rows.get(y as usize) else {
+                            break;
+                        };
+                        let mut end = y + 1;
+                        while end < clip.y1 && self.rows.get(end as usize) == Some(&surface) {
+                            end += 1;
                         }
+                        let rect = rectangle(Damage {
+                            x0: clip.x0,
+                            y0: y,
+                            x1: clip.x1,
+                            y1: end,
+                        });
+                        match groups.iter_mut().find(|group| group.0 == surface) {
+                            Some(group) => group.1.push(rect),
+                            None => groups.push((surface, vec![rect])),
+                        }
+                        y = end;
                     }
+                }
+                if let [(surface, _)] = groups.as_slice() {
+                    self.draw_node(conn, &image(*surface), target, area, mask)?;
+                } else if !groups.is_empty() {
+                    let restore: Vec<Rectangle> = self.clip.iter().map(|d| rectangle(*d)).collect();
+                    for (surface, rects) in &groups {
+                        conn.render_set_picture_clip_rectangles(target, 0, 0, rects)?;
+                        self.draw_node(conn, &image(*surface), target, area, mask)?;
+                    }
+                    conn.render_set_picture_clip_rectangles(target, 0, 0, &restore)?;
                 }
                 let _ = (w, h, alpha_mask);
             }
@@ -1756,7 +1777,7 @@ impl Compositor {
         let node = frame.nodes[index];
         let (dst, radius) = match node {
             Node::Image { dst, radius, .. } | Node::Fill { dst, radius, .. } => (dst, radius),
-            Node::Stripes { .. } => return Ok(()),
+            Node::Rows { .. } => return Ok(()),
         };
         let max = (dst.w.min(dst.h) / 2.0).floor();
         let wanted = radius.min(max).round() as u16;
@@ -2225,45 +2246,6 @@ mod tests {
                 },
             ]
         );
-    }
-
-    #[test]
-    fn stripe_rows_spread_the_steps_over_every_period() {
-        let area = Damage {
-            x0: 0,
-            y0: 0,
-            x1: 10,
-            y1: 16,
-        };
-        let p = stripe_rows_height() * i32::from(STRIPE_PHASES);
-        // Step 0 is stripe 0; step 1 is stripe 8.
-        let rows = stripe_rows(0b11, area);
-        assert_eq!(rows.len(), 2 * (16 / p) as usize);
-        assert_eq!(
-            rows[0],
-            Damage {
-                x0: 0,
-                y0: 0,
-                x1: 10,
-                y1: stripe_rows_height()
-            }
-        );
-        assert_eq!(rows[1].y0, 8 * stripe_rows_height());
-        // All steps cover every row, merged into one rectangle.
-        assert_eq!(stripe_rows(0xffff, area), vec![area]);
-        assert!(stripe_rows(0, area).is_empty());
-        // Four steps take every fourth stripe.
-        let half = stripe_rows(
-            0b1111,
-            Damage {
-                x0: 0,
-                y0: 0,
-                x1: 10,
-                y1: p,
-            },
-        );
-        assert_eq!(half.len(), 4);
-        assert!(half.iter().all(|d| d.y1 - d.y0 == stripe_rows_height()));
     }
 
     #[test]

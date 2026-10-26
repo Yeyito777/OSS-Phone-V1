@@ -582,12 +582,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                         ipc::respond::<model::PublicState>(stream, Err(error));
                         continue;
                     }
-                    if let Command::ProfileStripes(rows) = command {
-                        compositor::STRIPE_ROWS.store(rows, std::sync::atomic::Ordering::Relaxed);
-                        renderer.compositor.invalidate();
-                    }
-                    if let Command::ProfileSteps(steps) = command {
-                        backdrop::FADE_STEPS.store(steps, std::sync::atomic::Ordering::Relaxed);
+                    if let Command::ProfileBudget(kpx) = command {
+                        backdrop::FRAME_BUDGET_KPX.store(kpx, std::sync::atomic::Ordering::Relaxed);
                     }
                     if let Command::ProfileFrames(enabled) = command {
                         renderer.compositor.debug_frames = enabled;
@@ -977,7 +973,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             deadline = deadline.min(now + Duration::from_micros(8_333));
         }
         if !state.animating(now) && !renderer.settling() && state.screen_awake {
-            renderer.prepare_idle(&conn)?;
+            if let Some(next) = renderer.prepare_idle(&conn, now)? {
+                deadline = deadline.min(next);
+            }
         }
         if apps.needs_process_poll() {
             deadline = deadline.min(now + FALLBACK_PROCESS_STATUS_INTERVAL);
@@ -2265,8 +2263,7 @@ fn apply_command(
         | Command::State
         | Command::Profile(_)
         | Command::ProfileSkip(_)
-        | Command::ProfileStripes(_)
-        | Command::ProfileSteps(_)
+        | Command::ProfileBudget(_)
         | Command::ProfileFrames(_) => {}
         Command::Digit(digit) => state.input_digit(digit, config),
         Command::Backspace => state.backspace_pin(),
