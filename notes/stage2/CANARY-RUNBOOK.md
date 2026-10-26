@@ -45,13 +45,45 @@ the first boot back may be plain Android by policy (recovery reason / panic).
 Proves recovery entry + "a reset during recovery returns to BOOT", using the
 **stock** recovery already installed (cannot loop — stock recovery always boots).
 1. `--check-bcb` → all zero.
-2. Push and run the BCB-free entry tool:
+2. Push and hash-check the BCB-free entry tool, but **do not run it yet**:
    `adb push images/oss-stage2/canary/reboot-recovery /data/local/tmp/ && adb shell su -c 'chmod 0755 /data/local/tmp/reboot-recovery'`,
-   verify `adb shell sha256sum /data/local/tmp/reboot-recovery` == `89c036e0…`, then
-   `adb shell su -c /data/local/tmp/reboot-recovery`
-   (this writes no partition; it just calls `reboot(2)`).
-3. Phone enters **stock recovery** (Android Recovery screen).
-4. **Force-restart while in recovery:** hold **Power + Volume Down** ~7–10 s.
+   verify `adb shell sha256sum /data/local/tmp/reboot-recovery` == `89c036e0…`.
+   It is run in step 4 with `adb shell su -c /data/local/tmp/reboot-recovery`
+   (writes no partition; it only calls `reboot(2)`).
+3. **Before the operator runs the tool, the user must be holding the phone
+   and have read step 4.** The forced restart happens *during the boot into
+   recovery*, NOT at the recovery menu.
+   Why: in stock recovery, **Power is the "select" key and acts on press**.
+   Starting a Power + Volume Down hold at the recovery menu registers Power
+   first and selects the highlighted item, which is **"Reboot system now"** by
+   default. That is almost certainly what happened on 2026-10-26, and it skips
+   the test. Before the recovery UI is up (the first ~25 s), keys do nothing in
+   recovery, and a reset then also matches when the canary panics (early in the
+   recovery boot).
+4. **Read this to the user word for word, then run the tool:**
+
+   > ⚠️ **DO NOT WAIT FOR THE RECOVERY MENU. DO NOT SELECT ANYTHING.**
+   > If you see the "Android Recovery" menu or the robot, you were too late:
+   > do NOT press Power; just tell us. We will start this step again.
+   >
+   > 1. Hold the phone, screen facing you. When I say "go", the screen goes
+   >    black and the phone restarts.
+   > 2. Watch for the **yellow/orange warning screen** ("The bootloader is
+   >    unlocked…"), which appears a few seconds after the screen goes black.
+   > 3. **As soon as that warning appears**, press and **hold Power and Volume
+   >    Down together**. Do not let go.
+   > 4. Keep holding for **about 10 seconds**, until the screen **goes black**
+   >    again.
+   > 5. **Let go of both keys the moment it goes black.** Don't press any
+   >    other key (Volume Up + Volume Down now would enter Download mode).
+   > 6. Put the phone down and wait about a minute without touching it.
+
+   Operator timing (2026-10-26 run): `reboot-recovery` → screen black at once
+   → recovery's adbd as `unauthorized` at about 30–35 s. The hold therefore
+   starts at about 3–8 s and the reset lands at about 13–18 s, well before the
+   recovery UI.
+   If the user is unsure what happened, ask what the screen shows after the
+   minute. Do not guess.
 5. Expected: the phone boots the **normal system** from BOOT, NOT recovery.
    It may come up as **plain Android rather than Moon**: `moon-direct-policy.sh`
    sends a boot whose reason contains `recovery` to Android once (line 48).
@@ -59,8 +91,13 @@ Proves recovery entry + "a reset during recovery returns to BOOT", using the
 6. Back in the system: `--check-bcb` → still all zero; BOOT and RECOVERY hashes
    unchanged.
 → If step 5 lands in the system, the PMU-reason entry is one-shot even across a
-mid-recovery reset, with no BCB involved. If it re-enters recovery, **stop** —
-the canary is unsafe; go to Escape.
+reset during the recovery boot, with no BCB involved: proceed to Stage 1.
+→ If it lands in **Android Recovery again**, the reason survived the reset:
+**stop, the canary is unsafe on this bootloader.** Recovery is still stock, so
+the way out is the normal menu: Volume keys to highlight **Reboot system now**,
+**Power** to select. (Here, and only here, selecting it is correct.)
+→ If the user saw the recovery menu before holding the keys (too late), nothing
+was tested. Exit with **Reboot system now**, check the BCB, and redo Stage 0.
 
 ## STAGE 1 — the panic canary
 1. `--check-bcb` → all zero (re-assert).
