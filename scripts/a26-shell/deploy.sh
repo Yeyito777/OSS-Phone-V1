@@ -29,7 +29,7 @@ done
 # Fallback fonts: pushed only when the phone's copy differs (they are large
 # and rarely change).
 FONTS=/data/local/a26-linux/opt/a26-shell/share/fonts
-phone_fonts="$(adb -s "$SERIAL" shell "/data/local/tmp/su -c 'mkdir -p $FONTS && cd $FONTS && sha256sum * 2>/dev/null'" | tr -d '\r')"
+phone_fonts="$(adb -s "$SERIAL" shell "/data/local/tmp/su -c 'mkdir -p $FONTS && cd $FONTS && sha256sum * 2>/dev/null; true'" | tr -d '\r')"
 for font in "$IMAGE"/share/fonts/*; do
     name="$(basename "$font")"
     expected="$(sha256sum "$font" | awk '{print $1}')"

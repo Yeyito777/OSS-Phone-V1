@@ -1911,7 +1911,7 @@ pub fn draw_status_bar(canvas: &mut Canvas, status: &StatusInfo, background: Opt
         glyph_x -= 60.0;
     }
     if status.dnd {
-        crate::control_centre::draw_status_moon(canvas, (glyph_x, cy), background);
+        crate::control_centre::draw_status_moon(canvas, (glyph_x, cy));
     }
 }
 

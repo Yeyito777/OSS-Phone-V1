@@ -500,13 +500,7 @@ pub fn draw_control(canvas: &mut Canvas, key: &ControlKey) {
         };
         match tile {
             Tile::Wifi => crate::ui::draw_wifi_glyph_in(canvas, cx, cy + 22.0, true, ink),
-            Tile::Dnd => draw_moon(
-                canvas,
-                (cx, cy),
-                30.0,
-                ink,
-                if on { color } else { 0x2c2c2e },
-            ),
+            Tile::Dnd => draw_moon(canvas, (cx, cy), 30.0, ink),
             Tile::Flashlight => draw_torch(canvas, (cx, cy), ink),
             Tile::Alarm => crate::alerts::draw_clock_glyph(canvas, (cx, cy + 4.0), 28.0, ink),
         }
@@ -583,10 +577,23 @@ fn draw_sun(canvas: &mut Canvas, (cx, cy): (f32, f32), color: u32) {
     canvas.fill_path(&rays, color, 1.0);
 }
 
-/// A crescent: a disc with a background-colored disc taken out.
-fn draw_moon(canvas: &mut Canvas, (cx, cy): (f32, f32), r: f32, color: u32, background: u32) {
-    canvas.fill_circle(cx, cy, r, color, 1.0);
-    canvas.fill_circle(cx + r * 0.45, cy - r * 0.35, r * 0.82, background, 1.0);
+/// A crescent: a disc with an offset disc taken out (a coverage mask, so
+/// it sits cleanly on any background).
+fn draw_moon(canvas: &mut Canvas, (cx, cy): (f32, f32), r: f32, color: u32) {
+    let (bx, by, cut) = (cx + r * 0.45, cy - r * 0.35, r * 0.82);
+    let x0 = (cx - r - 1.0).floor() as i32;
+    let y0 = (cy - r - 1.0).floor() as i32;
+    let size = (2.0 * r + 3.0).ceil() as i32;
+    let mut mask = vec![0_u8; (size * size) as usize];
+    for y in 0..size {
+        for x in 0..size {
+            let (px, py) = ((x0 + x) as f32 + 0.5, (y0 + y) as f32 + 0.5);
+            let disc = (r - ((px - cx).powi(2) + (py - cy).powi(2)).sqrt() + 0.5).clamp(0.0, 1.0);
+            let bite = (cut - ((px - bx).powi(2) + (py - by).powi(2)).sqrt() + 0.5).clamp(0.0, 1.0);
+            mask[(y * size + x) as usize] = (disc * (1.0 - bite) * 255.0 + 0.5) as u8;
+        }
+    }
+    canvas.draw_mask(x0, y0, size, size, &mask, color, 1.0);
 }
 
 fn draw_torch(canvas: &mut Canvas, (cx, cy): (f32, f32), color: u32) {
@@ -607,14 +614,8 @@ fn draw_torch(canvas: &mut Canvas, (cx, cy): (f32, f32), color: u32) {
 }
 
 /// The status-bar crescent while Do Not Disturb is on.
-pub fn draw_status_moon(canvas: &mut Canvas, (cx, cy): (f32, f32), background: Option<u32>) {
-    draw_moon(
-        canvas,
-        (cx, cy),
-        15.0,
-        WHITE,
-        background.unwrap_or(0x10101a),
-    );
+pub fn draw_status_moon(canvas: &mut Canvas, (cx, cy): (f32, f32)) {
+    draw_moon(canvas, (cx, cy), 15.0, WHITE);
 }
 
 #[cfg(test)]
