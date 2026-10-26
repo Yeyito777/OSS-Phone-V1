@@ -5,6 +5,8 @@
 # compositor leaves; the session ends with adb reboot.
 #
 #   exp-compositor.sh weston|cage [SECONDS] [MPX...]
+#   env HOLD_SECONDS=N exp-compositor.sh ...   keep the compositor up N s afterwards
+#   (a26-wayland-run.sh clears the environment, so pass it through env)
 set -u
 which="${1:?weston|cage}"
 shift
@@ -15,6 +17,7 @@ out=/root/exp-$which
 mkdir -p "$out"
 export XDG_RUNTIME_DIR=/run/wl LIBSEAT_BACKEND=noop
 mkdir -p -m 0700 "$XDG_RUNTIME_DIR"
+mkdir -p -m 1777 /tmp/.X11-unix
 rm -f "$XDG_RUNTIME_DIR"/wayland-* "$XDG_RUNTIME_DIR"/wl-a26*
 
 wait_socket() {
@@ -65,15 +68,21 @@ if [ "$which" = weston ]; then
     [ -n "$xdisp" ] || xdisp=0
     DISPLAY=":$xdisp" timeout 20 xdpyinfo >"$out/xdpyinfo.txt" 2>&1 && echo "Xwayland :$xdisp answers"
     DISPLAY=":$xdisp" timeout 8 xeyes -geometry 600x600+0+0 >/dev/null 2>&1 &
+    xpid=$!
     sleep 4
-    weston-screenshooter >/dev/null 2>&1 && mv -f wayland-screenshot-*.png "$out/" 2>/dev/null
+    (cd "$out" && weston-screenshooter >/dev/null 2>&1)
     echo "$xdisp" >"$out/xdisplay"
-    wait
+    wait "$xpid"
 fi
 
 if [ -n "${HOLD_SECONDS:-}" ]; then
     echo "holding the compositor for $HOLD_SECONDS s (Xwayland/app tests from outside)"
-    sleep "$HOLD_SECONDS"
+    held=0
+    while [ "$held" -lt "$HOLD_SECONDS" ]; do
+        sleep 10
+        held=$((held + 10))
+        [ "$which" != weston ] || (cd "$out" && weston-screenshooter >/dev/null 2>&1)
+    done
 fi
 
 touch /run/wl/cage-stop
