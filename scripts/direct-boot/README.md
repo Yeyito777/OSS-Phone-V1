@@ -60,7 +60,9 @@ Magisk v30.7 BOOT image and verifies kernel and magiskinit are byte-identical.
    `/data/local/tmp/moon-boot/stopped-services`), and network time with
    ntpd once Wi-Fi has a default route (then every 12 h; RTC written in
    UTC). Kept: display, touch, audio, Wi-Fi, USB, charging, sensors, keys,
-   thermal, keystore/TEE, and the whole cellular/RIL stack.
+   thermal, keystore/TEE, and the whole cellular/RIL stack. It also runs
+   and restarts moon-notifyd (notifications, alarms, timers;
+   `docs/notifications-protocol.md`) for as long as Moon owns the phone.
 
 ## Fallbacks
 

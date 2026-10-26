@@ -138,8 +138,9 @@ persist across reboots until withdrawn, dismissed or expired.
   unique. `[]` = one-shot: rings once at the next `hour:minute`, then
   `enabled` becomes `false`.
 - `next_fire_at`: computed by the daemon; `null` when disabled. If the local
-  time does not exist (spring-forward gap) it fires at the first valid minute
-  after; an ambiguous time (fall-back) fires on its first occurrence.
+  time does not exist (spring-forward gap) it fires shifted forward by the
+  jump (02:30 → 03:30); an ambiguous time (fall-back) fires on its first
+  occurrence.
 - `sound`: `radar` (default), `chimes`, `beacon`, or `none` (vibration only).
 - `snooze_minutes`: 1–30, default 9.
 - Up to 32 alarms. Persistent.

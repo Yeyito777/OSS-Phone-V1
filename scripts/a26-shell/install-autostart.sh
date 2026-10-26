@@ -186,6 +186,11 @@ if [ -f "$XCONF" ] && grep -q "\"DPMS\" \"false\"" "$XCONF"; then
     sed -i "s/\"DPMS\" \"false\"/\"DPMS\" \"true\"/" "$XCONF"
 fi
 
+# Non-root clients of moon-notifyd (docs/notifications-protocol.md) join this
+# group; root needs nothing.
+grep -q "^moon-notify:" /data/local/a26-linux/etc/group ||
+    echo "moon-notify:x:1801:" >>/data/local/a26-linux/etc/group
+
 rm -f /data/adb/moon/disabled
 rm -f \
     /data/local/tmp/moon-boot-supervisor.sh \

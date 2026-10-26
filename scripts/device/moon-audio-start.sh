@@ -68,8 +68,12 @@ if valid_bridge_pid && kill -0 "$pid" 2>/dev/null; then
 fi
 rm -f "$PIDFILE" "$MEDIA_HEARTBEAT"
 
-rm -f "$RUNTIME/pcm"
+rm -f "$RUNTIME/pcm" "$RUNTIME/alerts"
 mknod "$RUNTIME/pcm" p || exit 23
+# moon-notifyd's alarm, timer and notification sounds, played as a second
+# (ALARM) stream; root-only, like the daemon that writes it.
+mknod "$RUNTIME/alerts" p || exit 23
+chmod 0600 "$RUNTIME/alerts"
 # Moon may already be running and writing its volume here (audio is never
 # waited for at boot); keep that value, else the one saved at the last stop.
 if [ -r "$RUNTIME/volume" ]; then
@@ -93,7 +97,7 @@ chmod 0640 "$LOG"
 stream_index="$(sed -n 's/^AUDIO_STREAM_INDEX=//p' "$PERSIST/config" 2>/dev/null | tail -1)"
 case "$stream_index" in ''|*[!0-9]*) stream_index=5 ;; esac
 MOON_AUDIO_STREAM_INDEX="$stream_index" "$BB" nohup "$BB" setsid "$AUDIOD" \
-    "$RUNTIME/pcm" "$RUNTIME/volume" "$PIDFILE" "$MEDIA_HEARTBEAT" \
+    "$RUNTIME/pcm" "$RUNTIME/volume" "$PIDFILE" "$MEDIA_HEARTBEAT" "$RUNTIME/alerts" \
     >>"$LOG" 2>&1 </dev/null &
 launcher=$!
 

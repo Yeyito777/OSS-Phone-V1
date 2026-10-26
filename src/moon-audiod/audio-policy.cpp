@@ -26,6 +26,7 @@ public:
 }  // namespace android
 
 static const audio_stream_type_t STREAM_MUSIC = (audio_stream_type_t)3;
+static const audio_stream_type_t STREAM_ALARM = (audio_stream_type_t)4;
 static const audio_devices_t DEVICE_OUT_SPEAKER = (audio_devices_t)0x2;
 static const audio_devices_t DEVICE_OUT_DEFAULT = (audio_devices_t)0x40000000u;
 /* Samsung's STREAM_MUSIC range on this firmware (AudioService uses 0-15). */
@@ -39,4 +40,15 @@ extern "C" int moon_set_music_index(int index) {
     if (AudioSystem::setStreamVolumeIndex(STREAM_MUSIC, index, DEVICE_OUT_SPEAKER) != 0) return -1;
     if (AudioSystem::setStreamVolumeIndex(STREAM_MUSIC, index, DEVICE_OUT_DEFAULT) != 0) return -1;
     return index;
+}
+
+/* Alarms, timers and notification sounds (moon-notifyd) play as an ALARM
+ * stream at its full index: moon-notifyd applies its own alert volume, and an
+ * alarm must not be capped by the media ceiling. */
+extern "C" int moon_set_alarm_full(void) {
+    using android::AudioSystem;
+    if (AudioSystem::initStreamVolume(STREAM_ALARM, 0, MUSIC_INDEX_MAX) != 0) return -1;
+    if (AudioSystem::setStreamVolumeIndex(STREAM_ALARM, MUSIC_INDEX_MAX, DEVICE_OUT_SPEAKER) != 0) return -1;
+    if (AudioSystem::setStreamVolumeIndex(STREAM_ALARM, MUSIC_INDEX_MAX, DEVICE_OUT_DEFAULT) != 0) return -1;
+    return 0;
 }

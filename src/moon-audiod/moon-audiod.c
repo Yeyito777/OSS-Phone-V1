@@ -11,13 +11,19 @@
  * (a linear gain, as AudioTrack.setStereoVolume was). MOON_AUDIO_STREAM_INDEX
  * (0-15, default 5) is the music stream's speaker index, the loudness ceiling.
  *
- *   moon-audiod PCM_FIFO VOLUME_FILE PID_FILE MEDIA_HEARTBEAT
+ * An optional ALERT_FIFO carries moon-notifyd's alarm, timer and
+ * notification sounds (same format, already at their final level). They play
+ * as a second, ALARM-usage stream that AudioFlinger mixes with the media one,
+ * so an alarm is heard over the browser and is not capped by the media index.
+ *
+ *   moon-audiod PCM_FIFO VOLUME_FILE PID_FILE MEDIA_HEARTBEAT [ALERT_FIFO]
  *   moon-audiod tone [MILLISECONDS] [VOLUME_PERCENT]
  */
 #include <aaudio/AAudio.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -34,6 +40,7 @@
 #define WRITE_TIMEOUT_NS 2000000000LL
 
 int moon_set_music_index(int index);
+int moon_set_alarm_full(void);
 
 static volatile sig_atomic_t stopping;
 static int stream_index = 5;
@@ -77,7 +84,7 @@ static void apply_volume(int16_t *samples, int count, int volume) {
     for (int i = 0; i < count; i++) samples[i] = (int16_t)((samples[i] * gain) >> 16);
 }
 
-static AAudioStream *open_stream(void) {
+static AAudioStream *open_stream_for(int alert) {
     AAudioStreamBuilder *builder;
     AAudioStream *stream = NULL;
     if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK) return NULL;
@@ -87,11 +94,16 @@ static AAudioStream *open_stream(void) {
     AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
     AAudioStreamBuilder_setSampleRate(builder, RATE);
     AAudioStreamBuilder_setChannelCount(builder, CHANNELS);
-    AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_MEDIA);
-    AAudioStreamBuilder_setContentType(builder, AAUDIO_CONTENT_TYPE_MUSIC);
+    AAudioStreamBuilder_setUsage(builder, alert ? AAUDIO_USAGE_ALARM : AAUDIO_USAGE_MEDIA);
+    AAudioStreamBuilder_setContentType(builder,
+                                       alert ? AAUDIO_CONTENT_TYPE_SONIFICATION : AAUDIO_CONTENT_TYPE_MUSIC);
     AAudioStreamBuilder_setBufferCapacityInFrames(builder, RATE / 5);
     /* A restarted audioserver has forgotten the stream volume. */
-    set_stream_index();
+    if (alert) {
+        if (moon_set_alarm_full() < 0) fprintf(stderr, "moon-audiod: setting alarm stream volume failed\n");
+    } else {
+        set_stream_index();
+    }
     aaudio_result_t rc = AAudioStreamBuilder_openStream(builder, &stream);
     AAudioStreamBuilder_delete(builder);
     if (rc != AAUDIO_OK) {
@@ -100,6 +112,8 @@ static AAudioStream *open_stream(void) {
     }
     return stream;
 }
+
+static AAudioStream *open_stream(void) { return open_stream_for(0); }
 
 static int write_all(AAudioStream *stream, int16_t *samples, int frames) {
     int offset = 0;
@@ -261,6 +275,64 @@ static int bridge(const char *pcm, const char *volume_path, const char *heartbea
     return rc;
 }
 
+/* Plays ALERT_FIFO until moon-audiod stops. A writer's close ends one sound;
+ * the stream is paused and flushed in between, and reopened if audioserver
+ * restarted. Unlike the media path there is no volume file and no heartbeat. */
+static void *alerts(void *arg) {
+    const char *path = arg;
+    AAudioStream *stream = NULL;
+    union {
+        uint8_t bytes[CHUNK_FRAMES * FRAME_BYTES + FRAME_BYTES];
+        int16_t samples[(CHUNK_FRAMES * FRAME_BYTES + FRAME_BYTES) / 2];
+    } buf;
+    while (!stopping) {
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) {
+            if (errno == EINTR) continue;
+            fprintf(stderr, "moon-audiod: open %s: %s\n", path, strerror(errno));
+            sleep(2);
+            continue;
+        }
+        int carried = 0, playing = 0;
+        for (;;) {
+            ssize_t count = read(fd, buf.bytes + carried, sizeof(buf.bytes) - carried);
+            if (count < 0 && errno == EINTR) {
+                if (stopping) break;
+                continue;
+            }
+            if (count <= 0) break;
+            count += carried;
+            int aligned = (int)count - (int)(count % FRAME_BYTES);
+            carried = (int)count - aligned;
+            if (!stream && !(stream = open_stream_for(1))) break;
+            if (!playing) {
+                if (AAudioStream_requestStart(stream) != AAUDIO_OK) {
+                    AAudioStream_close(stream);
+                    stream = NULL;
+                    break;
+                }
+                playing = 1;
+            }
+            if (write_all(stream, buf.samples, aligned / FRAME_BYTES) != 0) {
+                AAudioStream_close(stream);
+                stream = NULL;
+                playing = 0;
+                continue;
+            }
+            if (carried > 0) memmove(buf.bytes, buf.bytes + aligned, carried);
+        }
+        close(fd);
+        if (playing && stream) {
+            /* Let the tail play out, then release the device. */
+            usleep(250000);
+            AAudioStream_requestPause(stream);
+            AAudioStream_requestFlush(stream);
+        }
+    }
+    if (stream) AAudioStream_close(stream);
+    return NULL;
+}
+
 int main(int argc, char **argv) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -279,11 +351,18 @@ int main(int argc, char **argv) {
         if (vol < 0 || vol > 100) vol = 30;
         return tone(ms, vol);
     }
-    if (argc != 5) {
-        fprintf(stderr, "usage: moon-audiod PCM_FIFO VOLUME_FILE PID_FILE MEDIA_HEARTBEAT\n"
+    if (argc != 5 && argc != 6) {
+        fprintf(stderr, "usage: moon-audiod PCM_FIFO VOLUME_FILE PID_FILE MEDIA_HEARTBEAT [ALERT_FIFO]\n"
                         "       moon-audiod tone [MILLISECONDS] [VOLUME_PERCENT]\n");
         return 2;
     }
     pid_path = argv[3];
+    if (argc == 6) {
+        pthread_t thread;
+        if (pthread_create(&thread, NULL, alerts, argv[5]) != 0)
+            fprintf(stderr, "moon-audiod: alert thread failed; alerts disabled\n");
+        else
+            pthread_detach(thread);
+    }
     return bridge(argv[1], argv[2], argv[4]);
 }

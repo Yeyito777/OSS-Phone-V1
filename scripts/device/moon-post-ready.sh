@@ -45,6 +45,33 @@ log "start boot_id=$boot_id direct=$DIRECT"
 # The supervisor starts this with setsid; the restore path ends the group.
 echo $$ >"$RUNTIME/post-ready.pid"
 
+# moon-notifyd (notifications, alarms, timers) runs for as long as Moon owns
+# the phone, restarted with backoff if it exits. It stays in this process
+# group, so the Android restore path's group kill stops it too; it saves its
+# state and silences the vibrator on SIGTERM.
+NOTIFYD=/opt/a26-shell/bin/moon-notifyd
+NOTIFY_LOG="$PERSIST/notifyd.log"
+keep_notifyd() {
+    delay=2
+    while moon_owns_phone; do
+        if [ -f "$NOTIFY_LOG" ] && [ "$($BB stat -c %s "$NOTIFY_LOG" 2>/dev/null || echo 0)" -gt 262144 ]; then
+            mv -f "$NOTIFY_LOG" "$NOTIFY_LOG.1"
+        fi
+        started=$(cut -d. -f1 /proc/uptime)
+        in_chroot "$NOTIFYD" </dev/null >>"$NOTIFY_LOG" 2>&1
+        rc=$?
+        moon_owns_phone || break
+        # A run that lasted a while resets the backoff.
+        [ $(( $(cut -d. -f1 /proc/uptime) - started )) -lt 60 ] || delay=2
+        log "moon-notifyd exited rc=$rc; restarting in ${delay}s"
+        "$BB" sleep "$delay"
+        [ "$delay" -ge 60 ] || delay=$((delay * 2))
+    done
+}
+if [ -x "$ROOT$NOTIFYD" ]; then
+    keep_notifyd &
+fi
+
 if [ -x "$ROOT/opt/a26-system/libexec/a26-wifi-start" ]; then
     if in_chroot /opt/a26-system/libexec/a26-wifi-start; then
         log 'native Wi-Fi started'
