@@ -5,6 +5,7 @@
 #   scripts/gpu/phone.sh shot OUT.png  # the frame on screen, as composed
 #   scripts/gpu/phone.sh log [N]       # last N compositor log lines
 #   scripts/gpu/phone.sh kill          # SIGKILL the compositor (fallback tests)
+#   scripts/gpu/phone.sh profile       # toggle the compositor's per-flip log
 set -euo pipefail
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$PROJECT_ROOT/scripts/a26-shell/common.sh"
@@ -43,8 +44,11 @@ log)
 kill)
     su_sh <<<"kill -KILL \$(cat $RUN/compositor.pid); echo killed"
     ;;
+profile)
+    su_sh <<<"kill -USR2 \$(cat $RUN/compositor.pid); sleep 0.3; tail -1 $RUN/compositor.log"
+    ;;
 *)
-    echo "usage: $0 status|shot OUT.png|log [N]|kill" >&2
+    echo "usage: $0 status|shot OUT.png|log [N]|kill|profile" >&2
     exit 2
     ;;
 esac

@@ -678,6 +678,10 @@ impl GpuBackend {
         Ok(())
     }
 
+    pub fn set_profile(&mut self, enabled: bool) {
+        self.profile = enabled;
+    }
+
     pub fn raw_fd(&self) -> Option<RawFd> {
         self.link.borrow().raw_fd()
     }

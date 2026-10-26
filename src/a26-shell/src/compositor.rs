@@ -543,6 +543,9 @@ impl Compositor {
 
     pub fn set_profile(&mut self, enabled: bool) {
         self.profile = enabled;
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.set_profile(enabled);
+        }
     }
 
     pub fn present_enabled(&self) -> bool {

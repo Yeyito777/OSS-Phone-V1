@@ -20,7 +20,8 @@
  *                   [--ready-file PATH] [--gpu-floor KHZ] [--cpu]
  *                   [--no-planes] [--threads N]
  *
- * MOON_GPU_PROFILE=1 logs every flip. SIGUSR1 writes the current frame,
+ * MOON_GPU_PROFILE=1 (or SIGUSR2, a toggle) logs every flip, and a count of
+ * flips by path every 10 s. SIGUSR1 writes the current frame,
  * drawn by the GPU or CPU tier whatever path shows it, to shot.ppm next to
  * the socket. Exits on SIGTERM.
  */
@@ -56,10 +57,12 @@
 /* A flip that has not completed after this long is presumed lost. */
 #define FLIP_TIMEOUT_NS 250000000ull
 
-static volatile sig_atomic_t quit, shot;
+static volatile sig_atomic_t quit, shot, toggle_profile;
 static void on_signal(int s) {
     if (s == SIGUSR1)
         shot = 1;
+    else if (s == SIGUSR2)
+        toggle_profile = 1;
     else
         quit = 1;
 }
@@ -1084,6 +1087,7 @@ int main(int argc, char **argv) {
     signal(SIGTERM, on_signal);
     signal(SIGPIPE, SIG_IGN);
     signal(SIGUSR1, on_signal);
+    signal(SIGUSR2, on_signal);
 
     static struct comp c;
     c.client_fd = c.listen_fd = c.flight_fence = c.floor_fd = -1;
@@ -1224,6 +1228,11 @@ int main(int argc, char **argv) {
         if (c.client_fd >= 0 && n > 0 && (p[2].revents & (POLLIN | POLLHUP | POLLERR)))
             read_client(&c);
         maybe_submit(&c);
+        if (toggle_profile) {
+            toggle_profile = 0;
+            c.profile = !c.profile;
+            LOG("profile %s", c.profile ? "on" : "off");
+        }
         if (shot) {
             shot = 0;
             char path[256];
