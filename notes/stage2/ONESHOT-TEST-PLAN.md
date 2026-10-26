@@ -107,3 +107,31 @@ should gate any recovery-partition flash.
 - **BCB-based recovery:** rejected — writing a sticky `boot-recovery` BCB is the
   one thing that could cause a recovery loop; we rely on the reason-based
   one-shot instead and keep the BCB empty.
+
+## RESULT: stock-recovery round trip (2026-10-26) — one-shot selection CONFIRMED
+Before: BOOT `8c0461ee…`, RECOVERY `9ab6cefe…` (sha1 `a1f5dc9e…`, stock), misc
+first 4 KiB all zero, Moon up.
+1. `adb reboot recovery` → adb gone ~35 s, then `unauthorized` (stock
+   recovery's adbd, no system keys) → stock Android Recovery on screen.
+2. User chose **Reboot system now** → normal system: adb authorized,
+   `/proc/1/comm=init`, `moon.session.ready=1`, `ro.boot.bootreason=recovery`
+   (the bootloader reported the recovery round trip), BOOT and RECOVERY hashes
+   unchanged, misc first 4 KiB sha256 == 4 KiB of zeros (stock recovery wrote
+   no BCB).
+3. Plain `adb reboot` → **system again** (not recovery): `bootreason=reboot,shell`,
+   Moon up, hashes unchanged, misc still all zero.
+⇒ Recovery is selected by the one-shot reboot reason, not by a sticky BCB.
+
+## Extra evidence: Android's install-recovery service
+`/vendor/etc/init/vendor_flash_recovery.rc` runs `/vendor/bin/install-recovery.sh`
+(class main, every boot). It checks RECOVERY against sha1 `a1f5dc9e…` (stock);
+on a mismatch it rebuilds stock recovery with `applypatch` from
+`/vendor/recovery-from-boot.p`, whose **source must be the stock unrooted BOOT**
+(sha1 `afce286f…`). Ours is `1d45388e…` (OSS kernel + Magisk), so on this phone a
+test recovery is **neither auto-restored nor overwritten** (applypatch checks the
+source before writing; it logs `failed`, status 454). Restoring stock recovery
+is our job (in-OS dd + read-back, below). Today it logs "Recovery image already
+installed".
+
+Open question for the next step: **does a kernel panic during a recovery boot
+return to BOOT?** The round trip only proved that a *clean* exit returns.
