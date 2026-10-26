@@ -60,7 +60,11 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     owner="$(cat "$LOCK/pid" 2>/dev/null || true)"
     owner_boot="$(cat "$LOCK/boot-id" 2>/dev/null || true)"
     case "$owner" in ''|*[!0-9]*) owner='' ;; esac
-    if [ "$owner_boot" = "$boot_id" ] && [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+    # Properties live as long as this Android init. With stage-2 containment a
+    # contained Android can die and an uncontained one boot within the same
+    # kernel boot_id; the dead container's PIDs then mean nothing here.
+    if [ "$owner_boot" = "$boot_id" ] && [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null &&
+       [ "$(getprop moon.supervisor.pid)" = "$owner" ]; then
         log "supervisor already running pid=$owner"
         exit 0
     fi
@@ -69,6 +73,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 echo $$ >"$LOCK/pid"
 echo "$boot_id" >"$LOCK/boot-id"
+setprop moon.supervisor.pid $$
 cleanup_lock() { rm -rf "$LOCK"; }
 trap cleanup_lock EXIT HUP INT TERM
 
@@ -91,10 +96,12 @@ if [ "$DIRECT" = 0 ]; then
 fi
 
 previous_attempt="$(cat "$PERSIST/last-attempt-boot-id" 2>/dev/null || true)"
-[ "$previous_attempt" != "$boot_id" ] || {
+if [ "$previous_attempt" = "$boot_id" ] && [ "$(getprop moon.supervisor.attempted)" = 1 ]; then
     log 'this boot was already attempted; refusing a duplicate takeover'
     exit 0
-}
+fi
+[ "$previous_attempt" != "$boot_id" ] || log 'same kernel boot, new Android init (stage-2 fallback); starting'
+setprop moon.supervisor.attempted 1
 echo "$boot_id" >"$PERSIST/last-attempt-boot-id"
 chmod 0600 "$PERSIST/last-attempt-boot-id"
 
