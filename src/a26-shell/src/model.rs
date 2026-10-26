@@ -149,6 +149,9 @@ pub struct PointerGesture {
     pub last_x: i16,
     pub last_y: i16,
     pub started: Instant,
+    /// Last begin/move of this contact; the lost-release watchdog counts
+    /// from here, so a long drag is never cancelled while it moves.
+    pub last_activity: Instant,
     pub keyboard_owned: bool,
     pub keyboard_key_index: Option<usize>,
     pub keyboard_pressed: bool,

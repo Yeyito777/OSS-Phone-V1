@@ -1114,7 +1114,7 @@ fn next_input_deadline(state: &ShellState, raw_touch: &RawTouchTracker) -> Optio
         .flat_map(|pointer| {
             [
                 pointer.keyboard_next_repeat_at,
-                pointer.started.checked_add(STALE_POINTER_TIMEOUT),
+                pointer.last_activity.checked_add(STALE_POINTER_TIMEOUT),
             ]
         })
         .flatten()
@@ -1703,6 +1703,7 @@ fn new_pointer_gesture(
             last_x: x,
             last_y: y,
             started,
+            last_activity: started,
             keyboard_owned,
             keyboard_key_index,
             keyboard_pressed: keyboard_owned && keyboard_key_index.is_some(),
@@ -1757,6 +1758,7 @@ fn pointer_move(
         let was_pressed = pointer.keyboard_pressed;
         pointer.last_x = x;
         pointer.last_y = y;
+        pointer.last_activity = Instant::now();
         pointer.keyboard_pressed = pressed_key_index.is_some();
         if pressed_key_index.is_none() {
             pointer.keyboard_next_repeat_at = None;
@@ -1828,6 +1830,7 @@ fn update_raw_keyboard_contact(
     let was_pressed = pointer.keyboard_pressed;
     pointer.last_x = next_x;
     pointer.last_y = next_y;
+    pointer.last_activity = Instant::now();
     pointer.keyboard_pressed = should_press;
     if !should_press {
         pointer.keyboard_next_repeat_at = None;
@@ -1967,7 +1970,7 @@ fn cancel_stale_pointer(state: &mut ShellState, raw_touch: &mut RawTouchTracker,
     let legacy_stale = state
         .pointer
         .as_ref()
-        .is_some_and(|pointer| now.duration_since(pointer.started) >= STALE_POINTER_TIMEOUT);
+        .is_some_and(|pointer| now.duration_since(pointer.last_activity) >= STALE_POINTER_TIMEOUT);
     let mut recovered = false;
     if legacy_stale {
         if let Some(pointer) = state.pointer.take()
@@ -1981,7 +1984,7 @@ fn cancel_stale_pointer(state: &mut ShellState, raw_touch: &mut RawTouchTracker,
     }
     let mut position = 0;
     while position < raw_touch.keyboard_contacts.len() {
-        if now.duration_since(raw_touch.keyboard_contacts[position].1.started)
+        if now.duration_since(raw_touch.keyboard_contacts[position].1.last_activity)
             >= STALE_POINTER_TIMEOUT
         {
             let (_, pointer) = raw_touch.keyboard_contacts.remove(position);
@@ -2033,7 +2036,10 @@ fn pointer_end(
     config: &Config,
     key_injector: &XtestInjector,
 ) {
-    if state.pressed.take().is_some() {
+    // Still on the keypad key or app icon it pressed (a slide past the slop
+    // clears it), so the release counts however long the finger rested.
+    let pressed = state.pressed.take();
+    if pressed.is_some() {
         state.redraw = true;
     }
     let Some(mut pointer) = state.pointer.take() else {
@@ -2090,7 +2096,9 @@ fn pointer_end(
         state.switch_app();
         return;
     }
-    if dx.abs() <= 35 && dy.abs() <= 35 && elapsed <= Duration::from_millis(650) {
+    let held_on_target = pressed.is_some() && dx.abs() <= 35 && dy.abs() <= 35;
+    if held_on_target || (dx.abs() <= 35 && dy.abs() <= 35 && elapsed <= Duration::from_millis(650))
+    {
         handle_tap(
             conn,
             root,
@@ -2525,6 +2533,7 @@ mod touch_tests {
             last_x: 64,
             last_y: 1604,
             started: now - STALE_POINTER_TIMEOUT - Duration::from_millis(1),
+            last_activity: now - STALE_POINTER_TIMEOUT - Duration::from_millis(1),
             keyboard_owned: true,
             keyboard_key_index: Some(0),
             keyboard_pressed: true,
