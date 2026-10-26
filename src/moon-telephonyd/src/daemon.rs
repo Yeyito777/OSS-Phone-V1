@@ -121,6 +121,9 @@ enum Op {
     Unlock,
     Call,
     Radio,
+    ChannelOpen,
+    Apdu,
+    ChannelClose,
 }
 
 enum Pending {
@@ -157,6 +160,8 @@ struct Data {
 
 struct Client {
     key: u64,
+    /// Peer is root: may use the raw SIM channel commands.
+    root: bool,
     stream: UnixStream,
     input: Vec<u8>,
     output: VecDeque<u8>,
@@ -281,6 +286,7 @@ pub struct Daemon {
     speaker: bool,
     mute: bool,
     pin_retries: Option<i32>,
+    sim_slots: Vec<radio::SimSlot>,
     data: Data,
     last_state: Value,
     last_signal_event: Instant,
@@ -335,6 +341,7 @@ pub fn run(paths: Paths) -> Result<(), Box<dyn Error>> {
         speaker: false,
         mute: false,
         pin_retries: None,
+        sim_slots: Vec::new(),
         data: Data::default(),
         last_state: Value::Null,
         last_signal_event: Instant::now(),
@@ -464,6 +471,20 @@ impl Daemon {
     }
 
     fn connect_slots(&mut self) {
+        if self.radio.config.is_none() {
+            match self.radio.connect_config() {
+                Ok(true) => {
+                    if let Err(e) = self
+                        .radio
+                        .config_request(radio::config_req::GET_SIM_SLOTS_STATUS)
+                    {
+                        log(format!("IRadioConfig request: {e}"));
+                    }
+                }
+                Ok(false) => {}
+                Err(e) => log(format!("IRadioConfig connect: {e}")),
+            }
+        }
         for slot in 0..self.slots.len() {
             if self.slots[slot].connected {
                 continue;
@@ -528,6 +549,10 @@ impl Daemon {
         }
         self.slots[slot] = SlotState::default();
         self.radio.slots[slot].handle = None;
+        // IRadioConfig lives in the same rild.
+        if let Some(handle) = self.radio.config.take() {
+            let _ = self.radio.binder.release(handle);
+        }
         if self.reconnect_at.is_none() {
             self.reconnect_at = Some(Instant::now() + RECONNECT);
         }
@@ -547,6 +572,14 @@ impl Daemon {
                     }
                 }
                 Event::Indication { slot, indication } => self.indication(slot, indication),
+                Event::ConfigResponse {
+                    body: Response::SimSlots(slots),
+                    ..
+                }
+                | Event::SimSlotsChanged(slots) => {
+                    self.sim_slots = slots;
+                }
+                Event::ConfigResponse { .. } => {}
                 Event::Response {
                     slot,
                     code,
@@ -653,10 +686,33 @@ impl Daemon {
 
     // ---- state -----------------------------------------------------------
 
+    /// The physical slots as IRadioConfig reports them (eUICC = has an EID).
+    fn slots_json(&self) -> Vec<Value> {
+        self.sim_slots
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let card = match p.card_state {
+                    0 => "absent",
+                    1 => "present",
+                    2 => "error",
+                    3 => "restricted",
+                    _ => "unknown",
+                };
+                json!({"physical": i + 1, "logical": p.logical_slot + 1, "card": card,
+                       "esim": !p.eid.is_empty(), "active": p.active})
+            })
+            .collect()
+    }
+
     fn sim_json(&self) -> Value {
         let Some(slot) = self.main_slot() else {
-            return json!({"slot": null, "state": "unknown", "pin_retries": self.pin_retries});
+            return json!({"slot": null, "state": "unknown", "pin_retries": self.pin_retries, "slots": self.slots_json()});
         };
+        let euicc = self
+            .sim_slots
+            .iter()
+            .any(|p| p.active && p.logical_slot == slot as i32 && !p.eid.is_empty());
         let s = &self.slots[slot];
         let state = match &s.card {
             None => "unknown",
@@ -670,11 +726,12 @@ impl Daemon {
                     Some(4) => "network_locked",
                     Some(5) => "ready",
                     _ if card.universal_pin_state == 4 => "puk_required",
+                    None if card.apps.is_empty() && euicc => "no_profile",
                     _ => "not_ready",
                 },
             },
         };
-        json!({"slot": slot + 1, "state": state, "pin_retries": self.pin_retries})
+        json!({"slot": slot + 1, "state": state, "pin_retries": self.pin_retries, "slots": self.slots_json()})
     }
 
     fn sim_ready(&self) -> bool {
@@ -714,6 +771,9 @@ impl Daemon {
             "sim": self.sim_json(),
             "network": {
                 "registration": reg_name(voice),
+                // Not registered, but the modem says emergency calls work
+                // (the *_EM registration states).
+                "emergency_only": voice.is_some_and(|r| matches!(r.state, 10 | 12 | 13 | 14)),
                 "data_registration": reg_name(data),
                 "operator": operator.and_then(|o| o.first().or(o.get(1))).filter(|n| !n.is_empty()),
                 "numeric": operator.and_then(|o| o.get(2)).filter(|n| !n.is_empty()),
@@ -1312,7 +1372,15 @@ impl Daemon {
             self.query_main(req::GET_CURRENT_CALLS);
         }
         let result = if error == radio::error::NONE {
-            Ok(json!({}))
+            Ok(match body {
+                Response::Channel { id, select } => {
+                    json!({"channel": id, "select": sms::hex(&select)})
+                }
+                Response::IccIo { sw1, sw2, data } => {
+                    json!({"response": format!("{data}{:02X}{:02X}", sw1 & 0xff, sw2 & 0xff)})
+                }
+                _ => json!({}),
+            })
         } else {
             let mut message = radio::error_name(error).to_owned();
             if op == Op::Unlock
@@ -1336,9 +1404,11 @@ impl Daemon {
             match self.listener.accept() {
                 Ok((stream, _)) => {
                     let _ = stream.set_nonblocking(true);
-                    let allowed = peer_allowed(&stream, self.group);
+                    let peer = peer_uid(&stream, self.group);
+                    let allowed = peer.is_some();
                     let mut client = Client {
                         key: self.next_client,
+                        root: peer == Some(0),
                         stream,
                         input: Vec::new(),
                         output: VecDeque::new(),
@@ -1455,6 +1525,9 @@ impl Daemon {
             "call.audio" => &["speaker", "mute"],
             "data.set" => &["enabled", "apn", "protocol", "user", "password", "auth"],
             "radio.set" => &["airplane"],
+            "sim.channel_open" => &["aid", "p2", "slot"],
+            "sim.apdu" => &["channel", "apdu", "slot"],
+            "sim.channel_close" => &["channel", "slot"],
             _ => return Some(Err(("unknown_command", format!("unknown command {cmd:?}")))),
         };
         if let Some(extra) = a.keys().find(|k| !allowed.contains(&k.as_str())) {
@@ -1764,6 +1837,93 @@ impl Daemon {
                     json!({"data": self.data_json(), "apn": self.settings.apn_json(false)}),
                 ))
             }
+            "sim.channel_open" | "sim.apdu" | "sim.channel_close" => {
+                // Raw card access (eSIM management through lpac's stdio
+                // driver): root only.
+                if !self.clients.iter().any(|c| c.key == key && c.root) {
+                    return Some(Err(("permission_denied", "root only".into())));
+                }
+                let slot = match a.get("slot").and_then(Value::as_u64) {
+                    Some(n) if (1..=SLOTS.len() as u64).contains(&n) => n as usize - 1,
+                    Some(_) => return bad("slot must be 1 or 2"),
+                    None => match need_radio() {
+                        Ok(s) => s,
+                        Err(e) => return Some(Err(e)),
+                    },
+                };
+                let hex = |k: &str| {
+                    text(k)
+                        .filter(|h| {
+                            h.len() % 2 == 0
+                                && h.len() <= 520
+                                && h.bytes().all(|b| b.is_ascii_hexdigit())
+                        })
+                        .map(str::to_ascii_uppercase)
+                };
+                let channel = a.get("channel").and_then(Value::as_i64).map(|c| c as i32);
+                match cmd {
+                    "sim.channel_open" => {
+                        let Some(aid) = hex("aid").filter(|a| a.len() >= 10) else {
+                            return bad("aid must be 5-16 bytes of hex");
+                        };
+                        let p2 = a.get("p2").and_then(Value::as_i64).unwrap_or(0) as i32;
+                        self.radio_command(
+                            slot,
+                            key,
+                            id,
+                            Op::ChannelOpen,
+                            req::ICC_OPEN_LOGICAL_CHANNEL,
+                            move |p| {
+                                p.write_string(&aid);
+                                p.write_i32(p2);
+                            },
+                        )
+                    }
+                    "sim.apdu" => {
+                        let (Some(channel), Some(apdu)) = (channel, hex("apdu")) else {
+                            return bad("channel and apdu (hex) are required");
+                        };
+                        let b = (0..apdu.len())
+                            .step_by(2)
+                            .map(|i| u8::from_str_radix(&apdu[i..i + 2], 16).unwrap())
+                            .collect::<Vec<u8>>();
+                        if b.len() < 4 {
+                            return bad("apdu is shorter than its header");
+                        }
+                        // A 4-byte APDU has no P3 (p3 < 0); otherwise P3 is Lc
+                        // (or Le) and the body follows.
+                        let p3 = b.get(4).map_or(-1, |&v| v as i32);
+                        let body_end = if b.len() > 5 {
+                            (5 + b[4] as usize).min(b.len())
+                        } else {
+                            b.len()
+                        };
+                        let data = sms::hex(b.get(5..body_end).unwrap_or(&[]));
+                        let header = [b[0] as i32, b[1] as i32, b[2] as i32, b[3] as i32, p3];
+                        self.radio_command(
+                            slot,
+                            key,
+                            id,
+                            Op::Apdu,
+                            req::ICC_TRANSMIT_APDU_LOGICAL_CHANNEL,
+                            move |p| args::sim_apdu(p, channel, header, &data),
+                        )
+                    }
+                    _ => {
+                        let Some(channel) = channel else {
+                            return bad("channel is required");
+                        };
+                        self.radio_command(
+                            slot,
+                            key,
+                            id,
+                            Op::ChannelClose,
+                            req::ICC_CLOSE_LOGICAL_CHANNEL,
+                            move |p| p.write_i32(channel),
+                        )
+                    }
+                }
+            }
             "radio.set" => {
                 let slot = match need_radio() {
                     Ok(s) => s,
@@ -1940,12 +2100,13 @@ fn chown(path: &Path, group: Option<u32>) -> io::Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn peer_allowed(_: &UnixStream, _: Option<u32>) -> bool {
-    true // host builds are for tests only
+fn peer_uid(_: &UnixStream, _: Option<u32>) -> Option<u32> {
+    Some(0) // host builds are for tests only
 }
 
+/// The peer's uid if it may connect (root, our uid, or the group).
 #[cfg(target_os = "linux")]
-fn peer_allowed(stream: &UnixStream, group: Option<u32>) -> bool {
+fn peer_uid(stream: &UnixStream, group: Option<u32>) -> Option<u32> {
     let mut cred = libc::ucred {
         pid: 0,
         uid: u32::MAX,
@@ -1963,15 +2124,15 @@ fn peer_allowed(stream: &UnixStream, group: Option<u32>) -> bool {
         )
     };
     if rc != 0 {
-        return false;
+        return None;
     }
     // SAFETY: geteuid has no preconditions.
     if cred.uid == 0 || cred.uid == unsafe { libc::geteuid() } {
-        return true;
+        return Some(cred.uid);
     }
-    let Some(group) = group else { return false };
+    let group = group?;
     if cred.gid == group {
-        return true;
+        return Some(cred.uid);
     }
     fs::read_to_string(format!("/proc/{}/status", cred.pid))
         .ok()
@@ -1982,6 +2143,7 @@ fn peer_allowed(stream: &UnixStream, group: Option<u32>) -> bool {
                 .map(|groups| groups.split_whitespace().any(|g| g.parse() == Ok(group)))
         })
         .unwrap_or(false)
+        .then_some(cred.uid)
 }
 
 fn group_id(path: &Path, name: &str) -> Option<u32> {
