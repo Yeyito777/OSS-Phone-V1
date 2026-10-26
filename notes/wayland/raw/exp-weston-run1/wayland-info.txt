@@ -1,0 +1,61 @@
+interface: 'wl_compositor',                              version:  5, name:  1
+interface: 'wl_subcompositor',                           version:  1, name:  2
+interface: 'wp_viewporter',                              version:  1, name:  3
+interface: 'zxdg_output_manager_v1',                     version:  2, name:  4
+	xdg_output_v1
+		output: 17
+		name: 'DSI-1'
+		logical_x: 0, logical_y: 0
+		logical_width: 1080, logical_height: 2340
+interface: 'wp_presentation',                            version:  1, name:  5
+	presentation clock id: 1 (CLOCK_MONOTONIC)
+interface: 'wp_single_pixel_buffer_manager_v1',          version:  1, name:  6
+interface: 'wp_tearing_control_manager_v1',              version:  1, name:  7
+interface: 'zwp_relative_pointer_manager_v1',            version:  1, name:  8
+interface: 'zwp_pointer_constraints_v1',                 version:  1, name:  9
+interface: 'zwp_input_timestamps_manager_v1',            version:  1, name: 10
+interface: 'weston_capture_v1',                          version:  1, name: 11
+interface: 'wl_data_device_manager',                     version:  3, name: 12
+interface: 'wl_shm',                                     version:  2, name: 13
+	formats (fourcc):
+	0x30334241 = 'AB30'
+	0x30334258 = 'XB30'
+	0x30335241 = 'AR30'
+	0x30335258 = 'XR30'
+	0x34324142 = 'BA24'
+	0x34325842 = 'BX24'
+	0x34324152 = 'RA24'
+	0x34325852 = 'RX24'
+	0x34324241 = 'AB24'
+	0x34324258 = 'XB24'
+	0x36314752 = 'RG16'
+	         1 = 'XR24'
+	         0 = 'AR24'
+interface: 'weston_debug_v1',                            version:  1, name: 14
+interface: 'wl_seat',                                    version:  7, name: 15
+	name: default
+	capabilities: keyboard
+	keyboard repeat rate: 40
+	keyboard repeat delay: 400
+interface: 'weston_content_protection',                  version:  1, name: 16
+interface: 'wl_output',                                  version:  4, name: 17
+	name: DSI-1
+	description: unknown
+	x: 0, y: 0, scale: 1,
+	physical_width: 71 mm, physical_height: 154 mm,
+	make: 'unknown', model: 'unknown',
+	subpixel_orientation: unknown, output_transform: normal,
+	mode:
+		width: 1080 px, height: 2340 px, refresh: 120.000 Hz,
+		flags: preferred
+	mode:
+		width: 1080 px, height: 2340 px, refresh: 60.000 Hz,
+		flags:
+	mode:
+		width: 1080 px, height: 2340 px, refresh: 120.000 Hz,
+		flags: current
+interface: 'zwp_input_panel_v1',                         version:  1, name: 18
+interface: 'zwp_input_method_v1',                        version:  1, name: 19
+interface: 'zwp_text_input_manager_v1',                  version:  1, name: 20
+interface: 'xdg_wm_base',                                version:  5, name: 21
+interface: 'weston_desktop_shell',                       version:  1, name: 22

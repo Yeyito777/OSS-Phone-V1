@@ -1,5 +1,6 @@
 // kmsbench: what can a compositor that owns KMS on the A26 do per 120 Hz frame?
 //
+//   kmsbench sanitize              set HDR_FD/DQE_FD to -1 (done first by every command) and print them
 //   kmsbench probe                 TEST_ONLY matrix: planes, scaling, alpha, zpos, counts
 //   kmsbench flip  [opts]          CPU-composited frames on the primary plane, paced by
 //                                  page-flip events (the pixman-compositor model)
@@ -13,6 +14,14 @@
 //          --threads T, --buf dumb|system (a dma-heap name), --nbuf 2|3, --noshadow 1
 //          (flip into the uncached dumb buffer directly), --cards N and --bg-mpx M
 //          (planes: also redraw M Mpx of the primary every frame), --log FILE.
+//
+// Samsung's private fd properties: exynos-drm reads the plane's HDR_FD (and
+// the CRTC's DQE_FD) as a file descriptor of the *committing* process on every
+// commit and maps it as HDR/DQE coefficients (exynos_drm_hdr.c). Samsung's HWC
+// leaves HDR_FD=16 on the primary plane; in any other process fd 16 is
+// something else, and a dmabuf there was read past its end into a kernel
+// panic. Every commit here therefore sets HDR_FD=-1 and DQE_FD=-1 first
+// (`kmsbench sanitize` does only that, before weston or cage start).
 //
 // It never changes the mode: every commit reuses the CRTC's current MODE_ID blob
 // and only asks for ACTIVE=1, as DPMS-on does. It never disables the CRTC on exit.
@@ -70,12 +79,12 @@ struct plane {
 	int type; /* 0 overlay 1 primary 2 cursor */
 	uint64_t zpos_min, zpos_max, zpos;
 	int has_alpha, has_blend;
-	uint32_t p_fb, p_crtc, p_sx, p_sy, p_sw, p_sh, p_cx, p_cy, p_cw, p_ch, p_alpha, p_zpos, p_blend;
+	uint32_t p_fb, p_crtc, p_sx, p_sy, p_sw, p_sh, p_cx, p_cy, p_cw, p_ch, p_alpha, p_zpos, p_blend, p_hdr;
 	uint64_t blend_premul, blend_none;
 };
 static struct plane planes[MAXP];
 static int nplanes;
-static uint32_t p_crtc_active, p_crtc_mode, p_conn_crtc;
+static uint32_t p_crtc_active, p_crtc_mode, p_conn_crtc, p_crtc_dqe;
 
 static uint32_t prop_id(uint32_t obj, uint32_t type, const char *name, uint64_t *val, drmModePropertyPtr *out)
 {
@@ -124,6 +133,7 @@ static void init_kms(void)
 	p_crtc_mode = prop_id(crtc_id, DRM_MODE_OBJECT_CRTC, "MODE_ID", &v, NULL);
 	mode_blob = (uint32_t)v;
 	p_crtc_active = prop_id(crtc_id, DRM_MODE_OBJECT_CRTC, "ACTIVE", NULL, NULL);
+	p_crtc_dqe = prop_id(crtc_id, DRM_MODE_OBJECT_CRTC, "DQE_FD", NULL, NULL);
 	if (!mode_blob) {
 		errno = ENOENT;
 		die("CRTC has no MODE_ID (refusing to choose a mode on this firmware)");
@@ -156,6 +166,7 @@ static void init_kms(void)
 		P->p_cw = prop_id(P->id, DRM_MODE_OBJECT_PLANE, "CRTC_W", NULL, NULL);
 		P->p_ch = prop_id(P->id, DRM_MODE_OBJECT_PLANE, "CRTC_H", NULL, NULL);
 		P->p_alpha = prop_id(P->id, DRM_MODE_OBJECT_PLANE, "alpha", NULL, NULL);
+		P->p_hdr = prop_id(P->id, DRM_MODE_OBJECT_PLANE, "HDR_FD", NULL, NULL);
 		P->has_alpha = P->p_alpha != 0;
 		drmModePropertyPtr zp = NULL;
 		P->p_zpos = prop_id(P->id, DRM_MODE_OBJECT_PLANE, "zpos", &P->zpos, &zp);
@@ -183,6 +194,36 @@ static void init_kms(void)
 			if (planes[j].zpos < planes[i].zpos) {
 				struct plane t = planes[i]; planes[i] = planes[j]; planes[j] = t;
 			}
+}
+
+/* Every commit carries these: HDR_FD/DQE_FD = -1 (no coefficients). */
+static void add_sanitize(drmModeAtomicReqPtr r)
+{
+	for (int i = 0; i < nplanes; i++)
+		if (planes[i].p_hdr) drmModeAtomicAddProperty(r, planes[i].id, planes[i].p_hdr, (uint64_t)(int64_t)-1);
+	if (p_crtc_dqe) drmModeAtomicAddProperty(r, crtc_id, p_crtc_dqe, (uint64_t)(int64_t)-1);
+}
+
+/* The first commit of every run, blocking and without an event (a stray flip
+ * event would otherwise answer a later nonblocking commit). */
+static void sanitize_commit(void)
+{
+	drmModeAtomicReqPtr r = drmModeAtomicAlloc();
+	add_sanitize(r);
+	int ret = drmModeAtomicCommit(fd, r, 0, NULL);
+	drmModeAtomicFree(r);
+	if (ret) die("sanitize commit (HDR_FD/DQE_FD = -1)");
+}
+
+static void print_fd_props(void)
+{
+	for (int i = 0; i < nplanes; i++) {
+		uint64_t v = 0;
+		if (prop_id(planes[i].id, DRM_MODE_OBJECT_PLANE, "HDR_FD", &v, NULL))
+			printf("plane %u HDR_FD=%lld\n", planes[i].id, (long long)(int64_t)v);
+	}
+	uint64_t v = 0;
+	if (prop_id(crtc_id, DRM_MODE_OBJECT_CRTC, "DQE_FD", &v, NULL)) printf("crtc %u DQE_FD=%lld\n", crtc_id, (long long)(int64_t)v);
 }
 
 /* ---------- buffers ---------- */
@@ -295,6 +336,7 @@ static struct plane *primary(void)
 static void initial_commit(uint32_t fb)
 {
 	drmModeAtomicReqPtr r = drmModeAtomicAlloc();
+	add_sanitize(r);
 	crtc_on(r);
 	for (int i = 0; i < nplanes; i++) {
 		if (&planes[i] == primary()) plane_set(r, &planes[i], fb, 0, 0, W, H, 0, 0, W, H, 0xffff);
@@ -492,6 +534,7 @@ static int cmd_flip(void)
 		st.render_sum += t1 - t0;
 		if (t1 - t0 > st.render_max) st.render_max = t1 - t0;
 		drmModeAtomicReqPtr r = drmModeAtomicAlloc();
+		add_sanitize(r);
 		drmModeAtomicAddProperty(r, P->id, P->p_fb, b->fb);
 		flip_pending = 1;
 		double c0 = now_ms();
@@ -550,6 +593,7 @@ static int cmd_planes(void)
 			if (&planes[i] == primary()) continue;
 			if (pass == 0) {
 				drmModeAtomicReqPtr r = drmModeAtomicAlloc();
+				add_sanitize(r);
 				plane_set(r, &planes[i], tb.fb, 0, 0, W, H, 100, 200, W * 6 / 10, H * 6 / 10, 0xffff);
 				cscal[i] = drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_TEST_ONLY, NULL) == 0;
 				drmModeAtomicFree(r);
@@ -577,6 +621,7 @@ static int cmd_planes(void)
 		double t = (now_ms() - t_start) / 1000.0;
 		double t0 = now_ms();
 		drmModeAtomicReqPtr r = drmModeAtomicAlloc();
+		add_sanitize(r);
 		if (band > 0) {
 			int bi = frames & 1, y = (frames * 37) % (H - band + 1);
 			composite(PIXMAN_OP_SRC, src, bgs[bi].img, 0, y, W, band);
@@ -633,6 +678,7 @@ static int cmd_planes(void)
 static int test_commit(void (*fill)(drmModeAtomicReqPtr, void *), void *arg)
 {
 	drmModeAtomicReqPtr r = drmModeAtomicAlloc();
+	add_sanitize(r);
 	crtc_on(r);
 	fill(r, arg);
 	int ret = drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_TEST_ONLY, NULL);
@@ -756,6 +802,7 @@ static int cmd_dpms(void)
 	struct plane *P = primary();
 	for (int c = 0; c < opt_cycles; c++) {
 		drmModeAtomicReqPtr r = drmModeAtomicAlloc();
+		add_sanitize(r);
 		drmModeAtomicAddProperty(r, crtc_id, p_crtc_active, 0);
 		plane_off(r, P);
 		double t0 = now_ms();
@@ -765,6 +812,7 @@ static int cmd_dpms(void)
 		if (ret) die("ACTIVE=0");
 		usleep(1500 * 1000);
 		r = drmModeAtomicAlloc();
+		add_sanitize(r);
 		drmModeAtomicAddProperty(r, crtc_id, p_crtc_active, 1);
 		plane_set(r, P, b.fb, 0, 0, W, H, 0, 0, W, H, 0xffff);
 		t0 = now_ms();
@@ -774,6 +822,7 @@ static int cmd_dpms(void)
 		if (ret) die("ACTIVE=1");
 		/* First flip after power-up: the panel is really showing frames again. */
 		r = drmModeAtomicAlloc();
+		add_sanitize(r);
 		drmModeAtomicAddProperty(r, P->id, P->p_fb, b.fb);
 		flip_pending = 1;
 		if (drmModeAtomicCommit(fd, r, DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT, NULL)) die("flip after on");
@@ -805,7 +854,7 @@ static int cmd_gbm(void)
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "usage: kmsbench probe|flip|planes|bw|gbm|dpms [--seconds S] [--mpx M] [--op src|over|scale] "
+		fprintf(stderr, "usage: kmsbench sanitize|probe|flip|planes|bw|gbm|dpms [--seconds S] [--mpx M] [--op src|over|scale] "
 				"[--threads T] [--buf dumb|system] [--nbuf N] [--cards N] [--noshadow 1] [--bg-mpx M] [--log FILE]\n");
 		return 2;
 	}
@@ -828,6 +877,7 @@ int main(int argc, char **argv)
 	if (opt_nbuf > 3) opt_nbuf = 3;
 	if (opt_cards > 6) opt_cards = 6;
 	init_kms();
+	sanitize_commit();
 	int rc = 2;
 	if (!strcmp(argv[1], "probe")) rc = cmd_probe();
 	else if (!strcmp(argv[1], "flip")) rc = cmd_flip();
@@ -835,6 +885,7 @@ int main(int argc, char **argv)
 	else if (!strcmp(argv[1], "bw")) rc = cmd_bw();
 	else if (!strcmp(argv[1], "gbm")) rc = cmd_gbm();
 	else if (!strcmp(argv[1], "dpms")) rc = cmd_dpms();
+	else if (!strcmp(argv[1], "sanitize")) { print_fd_props(); rc = 0; }
 	if (logfp) fclose(logfp);
 	/* Leave the CRTC as it is: never disable it on this firmware. */
 	return rc;

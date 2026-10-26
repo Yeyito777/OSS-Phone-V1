@@ -1,0 +1,120 @@
+tmpfs /data/local/a26-wayland/dev tmpfs rw,seclabel,nosuid,relatime,size=3241480k,nr_inodes=810370,mode=755 0 0
+cpu governors: energy_aware energy_aware 
+uclamp.min of this group: 4:cpuset:/
+== kmsbench probe
+planes on crtc 120 (zpos order):
+  [0] plane 54 type=primary zpos=0 (0..8) alpha=1 blend=1
+  [1] plane 61 type=primary zpos=1 (0..8) alpha=1 blend=1
+  [2] plane 68 type=overlay zpos=2 (0..8) alpha=1 blend=1
+  [3] plane 75 type=overlay zpos=3 (0..8) alpha=1 blend=1
+  [4] plane 82 type=overlay zpos=4 (0..8) alpha=1 blend=1
+  [5] plane 89 type=overlay zpos=5 (0..8) alpha=1 blend=1
+  [6] plane 96 type=overlay zpos=6 (0..8) alpha=1 blend=1
+  [7] plane 103 type=overlay zpos=7 (0..8) alpha=1 blend=1
+per plane, over the full-screen primary (TEST_ONLY; 0 = accepted, else -errno):
+  plane       1:1     x0.6     x0.5    x0.45     x1.5    a=50%      x<0    40x10
+  61            0        0        0     -524        0        0        0     -524
+  68            0     -524     -524     -524     -524        0     -524     -524
+  75            0        0        0     -524        0        0        0     -524
+  82            0     -524     -524     -524     -524        0     -524     -524
+  89            0     -524     -524     -524     -524        0     -524     -524
+  96            0     -524     -524     -524     -524        0     -524     -524
+  103           0        0        0     -524        0        0        0     -524
+N full-screen 1:1 overlays at once (alpha 50%) over the primary:
+  1:0 2:0 3:0 4:0 5:0 6:0 7:0
+rc=0
+== kmsbench bw
+full frame (10.1 MB) copy cached->cached 1.57 ms
+copy cached->dumb(WC) 1.88 ms, read dumb 40.90 ms
+heap system: copy 1.34 ms, read 1.33 ms, sync start 0.16 ms end 0.21 ms (whole buffer)
+heap system-uncached: copy 1.58 ms, read 40.74 ms, sync start 0.00 ms end 0.00 ms (whole buffer)
+rc=0
+== kmsbench gbm
+gbm backend: drm
+gbm bo 1080x2340 stride 4352 modifier 0x0, addfb2 ok
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 0.5
+flip op=scale mpx=0.50 (band 462 rows) buf=dumb nbuf=2 threads=1: frames=724 interval mean=8.30 p50=8.29 p95=8.55 max=8.98 ms, missed refreshes=0 (0.0%), render mean=2.43 max=7.25 ms, commit ioctl mean=0.094 max=0.246 ms, effective=120.5 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 0.75
+flip op=scale mpx=0.75 (band 694 rows) buf=dumb nbuf=2 threads=1: frames=723 interval mean=8.31 p50=8.30 p95=8.55 max=16.60 ms, missed refreshes=1 (0.1%), render mean=3.73 max=8.61 ms, commit ioctl mean=0.085 max=0.269 ms, effective=120.4 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 1.07
+flip op=scale mpx=1.07 (band 990 rows) buf=dumb nbuf=2 threads=1: frames=717 interval mean=8.38 p50=8.30 p95=8.53 max=16.62 ms, missed refreshes=7 (1.0%), render mean=5.09 max=10.08 ms, commit ioctl mean=0.064 max=0.199 ms, effective=119.4 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 1.5
+flip op=scale mpx=1.50 (band 1388 rows) buf=dumb nbuf=2 threads=1: frames=706 interval mean=8.51 p50=8.30 p95=8.54 max=24.80 ms, missed refreshes=18 (2.5%), render mean=6.26 max=15.30 ms, commit ioctl mean=0.070 max=0.238 ms, effective=117.5 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 2.0
+flip op=scale mpx=2.00 (band 1851 rows) buf=dumb nbuf=2 threads=1: frames=362 interval mean=16.64 p50=16.59 p95=16.84 max=24.87 ms, missed refreshes=363 (50.1%), render mean=8.95 max=17.13 ms, commit ioctl mean=0.091 max=0.272 ms, effective=60.1 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 2.53
+flip op=scale mpx=2.53 (band 2340 rows) buf=dumb nbuf=2 threads=1: frames=359 interval mean=16.73 p50=16.60 p95=16.85 max=24.90 ms, missed refreshes=364 (50.4%), render mean=11.28 max=20.93 ms, commit ioctl mean=0.094 max=0.288 ms, effective=59.8 fps
+rc=0
+== kmsbench flip --seconds 6 --op over --mpx 1.07
+flip op=over mpx=1.07 (band 990 rows) buf=dumb nbuf=2 threads=1: frames=722 interval mean=8.32 p50=8.30 p95=8.53 max=16.60 ms, missed refreshes=2 (0.3%), render mean=3.67 max=9.82 ms, commit ioctl mean=0.071 max=0.288 ms, effective=120.2 fps
+rc=0
+== kmsbench flip --seconds 6 --op src --mpx 2.53
+flip op=src mpx=2.53 (band 2340 rows) buf=dumb nbuf=2 threads=1: frames=712 interval mean=8.44 p50=8.30 p95=8.54 max=16.79 ms, missed refreshes=12 (1.7%), render mean=6.02 max=12.45 ms, commit ioctl mean=0.064 max=0.253 ms, effective=118.5 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 1.07 --threads 2
+flip op=scale mpx=1.07 (band 990 rows) buf=dumb nbuf=2 threads=2: frames=723 interval mean=8.31 p50=8.30 p95=8.54 max=16.59 ms, missed refreshes=1 (0.1%), render mean=3.32 max=7.88 ms, commit ioctl mean=0.067 max=0.138 ms, effective=120.4 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 2.53 --threads 2
+flip op=scale mpx=2.53 (band 2340 rows) buf=dumb nbuf=2 threads=2: frames=389 interval mean=15.48 p50=16.59 p95=16.83 max=17.41 ms, missed refreshes=336 (46.4%), render mean=7.71 max=11.29 ms, commit ioctl mean=0.091 max=1.414 ms, effective=64.6 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 1.07 --threads 4
+flip op=scale mpx=1.07 (band 990 rows) buf=dumb nbuf=2 threads=4: frames=724 interval mean=8.30 p50=8.30 p95=8.54 max=8.88 ms, missed refreshes=0 (0.0%), render mean=3.40 max=6.29 ms, commit ioctl mean=0.068 max=0.129 ms, effective=120.5 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 2.53 --threads 4
+flip op=scale mpx=2.53 (band 2340 rows) buf=dumb nbuf=2 threads=4: frames=693 interval mean=8.67 p50=8.30 p95=8.63 max=16.84 ms, missed refreshes=31 (4.3%), render mean=6.24 max=9.03 ms, commit ioctl mean=0.064 max=1.843 ms, effective=115.4 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 1.07 --buf system
+flip op=scale mpx=1.07 (band 990 rows) buf=system nbuf=2 threads=1: frames=719 interval mean=8.35 p50=8.30 p95=8.54 max=17.98 ms, missed refreshes=5 (0.7%), render mean=4.72 max=10.46 ms, commit ioctl mean=0.063 max=0.203 ms, effective=119.7 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 2.53 --buf system
+flip op=scale mpx=2.53 (band 2340 rows) buf=system nbuf=2 threads=1: frames=361 interval mean=16.66 p50=16.59 p95=16.85 max=25.13 ms, missed refreshes=363 (50.2%), render mean=9.59 max=18.31 ms, commit ioctl mean=0.095 max=0.199 ms, effective=60.0 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 2.53 --buf system --threads 4
+flip op=scale mpx=2.53 (band 2340 rows) buf=system nbuf=2 threads=4: frames=724 interval mean=8.30 p50=8.30 p95=8.53 max=8.77 ms, missed refreshes=0 (0.0%), render mean=5.61 max=7.43 ms, commit ioctl mean=0.062 max=0.133 ms, effective=120.5 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 1.07 --noshadow 1
+flip op=scale mpx=1.07 (band 990 rows) buf=dumb nbuf=2 threads=1: frames=712 interval mean=8.44 p50=8.30 p95=8.51 max=16.79 ms, missed refreshes=12 (1.7%), render mean=6.07 max=12.11 ms, commit ioctl mean=0.043 max=0.283 ms, effective=118.5 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 2.53 --noshadow 1
+flip op=scale mpx=2.53 (band 2340 rows) buf=dumb nbuf=2 threads=1: frames=360 interval mean=16.71 p50=16.59 p95=16.83 max=25.08 ms, missed refreshes=364 (50.3%), render mean=11.98 max=20.55 ms, commit ioctl mean=0.050 max=0.274 ms, effective=59.9 fps
+rc=0
+== kmsbench flip --seconds 6 --op scale --mpx 1.07 --nbuf 3
+flip op=scale mpx=1.07 (band 990 rows) buf=dumb nbuf=3 threads=1: frames=717 interval mean=8.38 p50=8.30 p95=8.54 max=16.61 ms, missed refreshes=7 (1.0%), render mean=5.72 max=12.39 ms, commit ioctl mean=0.070 max=0.281 ms, effective=119.4 fps
+rc=0
+== kmsbench planes --seconds 6 --cards 1
+planes cards=1 (scaling 1) buf=dumb bg-mpx=0.00 threads=1 rejected=0: frames=724 interval mean=8.30 p50=8.30 p95=8.50 max=8.78 ms, missed refreshes=0 (0.0%), render mean=0.03 max=0.22 ms, commit ioctl mean=0.483 max=3.519 ms, effective=120.5 fps
+rc=0
+== kmsbench planes --seconds 6 --cards 2
+planes cards=2 (scaling 2) buf=dumb bg-mpx=0.00 threads=1 rejected=0: frames=724 interval mean=8.30 p50=8.30 p95=8.34 max=9.74 ms, missed refreshes=0 (0.0%), render mean=0.02 max=0.19 ms, commit ioctl mean=0.462 max=3.182 ms, effective=120.5 fps
+rc=0
+== kmsbench planes --seconds 6 --cards 3
+planes cards=3 (scaling 3) buf=dumb bg-mpx=0.00 threads=1 rejected=0: frames=724 interval mean=8.30 p50=8.30 p95=8.31 max=8.47 ms, missed refreshes=0 (0.0%), render mean=0.02 max=0.13 ms, commit ioctl mean=0.248 max=2.572 ms, effective=120.5 fps
+rc=0
+== kmsbench planes --seconds 6 --cards 4
+planes cards=4 (scaling 3) buf=dumb bg-mpx=0.00 threads=1 rejected=0: frames=724 interval mean=8.30 p50=8.30 p95=8.31 max=8.38 ms, missed refreshes=0 (0.0%), render mean=0.03 max=0.61 ms, commit ioctl mean=0.248 max=2.346 ms, effective=120.5 fps
+rc=0
+== kmsbench planes --seconds 6 --cards 6
+planes cards=6 (scaling 3) buf=dumb bg-mpx=0.00 threads=1 rejected=0: frames=723 interval mean=8.30 p50=8.30 p95=8.31 max=8.41 ms, missed refreshes=0 (0.0%), render mean=0.03 max=0.09 ms, commit ioctl mean=0.213 max=2.708 ms, effective=120.5 fps
+rc=0
+== kmsbench planes --seconds 6 --cards 3 --buf system
+planes cards=3 (scaling 3) buf=system bg-mpx=0.00 threads=1 rejected=0: frames=724 interval mean=8.30 p50=8.30 p95=8.31 max=8.38 ms, missed refreshes=0 (0.0%), render mean=0.03 max=0.16 ms, commit ioctl mean=0.288 max=2.908 ms, effective=120.5 fps
+rc=0
+== kmsbench planes --seconds 6 --cards 3 --bg-mpx 0.5 --threads 2
+planes cards=3 (scaling 3) buf=dumb bg-mpx=0.50 threads=2 rejected=0: frames=723 interval mean=8.31 p50=8.30 p95=8.31 max=16.59 ms, missed refreshes=1 (0.1%), render mean=1.82 max=6.68 ms, commit ioctl mean=0.117 max=0.747 ms, effective=120.4 fps
+rc=0
+== kmsbench planes --seconds 6 --cards 3 --bg-mpx 1.07 --threads 2
+planes cards=3 (scaling 3) buf=dumb bg-mpx=1.07 threads=2 rejected=0: frames=724 interval mean=8.30 p50=8.30 p95=8.31 max=8.39 ms, missed refreshes=0 (0.0%), render mean=3.31 max=6.10 ms, commit ioctl mean=0.106 max=0.242 ms, effective=120.5 fps
+rc=0
+== kmsbench dpms --cycles 5
+dpms cycle 1: off commit 268.0 ms, on commit 146.4 ms, first flip 154.5 ms after on
+dpms cycle 2: off commit 260.4 ms, on commit 152.8 ms, first flip 161.6 ms after on
+dpms cycle 3: off commit 258.4 ms, on commit 147.8 ms, first flip 156.6 ms after on
+dpms cycle 4: off commit 260.0 ms, on commit 148.8 ms, first flip 157.3 ms after on
+dpms cycle 5: off commit 257.9 ms, on commit 148.4 ms, first flip 156.2 ms after on
+rc=0

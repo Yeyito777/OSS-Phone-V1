@@ -1,0 +1,7 @@
+wlbench: 1080x2340, 0.25 Mpx per frame (231 rows), shm buffers
+wlbench: 1080x2340, 0.50 Mpx per frame (462 rows), shm buffers
+wlbench: 1080x2340, 0.75 Mpx per frame (694 rows), shm buffers
+wlbench: 1080x2340, 1.07 Mpx per frame (990 rows), shm buffers
+wlbench: 1080x2340, 1.50 Mpx per frame (1388 rows), shm buffers
+wlbench: 1080x2340, 2.00 Mpx per frame (1851 rows), shm buffers
+wlbench: 1080x2340, 2.53 Mpx per frame (2340 rows), shm buffers
