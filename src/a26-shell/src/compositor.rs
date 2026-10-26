@@ -585,7 +585,7 @@ impl Compositor {
         conn: &C,
         id: SurfaceId,
         canvas: &Canvas,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<Vec<Damage>, Box<dyn Error>> {
         let Some(surface) = self.surfaces.get_mut(id.0).and_then(Option::as_mut) else {
             return Err("unknown layer".into());
         };
@@ -599,10 +599,10 @@ impl Compositor {
             surface.content_bands = components_of(&tiles);
             surface.content = Some(tiles);
         }
-        for damage in damage {
-            surface.pending = union(surface.pending, Some(damage));
+        for damage in &damage {
+            surface.pending = union(surface.pending, Some(*damage));
         }
-        Ok(())
+        Ok(damage)
     }
 
     /// A full-screen surface for an app snapshot (see `capture_root`).
@@ -883,8 +883,12 @@ impl Compositor {
                     // redrawn while on screen.
                     exact.extend(row_changes.iter().copied());
                     for surface in self.row_surfaces() {
-                        if self.pending(surface).is_some() {
-                            exact.extend(self.rows_showing(surface));
+                        if let Some(pending) = self.pending(surface) {
+                            exact.extend(
+                                self.rows_showing(surface)
+                                    .into_iter()
+                                    .filter_map(|run| intersect(run, pending)),
+                            );
                         }
                     }
                     continue;
@@ -1326,6 +1330,24 @@ impl Compositor {
         source: SurfaceId,
         dim: f32,
     ) -> Result<(), Box<dyn Error>> {
+        let full = Damage {
+            x0: 0,
+            y0: 0,
+            x1: i32::from(self.width),
+            y1: i32::from(self.height),
+        };
+        self.refresh_dimmed_regions(conn, id, source, dim, &[full])
+    }
+
+    /// Redraws `regions` of a darkened copy from its source.
+    pub fn refresh_dimmed_regions<C: Connection>(
+        &mut self,
+        conn: &C,
+        id: SurfaceId,
+        source: SurfaceId,
+        dim: f32,
+        regions: &[Damage],
+    ) -> Result<(), Box<dyn Error>> {
         let Some(source) = self.set_transform(conn, source, [0x10000, 0, 0x10000, 0], false)?
         else {
             return Ok(());
@@ -1333,38 +1355,38 @@ impl Compositor {
         let Some(surface) = self.surfaces.get_mut(id.0).and_then(Option::as_mut) else {
             return Ok(());
         };
-        let (width, height, target) = (surface.width, surface.height, surface.picture);
-        surface.pending = Some(Damage {
+        let target = surface.picture;
+        let bounds = Damage {
             x0: 0,
             y0: 0,
-            x1: i32::from(width),
-            y1: i32::from(height),
-        });
-        conn.render_composite(
-            PictOp::SRC,
-            source,
-            x11rb::NONE,
-            target,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            width,
-            height,
-        )?;
-        conn.render_fill_rectangles(
-            PictOp::OVER,
-            target,
-            render_color(0, dim),
-            &[Rectangle {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            }],
-        )?;
+            x1: i32::from(surface.width),
+            y1: i32::from(surface.height),
+        };
+        let regions: Vec<Damage> = regions
+            .iter()
+            .filter_map(|r| intersect(*r, bounds))
+            .collect();
+        for region in &regions {
+            surface.pending = union(surface.pending, Some(*region));
+        }
+        let rects: Vec<Rectangle> = regions.iter().map(|r| rectangle(*r)).collect();
+        for rect in &rects {
+            conn.render_composite(
+                PictOp::SRC,
+                source,
+                x11rb::NONE,
+                target,
+                rect.x,
+                rect.y,
+                0,
+                0,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+            )?;
+        }
+        conn.render_fill_rectangles(PictOp::OVER, target, render_color(0, dim), &rects)?;
         Ok(())
     }
 

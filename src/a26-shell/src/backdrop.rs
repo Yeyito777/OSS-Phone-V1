@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use x11rb::connection::Connection;
 
 use crate::compositor::{Compositor, SurfaceId};
+use crate::present::Damage;
 
 /// Largest brightness step between neighbouring levels (relative): with
 /// 8-bit copies, rows then differ by at most about 4%.
@@ -60,14 +61,23 @@ pub fn level_dims(stops: &[f32], step: f32) -> Vec<f32> {
     dims
 }
 
+/// Regions of a copy kept separately before they merge into their
+/// bounding box.
+const MAX_DIRTY_REGIONS: usize = 8;
+
 /// Pre-darkened copies of a surface: level `k` (from 1) is darkened by
-/// `dims[k - 1]`; level 0 is the surface itself. Copies are drawn a few at
-/// a time while idle, or when a fade first needs one.
+/// `dims[k - 1]`; level 0 is the surface itself. Copies are created once
+/// (a few at a time while idle after startup, or when a fade first needs
+/// one). When the source changes, only the changed regions are marked, and
+/// a copy redraws them when a fade next shows it: an idle phone never
+/// redraws copies, and the minute ticking on the home screen costs a few
+/// small rectangles per copy at the next transition.
 pub struct DimLevels {
     source: SurfaceId,
     dims: Vec<f32>,
     levels: Vec<Option<SurfaceId>>,
-    fresh: Vec<bool>,
+    /// Per copy, the regions that no longer match the source.
+    dirty: Vec<Vec<Damage>>,
 }
 
 impl DimLevels {
@@ -75,7 +85,7 @@ impl DimLevels {
         Self {
             source,
             levels: vec![None; dims.len()],
-            fresh: vec![false; dims.len()],
+            dirty: vec![Vec::new(); dims.len()],
             dims,
         }
     }
@@ -89,34 +99,39 @@ impl DimLevels {
         level_of(&self.dims, dim)
     }
 
-    /// The source changed; the copies are redrawn before their next use.
-    pub fn invalidate(&mut self) {
-        self.fresh.fill(false);
+    /// `regions` of the source changed.
+    pub fn invalidate(&mut self, regions: &[Damage]) {
+        for (level, dirty) in self.levels.iter().zip(&mut self.dirty) {
+            if level.is_some() {
+                add_regions(dirty, regions);
+            }
+        }
     }
 
-    pub fn stale(&self) -> bool {
-        self.fresh.contains(&false)
+    /// Copies not created yet.
+    pub fn missing(&self) -> bool {
+        self.levels.contains(&None)
     }
 
-    /// Draws up to `count` stale copies (about one full-screen composite
+    /// Creates up to `count` missing copies (two full-screen composites
     /// each).
-    pub fn refresh_some<C: Connection>(
+    pub fn create_some<C: Connection>(
         &mut self,
         conn: &C,
         compositor: &mut Compositor,
         count: usize,
     ) -> Result<(), Box<dyn Error>> {
-        let stale: Vec<u8> = (1..=self.max_level())
-            .filter(|level| !self.fresh[usize::from(*level) - 1])
+        let missing: Vec<u8> = (1..=self.max_level())
+            .filter(|level| self.levels[usize::from(*level) - 1].is_none())
             .take(count)
             .collect();
-        for level in stale {
-            self.refresh(conn, compositor, level)?;
+        for level in missing {
+            self.bring_up_to_date(conn, compositor, level)?;
         }
         Ok(())
     }
 
-    /// Makes sure the copies for `levels` are current.
+    /// Makes sure the copies for `levels` exist and match the source.
     pub fn ensure<C: Connection>(
         &mut self,
         conn: &C,
@@ -124,14 +139,14 @@ impl DimLevels {
         levels: std::ops::RangeInclusive<u8>,
     ) -> Result<(), Box<dyn Error>> {
         for level in levels {
-            if level > 0 && level <= self.max_level() && !self.fresh[usize::from(level) - 1] {
-                self.refresh(conn, compositor, level)?;
+            if level > 0 && level <= self.max_level() {
+                self.bring_up_to_date(conn, compositor, level)?;
             }
         }
         Ok(())
     }
 
-    fn refresh<C: Connection>(
+    fn bring_up_to_date<C: Connection>(
         &mut self,
         conn: &C,
         compositor: &mut Compositor,
@@ -140,10 +155,13 @@ impl DimLevels {
         let index = usize::from(level) - 1;
         let dim = self.dims[index];
         match self.levels[index] {
-            Some(id) => compositor.refresh_dimmed(conn, id, self.source, dim)?,
             None => self.levels[index] = Some(compositor.create_dimmed(conn, self.source, dim)?),
+            Some(id) if !self.dirty[index].is_empty() => {
+                compositor.refresh_dimmed_regions(conn, id, self.source, dim, &self.dirty[index])?
+            }
+            Some(_) => {}
         }
-        self.fresh[index] = true;
+        self.dirty[index].clear();
         Ok(())
     }
 
@@ -158,6 +176,30 @@ impl DimLevels {
                 .flatten()
                 .unwrap_or(self.source),
         }
+    }
+}
+
+/// Adds `regions` to a dirty list, merging overlapping ones and falling
+/// back to one bounding box when the list grows long.
+fn add_regions(dirty: &mut Vec<Damage>, regions: &[Damage]) {
+    for region in regions {
+        let mut merged = *region;
+        dirty.retain(|existing| {
+            let overlaps = existing.x0 <= merged.x1
+                && merged.x0 <= existing.x1
+                && existing.y0 <= merged.y1
+                && merged.y0 <= existing.y1;
+            if overlaps {
+                merged = merged.union(*existing);
+            }
+            !overlaps
+        });
+        dirty.push(merged);
+    }
+    if dirty.len() > MAX_DIRTY_REGIONS
+        && let Some(bounds) = dirty.iter().copied().reduce(Damage::union)
+    {
+        *dirty = vec![bounds];
     }
 }
 
@@ -227,8 +269,17 @@ impl RowFade {
         low..=high
     }
 
-    /// Moves at most `budget` rows toward `target` (in levels, 0..=max).
-    pub fn update(&mut self, target: f32, max: u8, budget: usize) {
+    /// The mean level on screen.
+    pub fn mean(&self) -> f32 {
+        let sum: u64 = self.levels.iter().map(|row| u64::from(*row)).sum();
+        sum as f32 / self.levels.len().max(1) as f32
+    }
+
+    /// Moves at most `budget` rows toward `target` (in levels, 0..=max),
+    /// keeping neighbouring rows within `gap` levels of each other (1 for a
+    /// smooth fade; 2 halves the rows needed, to catch up).
+    pub fn update(&mut self, target: f32, max: u8, budget: usize, gap: u8) {
+        let gap = gap.max(1);
         let goal = goal_units(target, max);
         // A sixteenth of jitter (a resting finger is never perfectly still)
         // does not count as moving.
@@ -248,8 +299,8 @@ impl RowFade {
         self.settled = match rest {
             Some(level) => {
                 let mut budget = budget;
-                self.lower(level, u64::MAX, &mut budget);
-                self.raise(level, 0, &mut budget);
+                self.lower(level, u64::MAX, gap, &mut budget);
+                self.raise(level, 0, gap, &mut budget);
                 self.levels.iter().all(|row| *row == level)
             }
             None => {
@@ -260,9 +311,9 @@ impl RowFade {
                 let sum: u64 = self.levels.iter().map(|row| u64::from(*row)).sum();
                 let mut budget = budget;
                 if sum + slack < target {
-                    self.raise(max, target, &mut budget);
+                    self.raise(max, target, gap, &mut budget);
                 } else if sum > target + slack {
-                    self.lower(0, target, &mut budget);
+                    self.lower(0, target, gap, &mut budget);
                 }
                 let sum: u64 = self.levels.iter().map(|row| u64::from(*row)).sum();
                 sum.abs_diff(target) <= slack
@@ -271,9 +322,9 @@ impl RowFade {
     }
 
     /// Raises the lowest rows (up to `cap`) until the level sum reaches
-    /// `target` or the budget runs out. A row may rise until it is one
-    /// level above its lower neighbour, at most two levels at a time.
-    fn raise(&mut self, cap: u8, target: u64, budget: &mut usize) {
+    /// `target` or the budget runs out. A row may rise until it is `gap`
+    /// levels above its lower neighbour, at most `2 * gap` at a time.
+    fn raise(&mut self, cap: u8, target: u64, gap: u8, budget: &mut usize) {
         let mut sum: u64 = self.levels.iter().map(|row| u64::from(*row)).sum();
         let Some(low) = self.levels.iter().copied().min() else {
             return;
@@ -288,9 +339,9 @@ impl RowFade {
                     continue;
                 }
                 let neighbours = self.neighbours(row).min();
-                let up = (neighbours + 1)
+                let up = (neighbours + gap)
                     .saturating_sub(level)
-                    .min(2)
+                    .min(2 * gap)
                     .min(cap - level);
                 if up > 0 {
                     self.levels[row] += up;
@@ -303,7 +354,7 @@ impl RowFade {
 
     /// Lowers the highest rows (down to `floor`) until the level sum falls
     /// to `target` or the budget runs out; the mirror of `raise`.
-    fn lower(&mut self, floor: u8, target: u64, budget: &mut usize) {
+    fn lower(&mut self, floor: u8, target: u64, gap: u8, budget: &mut usize) {
         let mut sum: u64 = self.levels.iter().map(|row| u64::from(*row)).sum();
         let Some(high) = self.levels.iter().copied().max() else {
             return;
@@ -319,8 +370,8 @@ impl RowFade {
                 }
                 let neighbours = self.neighbours(row).max();
                 let down = level
-                    .saturating_sub(neighbours.saturating_sub(1))
-                    .min(2)
+                    .saturating_sub(neighbours.saturating_sub(gap))
+                    .min(2 * gap)
                     .min(level - floor);
                 if down > 0 {
                     self.levels[row] -= down;
@@ -404,7 +455,7 @@ mod tests {
         let mut changed_rows = 0;
         loop {
             let before = fade.levels.clone();
-            fade.update(14.0, 14, 300);
+            fade.update(14.0, 14, 300, 1);
             changed_rows += before
                 .iter()
                 .zip(&fade.levels)
@@ -428,7 +479,7 @@ mod tests {
     fn a_fractional_target_tracks_the_mean_and_rests_on_a_level() {
         let mut fade = RowFade::new(2340);
         for _ in 0..20 {
-            fade.update(3.4, 14, 560);
+            fade.update(3.4, 14, 560, 1);
             assert!(max_neighbour_gap(&fade) <= 1);
         }
         let mean = fade.levels.iter().map(|r| f32::from(*r)).sum::<f32>() / 2340.0;
@@ -436,14 +487,14 @@ mod tests {
         // Held still, it settles on the nearest level.
         let mut frames = 0;
         while fade.settling() {
-            fade.update(3.4, 14, 560);
+            fade.update(3.4, 14, 560, 1);
             frames += 1;
             assert!(frames < 200);
         }
         assert!(fade.levels.iter().all(|row| *row == 3));
         // And back down, to rest at 0.
         while {
-            fade.update(0.0, 14, 560);
+            fade.update(0.0, 14, 560, 1);
             fade.settling()
         } {
             assert!(max_neighbour_gap(&fade) <= 1);
@@ -452,10 +503,44 @@ mod tests {
     }
 
     #[test]
+    fn catching_up_takes_fewer_rows_and_smooths_out_again() {
+        let changes = |gap: u8| {
+            let mut fade = RowFade::new(2340);
+            let mut rows = 0;
+            for _ in 0..1000 {
+                let before = fade.levels.clone();
+                fade.update(16.0, 24, 400, gap);
+                rows += before
+                    .iter()
+                    .zip(&fade.levels)
+                    .filter(|(a, b)| a != b)
+                    .count();
+                assert!(max_neighbour_gap(&fade) <= gap);
+                if !fade.settling() {
+                    break;
+                }
+            }
+            assert!(fade.levels.iter().all(|row| *row == 16));
+            rows
+        };
+        let (smooth, fast) = (changes(1), changes(2));
+        assert!(fast * 10 <= smooth * 6, "{smooth} {fast}");
+        // Gaps left by catching up close as the fade continues smoothly.
+        let mut fade = RowFade::new(2340);
+        for _ in 0..6 {
+            fade.update(9.3, 24, 400, 2);
+        }
+        for _ in 0..200 {
+            fade.update(12.0, 24, 400, 1);
+        }
+        assert!(fade.levels.iter().all(|row| *row == 12));
+    }
+
+    #[test]
     fn each_frame_changes_rows_spread_over_the_screen() {
         let mut fade = RowFade::new(2340);
         let before = fade.levels.clone();
-        fade.update(5.0, 14, 146);
+        fade.update(5.0, 14, 146, 1);
         let changed: Vec<usize> = (0..2340)
             .filter(|r| before[*r] != fade.levels[*r])
             .collect();

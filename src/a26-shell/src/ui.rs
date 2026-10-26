@@ -18,6 +18,7 @@ use crate::compositor::{Compositor, Frame, Node, SurfaceId};
 use crate::gfx::{self, Canvas, Image, Path, RectF, Rgb};
 use crate::interaction::{CARD_RADIUS, SCREEN, SCREEN_H, SCREEN_W, SWITCHER_DIM};
 use crate::model::{AppId, Press, SHAKE_ANIMATION, ShellState, UNLOCK_ANIMATION, View};
+use crate::present::Damage;
 use crate::status_bar;
 use crate::text::{self, Weight};
 
@@ -265,6 +266,8 @@ struct Layer<K> {
     id: SurfaceId,
     canvas: Canvas,
     key: Option<K>,
+    /// The regions the last update changed.
+    changed: Vec<Damage>,
 }
 
 impl<K: PartialEq> Layer<K> {
@@ -279,6 +282,7 @@ impl<K: PartialEq> Layer<K> {
             id: compositor.create_layer(conn, width as u16, height as u16, transparent)?,
             canvas: Canvas::new(width, height),
             key: None,
+            changed: Vec::new(),
         })
     }
 
@@ -294,7 +298,7 @@ impl<K: PartialEq> Layer<K> {
             return Ok(false);
         }
         draw(&mut self.canvas);
-        compositor.upload(conn, self.id, &self.canvas)?;
+        self.changed = compositor.upload(conn, self.id, &self.canvas)?;
         self.key = Some(key);
         Ok(true)
     }
@@ -572,7 +576,9 @@ impl Renderer {
                 draw_status_bar(canvas, &status, None);
             })?;
             if redrawn {
-                self.home_levels.invalidate();
+                // Marked only: copies are brought up to date when a fade
+                // next shows them, never while idle.
+                self.home_levels.invalidate(&self.home.changed);
             }
         }
         if state.view == View::Locked || state.unlock_at.is_some() {
@@ -838,16 +844,19 @@ impl Renderer {
         if now < self.next_idle_copy {
             return Ok(Some(self.next_idle_copy));
         }
-        let levels = if self.wall_levels.stale() {
+        // Only copies that do not exist yet (after startup); changed ones
+        // are redrawn when a fade next shows them.
+        let levels = if self.wall_levels.missing() {
             &mut self.wall_levels
-        } else if self.home_levels.stale() {
+        } else if self.home_levels.missing() {
             &mut self.home_levels
         } else {
             return Ok(None);
         };
-        levels.refresh_some(conn, &mut self.compositor, 1)?;
+        levels.create_some(conn, &mut self.compositor, 1)?;
         self.next_idle_copy = now + IDLE_COPY_INTERVAL;
-        Ok((self.wall_levels.stale() || self.home_levels.stale()).then_some(self.next_idle_copy))
+        Ok((self.wall_levels.missing() || self.home_levels.missing())
+            .then_some(self.next_idle_copy))
     }
 
     /// Moves the visible background's rows toward its dim for this frame
@@ -884,7 +893,17 @@ impl Renderer {
             fade.snap(target, levels.max_level());
         } else {
             let budget = backdrop::row_budget(self.compositor.foreground_area, SCREEN_W as u16);
-            fade.update(target, levels.max_level(), budget);
+            // Far behind (a flick, or a release ahead of the fade): rows
+            // two levels apart for a few frames halve the rows to redraw.
+            // While a finger is down only a large lag allows that.
+            let behind = (target - fade.mean()).abs();
+            let finger_down = state.pointer.is_some();
+            let gap = if behind > if finger_down { 4.0 } else { 1.5 } {
+                2
+            } else {
+                1
+            };
+            fade.update(target, levels.max_level(), budget, gap);
         }
         levels.ensure(conn, &mut self.compositor, fade.span())
     }
@@ -895,9 +914,15 @@ impl Renderer {
         compositor.set_rows(&rows)
     }
 
-    /// Background bands still stepping toward their target: keep drawing.
+    /// Background rows still moving toward their target: keep drawing.
     pub fn settling(&self) -> bool {
-        self.lock_fade.settling() || self.home_fade.settling()
+        // Only the background on screen; the other one is snapped to its
+        // level when its screen next appears.
+        match self.last_locked {
+            Some(true) => self.lock_fade.settling(),
+            Some(false) => self.home_fade.settling(),
+            None => false,
+        }
     }
 
     fn frame(&mut self, state: &ShellState, t: Instant) -> Frame {
