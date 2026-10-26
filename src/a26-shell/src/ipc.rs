@@ -41,6 +41,8 @@ pub enum Command {
     VolumeUp,
     VolumeDown,
     VolumeSet(u8),
+    /// `brightness` (read), `brightness set N`, `brightness auto on|off`.
+    Brightness(Option<crate::display::DisplayRequest>),
     Power,
     ScreenOff,
     ScreenOn,
@@ -222,6 +224,24 @@ fn parse_command(line: &str) -> Result<Command, String> {
             Some("hide") => Command::KeyboardHide,
             Some(_) => return Err("keyboard requires show or hide".into()),
             None => return Err("keyboard requires show or hide".into()),
+        },
+        "brightness" => match parts.next() {
+            None => Command::Brightness(None),
+            Some("set") => Command::Brightness(Some(crate::display::DisplayRequest::Set(
+                parts
+                    .next()
+                    .and_then(|value| value.parse::<u8>().ok())
+                    .filter(|value| *value <= 100)
+                    .ok_or_else(|| "brightness set requires 0..100".to_string())?,
+            ))),
+            Some("auto") => match parts.next() {
+                Some("on") => Command::Brightness(Some(crate::display::DisplayRequest::Auto(true))),
+                Some("off") => {
+                    Command::Brightness(Some(crate::display::DisplayRequest::Auto(false)))
+                }
+                _ => return Err("brightness auto requires on or off".into()),
+            },
+            Some(_) => return Err("brightness requires set N or auto on|off".into()),
         },
         "volume" => match parts.next() {
             Some("up") => Command::VolumeUp,

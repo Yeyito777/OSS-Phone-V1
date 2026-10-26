@@ -3,6 +3,7 @@ mod apps;
 mod audio;
 mod backdrop;
 mod banner;
+mod brightness;
 mod clock;
 mod compositor;
 mod config;
@@ -16,6 +17,7 @@ mod interaction;
 mod ipc;
 mod keyboard;
 mod lease;
+mod light;
 mod memory;
 mod model;
 mod motion;
@@ -474,6 +476,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     // Power and wake fades ramp the panel backlight: smooth, and no frame
     // has to be drawn. MOON_OVERLAY_FADES=1 (or no backlight) draws them.
+    let mut brightness = brightness::BrightnessControl::new(
+        "/var/lib/a26-shell/display.json".into(),
+        backlight
+            .as_ref()
+            .map(|device| (device.saved(), device.max())),
+    );
     let backlight_fades = backlight.is_some() && env::var_os("MOON_OVERLAY_FADES").is_none();
     state.backlight_fades = backlight_fades;
     renderer.backlight_fades = backlight_fades;
@@ -620,6 +628,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                         ipc::respond::<model::PublicState>(stream, Err(error));
                         continue;
                     }
+                    if let Command::Brightness(request) = command {
+                        let now = Instant::now();
+                        if let Some(request) = request {
+                            brightness.request(request, now);
+                        }
+                        brightness.service(&mut state, backlight.as_mut(), backlight_ramping, now);
+                        ipc::respond(stream, Ok(&brightness.public()));
+                        continue;
+                    }
                     if let Command::ProfileBudget(kpx) = command {
                         backdrop::FRAME_BUDGET_KPX.store(kpx, std::sync::atomic::Ordering::Relaxed);
                     }
@@ -650,6 +667,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let mut public =
                         state.public(width, height, apps.public(), suspend_coordinator.public());
                     public.animation = last_animation.clone();
+                    public.display = Some(brightness.public());
                     ipc::respond(stream, Ok(&public));
                 }
                 Err(error) => ipc::respond::<model::PublicState>(stream, Err(&error)),
@@ -1065,6 +1083,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             // The banner window moves at the panel's refresh rate.
             deadline = deadline.min(now + Duration::from_micros(8_333));
         }
+        brightness.service(&mut state, backlight.as_mut(), backlight_ramping, now);
+        if let Some(brightness_deadline) = brightness.next_deadline() {
+            deadline = deadline.min(brightness_deadline.max(now));
+        }
         let app_fds = apps.poll_fds();
         wait_for_activity(
             &WaitSources {
@@ -1075,6 +1097,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 gpu_fd: renderer.compositor.gpu_fd(),
                 app_fds: &app_fds,
                 notify: notifyd.poll_fd(),
+                light: brightness.sensor_fd(),
             },
             deadline.saturating_duration_since(now),
         )?;
@@ -1219,6 +1242,8 @@ struct WaitSources<'a> {
     app_fds: &'a [RawFd],
     /// moon-notifyd's socket and whether it has output pending.
     notify: Option<(RawFd, bool)>,
+    /// The ambient light sensor, while the screen is on.
+    light: Option<RawFd>,
 }
 
 fn wait_for_activity(sources: &WaitSources, timeout: Duration) -> io::Result<()> {
@@ -1230,6 +1255,7 @@ fn wait_for_activity(sources: &WaitSources, timeout: Duration) -> io::Result<()>
         gpu_fd,
         app_fds,
         notify,
+        light,
     } = *sources;
     let mut descriptors = Vec::with_capacity(5 + app_fds.len());
     let mut add = |fd: RawFd| {
@@ -1252,6 +1278,9 @@ fn wait_for_activity(sources: &WaitSources, timeout: Duration) -> io::Result<()>
     }
     for fd in app_fds {
         add(*fd);
+    }
+    if let Some(fd) = light {
+        add(fd);
     }
     if let Some((fd, writing)) = notify {
         descriptors.push(libc::pollfd {
@@ -2469,6 +2498,8 @@ fn apply_command(
         Command::VolumeUp => change_volume(state, audio_volume, 5),
         Command::VolumeDown => change_volume(state, audio_volume, -5),
         Command::VolumeSet(value) => set_volume(state, audio_volume, value),
+        // Handled with the brightness backend before apply_command.
+        Command::Brightness(_) => {}
         Command::Power => {
             // Exactly the physical key (it snoozes or stops what rings).
             state.alerts_user_input();

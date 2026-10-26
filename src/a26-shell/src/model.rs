@@ -252,6 +252,9 @@ pub struct PublicState {
     /// Frame timing of the last finished animation (see `profile on`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub animation: Option<String>,
+    /// Brightness (docs/display-brightness.md); filled in by the backend.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<crate::brightness::PublicDisplay>,
 }
 
 impl ShellState {
@@ -345,6 +348,7 @@ impl ShellState {
             suspend,
             alerts: self.alerts_public(),
             animation: None,
+            display: None,
         }
     }
 

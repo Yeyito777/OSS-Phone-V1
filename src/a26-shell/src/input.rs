@@ -174,6 +174,7 @@ impl TouchscreenPower {
 pub struct Backlight {
     brightness_path: PathBuf,
     saved_brightness: u16,
+    max_brightness: u16,
     /// The last value a fade wrote, so `off` does not mistake a ramp's
     /// dimmed level for the user's brightness.
     last_written: std::cell::Cell<Option<u16>>,
@@ -200,8 +201,23 @@ impl Backlight {
         Ok(Self {
             brightness_path,
             saved_brightness,
+            max_brightness,
             last_written: std::cell::Cell::new(None),
         })
+    }
+
+    pub fn max(&self) -> u16 {
+        self.max_brightness
+    }
+
+    pub fn saved(&self) -> u16 {
+        self.saved_brightness
+    }
+
+    /// The level `on` restores and fades end at (the brightness backend's
+    /// current level). Writes nothing by itself.
+    pub fn set_saved(&mut self, value: u16) {
+        self.saved_brightness = value.clamp(1, self.max_brightness.max(1));
     }
 
     pub fn off(&mut self) -> io::Result<()> {
