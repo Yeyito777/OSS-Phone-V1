@@ -25,6 +25,9 @@ pub struct ShmPool {
     /// (size, generation): a resize bumps the generation, and a segment
     /// attached at an older size must be attached again.
     pub size: Mutex<(i32, u32)>,
+    /// The file cannot shrink (F_SEAL_SHRINK): safe for moon-compositor,
+    /// a separate process that would die of SIGBUS, to map.
+    pub sealed: bool,
 }
 
 impl ShmPool {
@@ -87,13 +90,14 @@ impl Dispatch<WlShm, ()> for WlState {
                 resource.post_error(wl_shm::Error::InvalidFd, "pool larger than its file");
                 return;
             }
-            seal_shrink(&fd);
+            let sealed = seal_shrink(&fd);
             data_init.init(
                 id,
                 Arc::new(ShmPool {
                     id: NEXT_POOL.fetch_add(1, Ordering::Relaxed),
                     fd,
                     size: Mutex::new((size, 0)),
+                    sealed,
                 }),
             );
         }
@@ -177,9 +181,15 @@ fn file_size(fd: &OwnedFd) -> Option<i64> {
 }
 
 /// Best effort: a client that did not allow sealing keeps an unsealed pool.
-fn seal_shrink(fd: &OwnedFd) {
-    // SAFETY: F_ADD_SEALS on a valid descriptor; failure changes nothing.
-    unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_ADD_SEALS, libc::F_SEAL_SHRINK) };
+/// Returns whether the file is now sealed against shrinking.
+fn seal_shrink(fd: &OwnedFd) -> bool {
+    // SAFETY: F_ADD_SEALS / F_GET_SEALS on a valid descriptor; failure
+    // changes nothing.
+    unsafe {
+        libc::fcntl(fd.as_raw_fd(), libc::F_ADD_SEALS, libc::F_SEAL_SHRINK);
+        let seals = libc::fcntl(fd.as_raw_fd(), libc::F_GET_SEALS);
+        seals >= 0 && seals & libc::F_SEAL_SHRINK != 0
+    }
 }
 
 impl Dispatch<WlBuffer, Arc<ShmBuffer>> for WlState {

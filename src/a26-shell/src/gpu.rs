@@ -45,7 +45,11 @@ use crate::compositor::{FrameStats, Node, SurfaceId};
 use crate::gfx::{Canvas, RectF};
 use crate::present::Damage;
 
-const PROTO_VERSION: u32 = 2;
+/// Moon offers v3 (a byte offset for shm surfaces, which Wayland client
+/// buffers need) and falls back to v2: a compositor older than v3 drops a
+/// client whose version differs from its own.
+const PROTO_VERSION: u32 = 3;
+const PROTO_V2: u32 = 2;
 const MIRROR_ID: u32 = u32::MAX;
 
 const MSG_HELLO: u16 = 1;
@@ -429,6 +433,25 @@ enum Surface {
     Snapshot { present: bool },
     /// Another surface drawn darker: no pixels of its own.
     Dimmed { source: SurfaceId, dim: f32 },
+    /// A Wayland client's wl_shm buffer, shown in place of the X mirror's
+    /// copy of the app (protocol v3: the buffer's offset in its pool).
+    Client {
+        fd: OwnedFd,
+        offset: u32,
+        width: u32,
+        height: u32,
+        stride: u32,
+        argb: bool,
+    },
+}
+
+/// A Wayland app shown directly over the X mirror while it is in front:
+/// its buffer's `src` rectangle drawn at `dst` on the screen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Direct {
+    pub surface: SurfaceId,
+    pub src: RectF,
+    pub dst: RectF,
 }
 
 fn wire(id: SurfaceId) -> u32 {
@@ -488,6 +511,11 @@ pub struct GpuBackend {
     cards: Vec<(SurfaceId, SurfaceId, u16, u16)>,
     profile: bool,
     buffer: Vec<u8>,
+    /// The negotiated protocol version (3, or 2 for an older compositor).
+    version: u32,
+    direct: Option<Direct>,
+    /// The newest frame serial the compositor reported on screen.
+    presented_serial: u32,
 }
 
 impl GpuBackend {
@@ -552,6 +580,9 @@ impl GpuBackend {
             cards: Vec::new(),
             profile,
             buffer: vec![0; MAX_PACKET],
+            version: PROTO_VERSION,
+            direct: None,
+            presented_serial: 0,
         };
         // The compositor starts before Moon; allow it a moment if not.
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -568,11 +599,34 @@ impl GpuBackend {
         Ok((backend, link))
     }
 
-    /// Connects, says hello and attaches the mirror the compositor offers.
+    /// Connects, says hello and attaches the mirror the compositor offers:
+    /// in v3, or in v2 if the compositor closes the link on v3.
     fn handshake<C: Connection>(&mut self, conn: &C, wait: Duration) -> Result<(), Box<dyn Error>> {
+        match self.handshake_version(conn, wait, PROTO_VERSION) {
+            Ok(()) => {
+                self.version = PROTO_VERSION;
+                Ok(())
+            }
+            Err(error) if !self.link.borrow().connected() => {
+                eprintln!("gpu: protocol v{PROTO_VERSION} refused ({error}); trying v{PROTO_V2}");
+                self.handshake_version(conn, wait, PROTO_V2)?;
+                self.version = PROTO_V2;
+                eprintln!("gpu: compositor speaks v{PROTO_V2}: Wayland apps stay on the X path");
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn handshake_version<C: Connection>(
+        &mut self,
+        conn: &C,
+        wait: Duration,
+        version: u32,
+    ) -> Result<(), Box<dyn Error>> {
         self.link.borrow_mut().connect()?;
         let mut hello = Msg::new(MSG_HELLO);
-        hello.u32(PROTO_VERSION);
+        hello.u32(version);
         if !self.link.borrow_mut().send(hello.finish(), None) {
             return Err("hello failed".into());
         }
@@ -1104,6 +1158,7 @@ impl GpuBackend {
                 for index in 0..self.surfaces.len() {
                     match &mut self.surfaces[index] {
                         Some(Surface::Layer { .. }) => self.announce_layer(SurfaceId(index)),
+                        Some(Surface::Client { .. }) => self.announce_client(SurfaceId(index)),
                         Some(Surface::Snapshot { present }) => *present = false,
                         _ => {}
                     }
@@ -1125,6 +1180,9 @@ impl GpuBackend {
 
     fn presented(&mut self, msg: &[u8], stats: &mut FrameStats) {
         let serial = le_u32(msg, 8);
+        if serial > self.presented_serial || self.presented_serial - serial > u32::MAX / 2 {
+            self.presented_serial = serial;
+        }
         let sequence = le_u32(msg, 12);
         let time_ns = le_u64(msg, 16);
         let render_ns = le_u64(msg, 24);
@@ -1195,7 +1253,16 @@ impl GpuBackend {
     fn send_mirror_frame(&mut self) {
         let mut msg = Msg::new(MSG_FRAME);
         self.serial = self.serial.wrapping_add(1).max(1);
-        msg.u32(self.serial).u32(0).u32(0).u32(1);
+        let direct = self.direct.filter(|direct| {
+            matches!(
+                self.surfaces.get(direct.surface.0),
+                Some(Some(Surface::Client { .. }))
+            )
+        });
+        msg.u32(self.serial)
+            .u32(0)
+            .u32(0)
+            .u32(1 + u32::from(direct.is_some()));
         push_image(
             &mut msg,
             MIRROR_ID,
@@ -1206,9 +1273,110 @@ impl GpuBackend {
             0.0,
             false,
         );
+        // A Wayland app in front: its own buffer over the mirror's (stale)
+        // copy of it. The status strip and keyboard still come from the
+        // mirror, beside the app's area.
+        if let Some(direct) = direct {
+            push_image(
+                &mut msg,
+                wire(direct.surface),
+                direct.src,
+                direct.dst,
+                1.0,
+                1.0,
+                0.0,
+                false,
+            );
+        }
         let packet = msg.finish().to_vec();
         self.send(&packet, None);
         self.last_frame = None;
+    }
+
+    /// Whether Wayland client buffers can be shown directly (v3 offsets).
+    pub fn supports_client_surfaces(&self) -> bool {
+        self.version >= 3 && self.link.borrow().connected()
+    }
+
+    /// A compositor surface on a client's wl_shm buffer (its pool's fd at
+    /// `offset`). The compositor copies it on each damage (GPU tier) or
+    /// reads it while drawing (CPU tier), so the buffer stays the client's
+    /// only once a later frame no longer shows it.
+    pub fn create_client_surface(
+        &mut self,
+        fd: &OwnedFd,
+        offset: u32,
+        width: u32,
+        height: u32,
+        stride: u32,
+        argb: bool,
+    ) -> io::Result<SurfaceId> {
+        let fd = fd.try_clone()?;
+        let id = self.insert(Surface::Client {
+            fd,
+            offset,
+            width,
+            height,
+            stride,
+            argb,
+        });
+        self.announce_client(id);
+        Ok(id)
+    }
+
+    fn announce_client(&mut self, id: SurfaceId) {
+        let Some(Some(Surface::Client {
+            fd,
+            offset,
+            width,
+            height,
+            stride,
+            argb,
+        })) = self.surfaces.get(id.0)
+        else {
+            return;
+        };
+        let mut msg = Msg::new(MSG_SURFACE_SHM);
+        msg.u32(wire(id))
+            .u32(*width)
+            .u32(*height)
+            .u32(*stride)
+            .u32(if *argb { FORMAT_ARGB } else { FORMAT_XRGB })
+            .u32(0)
+            .u32(*offset);
+        let raw = fd.as_raw_fd();
+        let all = [Damage {
+            x0: 0,
+            y0: 0,
+            x1: *width as i32,
+            y1: *height as i32,
+        }];
+        let packet = msg.finish().to_vec();
+        self.send(&packet, Some(raw));
+        self.send_damage(MSG_SURFACE_DAMAGE, wire(id), &all);
+    }
+
+    /// The client drew `rects` (buffer pixels) into the surface's buffer.
+    pub fn client_damage(&mut self, id: SurfaceId, rects: &[Damage]) {
+        if !rects.is_empty() {
+            self.send_damage(MSG_SURFACE_DAMAGE, wire(id), rects);
+        }
+    }
+
+    /// Shows a Wayland app's buffer over the mirror (or stops): a new frame
+    /// at once while an app is in front, so each commit is one frame and
+    /// its `presented_serial` says when the buffer reached the panel.
+    pub fn set_direct(&mut self, direct: Option<Direct>) -> Option<u32> {
+        self.direct = direct;
+        if self.mirror_mode && self.mirror.is_some() && self.link.borrow().connected() {
+            self.send_mirror_frame();
+            return Some(self.serial);
+        }
+        None
+    }
+
+    pub fn presented_serial(&self) -> u32 {
+        self.presented_serial
     }
 
     fn full_rect(&self) -> RectF {

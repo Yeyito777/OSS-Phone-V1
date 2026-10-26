@@ -561,6 +561,11 @@ impl Compositor {
         self.gpu.is_some()
     }
 
+    /// The GPU backend, for showing Wayland client buffers directly.
+    pub fn gpu_mut(&mut self) -> Option<&mut GpuBackend> {
+        self.gpu.as_mut()
+    }
+
     /// The compositor socket, for the event loop's poll set.
     pub fn gpu_fd(&self) -> Option<std::os::fd::RawFd> {
         self.gpu.as_ref().and_then(GpuBackend::raw_fd)

@@ -93,6 +93,12 @@ class Mock:
         if kind == 1:  # HELLO
             refresh = 120000
             (version,) = struct.unpack_from("<I", body)
+            if version > self.args.max_version:
+                # A compositor older than the client drops it, as v2 did.
+                self.say(f"client speaks version {version}; dropping it")
+                self.client.close()
+                self.client = None
+                return
             self.send(64, struct.pack("<IIIIQII", version, W, H, refresh, 8333333, 1, 0))
             self.send(65, struct.pack("<IIIIIII", 0, W, H, STRIDE, 1, 0, 0), self.mirror_fd)
             self.say("hello")
@@ -271,6 +277,8 @@ class Mock:
                     self.client = None
                     continue
                 self.handle(msg, fds_in)
+                if self.client is None:
+                    continue
                 for fd in fds_in:
                     os.close(fd)
             self.tick()
@@ -284,4 +292,6 @@ if __name__ == "__main__":
     parser.add_argument("--socket", required=True)
     parser.add_argument("--shot", default="/tmp/moon-gpu-mock.ppm")
     parser.add_argument("--log")
+    parser.add_argument("--max-version", type=int, default=3,
+                        help="drop clients that say hello with a newer version (2: an old compositor)")
     Mock(parser.parse_args()).run()

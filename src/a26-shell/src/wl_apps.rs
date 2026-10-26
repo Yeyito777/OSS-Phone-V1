@@ -22,6 +22,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use wayland_server::Resource as _;
+use wayland_server::backend::ObjectId;
 use wayland_server::protocol::wl_buffer::WlBuffer;
 use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::connection::Connection;
@@ -33,7 +35,11 @@ use x11rb::protocol::xproto::{
 };
 use x11rb::wrapper::ConnectionExt as _;
 
+use crate::compositor::SurfaceId;
+use crate::gfx::RectF;
+use crate::gpu::{Direct, GpuBackend};
 use crate::keyboard::{KeyboardInput, KeyboardPurpose};
+use crate::present::Damage;
 use crate::model::AppId;
 use crate::wayland::{self, Placement, ShmBuffer, ShmPool, SurfaceKey, ToplevelId, WaylandServer};
 
@@ -103,6 +109,17 @@ pub struct WaylandApps {
     actions: Vec<Action>,
     /// MOON_WAYLAND_DEBUG=1 logs every protocol event but commits.
     debug: bool,
+    /// GPU mode: the toplevel whose buffers go straight to moon-compositor
+    /// (milestone 2), and its proxy's X content is stale meanwhile.
+    direct: Option<SurfaceKey>,
+    /// A compositor surface per client buffer shown directly.
+    client_surfaces: HashMap<ObjectId, (WlBuffer, SurfaceId)>,
+    /// Buffers sent in a direct frame, waiting for that frame's flip.
+    presenting: Vec<(u32, SurfaceKey, WlBuffer, Arc<ShmBuffer>)>,
+    /// Direct commits whose buffer is not yet in the proxy.
+    stale: Vec<SurfaceKey>,
+    /// Commits to show directly once the GPU backend is at hand.
+    direct_commits: Vec<(SurfaceKey, WlBuffer, Arc<ShmBuffer>, Vec<wayland::Rect>)>,
 }
 
 impl WaylandApps {
@@ -148,6 +165,11 @@ impl WaylandApps {
             parents: HashMap::new(),
             actions: Vec::new(),
             debug: std::env::var_os("MOON_WAYLAND_DEBUG").is_some(),
+            direct: None,
+            client_surfaces: HashMap::new(),
+            presenting: Vec::new(),
+            stale: Vec::new(),
+            direct_commits: Vec::new(),
         })
     }
 
@@ -443,6 +465,13 @@ impl WaylandApps {
             self.server.release(&resource);
             return Ok(());
         };
+        let new_crop = geometry.and_then(|rect| rect.clip(buffer.width, buffer.height));
+        if self.direct == Some(surface) && new_crop == old_crop {
+            // Shown directly by moon-compositor (update_direct sends it).
+            self.direct_commits
+                .push((surface, resource, buffer, damage.to_vec()));
+            return Ok(());
+        }
         let seg = self.segment(conn, &buffer.pool)?;
         let crop = geometry.and_then(|rect| rect.clip(buffer.width, buffer.height));
         let shown = crop.unwrap_or(wayland::Rect::new(0, 0, buffer.width, buffer.height));
@@ -524,6 +553,208 @@ impl WaylandApps {
                 owner: proxy.owner,
             });
         }
+        Ok(())
+    }
+
+    /// GPU mode, once per loop iteration after `dispatch`: shows the app in
+    /// `window` (the foreground app, when nothing of Moon's covers it) with
+    /// its own buffers instead of through its X proxy, and settles buffers
+    /// whose frames reached the panel. Leaving direct mode (or `window`
+    /// None, as before a snapshot) first brings the proxy up to date, so
+    /// the X mirror and snapshots show the app's last frame.
+    pub fn update_direct<C: Connection>(
+        &mut self,
+        conn: &C,
+        gpu: Option<&mut GpuBackend>,
+        window: Option<u32>,
+    ) {
+        let Some(gpu) = gpu else {
+            return;
+        };
+        let presented = gpu.presented_serial();
+        let mut index = 0;
+        while index < self.presenting.len() {
+            if presented.wrapping_sub(self.presenting[index].0) < u32::MAX / 2 {
+                let (_, key, buffer, shm) = self.presenting.swap_remove(index);
+                self.make_current(key, buffer, shm);
+                // The proxy is behind until direct mode ends.
+                self.mark_stale(key);
+                if let Some(proxy) = self.proxies.get_mut(&key) {
+                    proxy.frame_pending = true;
+                }
+            } else {
+                index += 1;
+            }
+        }
+        let target = window
+            .and_then(|window| self.windows.get(&window).copied())
+            .filter(|key| self.can_go_direct(*key, gpu));
+        if target != self.direct
+            && let Some(old) = self.direct.take()
+        {
+            gpu.set_direct(None);
+            if self.debug {
+                eprintln!("wayland: direct off for surface {}", old.0);
+            }
+        }
+        let commits = std::mem::take(&mut self.direct_commits);
+        if let Some(key) = target {
+            if self.direct != Some(key) {
+                self.direct = Some(key);
+                if self.debug {
+                    eprintln!("wayland: direct on for surface {}", key.0);
+                }
+                if let Some((buffer, shm)) = self.proxies.get(&key).and_then(|p| p.current.clone()) {
+                    let all = [wayland::Rect::new(0, 0, shm.width, shm.height)];
+                    self.show_direct(gpu, key, buffer, shm, &all);
+                }
+            }
+        }
+        for (key, buffer, shm, rects) in commits {
+            if self.direct == Some(key) {
+                self.show_direct(gpu, key, buffer, shm, &rects);
+            } else {
+                // Direct mode ended before this commit was shown.
+                self.make_current(key, buffer, shm);
+                self.mark_stale(key);
+            }
+        }
+        for key in std::mem::take(&mut self.stale) {
+            if self.direct == Some(key) {
+                self.stale.push(key);
+            } else if let Err(error) = self.sync_proxy(conn, key) {
+                eprintln!("wayland: proxy refresh failed: {error}");
+            }
+        }
+        // Compositor surfaces of buffers the client destroyed.
+        let dead: Vec<ObjectId> = self
+            .client_surfaces
+            .iter()
+            .filter(|(_, (buffer, _))| !buffer.is_alive())
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in dead {
+            if let Some((_, surface)) = self.client_surfaces.remove(&id) {
+                gpu.free(surface);
+            }
+        }
+    }
+
+    /// Direct display needs protocol v3 and a pool the compositor may map
+    /// safely (sealed against shrinking); popups and subsurfaces are X
+    /// child windows, so a toplevel showing any stays on the X path.
+    fn can_go_direct(&self, key: SurfaceKey, gpu: &GpuBackend) -> bool {
+        let Some(proxy) = self.proxies.get(&key) else {
+            return false;
+        };
+        gpu.supports_client_surfaces()
+            && proxy.toplevel.is_some()
+            && proxy.mapped
+            && proxy.has_content
+            && proxy
+                .current
+                .as_ref()
+                .is_some_and(|(_, shm)| shm.pool.sealed)
+            && !self.parents.iter().any(|(child, parent)| {
+                *parent == key && self.proxies.get(child).is_some_and(|c| c.has_content)
+            })
+    }
+
+    fn show_direct(
+        &mut self,
+        gpu: &mut GpuBackend,
+        key: SurfaceKey,
+        buffer: WlBuffer,
+        shm: Arc<ShmBuffer>,
+        rects: &[wayland::Rect],
+    ) {
+        let surface = match self.client_surfaces.get(&buffer.id()) {
+            Some((_, surface)) => *surface,
+            None => match gpu.create_client_surface(
+                &shm.pool.fd,
+                shm.offset as u32,
+                shm.width as u32,
+                shm.height as u32,
+                shm.stride as u32,
+                false,
+            ) {
+                Ok(surface) => {
+                    self.client_surfaces
+                        .insert(buffer.id(), (buffer.clone(), surface));
+                    surface
+                }
+                Err(error) => {
+                    eprintln!("wayland: cannot share a client buffer: {error}");
+                    self.make_current(key, buffer, shm);
+                    self.mark_stale(key);
+                    return;
+                }
+            },
+        };
+        let damage: Vec<Damage> = rects
+            .iter()
+            .map(|rect| Damage {
+                x0: rect.x,
+                y0: rect.y,
+                x1: rect.x + rect.width,
+                y1: rect.y + rect.height,
+            })
+            .collect();
+        gpu.client_damage(surface, &damage);
+        let (crop, window) = match self.proxies.get(&key) {
+            Some(proxy) => (proxy.crop, proxy.window),
+            None => return,
+        };
+        let shown = crop.unwrap_or(wayland::Rect::new(0, 0, shm.width, shm.height));
+        let (width, height) = self.last_size(window);
+        let (w, h) = (
+            shown.width.min(i32::from(width)) as f32,
+            shown.height.min(i32::from(height)) as f32,
+        );
+        let direct = Direct {
+            surface,
+            src: RectF::new(shown.x as f32, shown.y as f32, w, h),
+            dst: RectF::new(0.0, f32::from(crate::status_bar::HEIGHT), w, h),
+        };
+        match gpu.set_direct(Some(direct)) {
+            Some(serial) => self.presenting.push((serial, key, buffer, shm)),
+            None => self.make_current(key, buffer, shm),
+        }
+        self.mark_stale(key);
+    }
+
+    fn mark_stale(&mut self, key: SurfaceKey) {
+        if !self.stale.contains(&key) {
+            self.stale.push(key);
+        }
+    }
+
+    /// Copies the buffer on screen into the proxy (after direct mode).
+    fn sync_proxy<C: Connection>(&mut self, conn: &C, key: SurfaceKey) -> Result<(), Box<dyn Error>> {
+        let Some((window, shm, crop)) = self.proxies.get(&key).and_then(|proxy| {
+            Some((proxy.window, proxy.current.as_ref()?.1.clone(), proxy.crop))
+        }) else {
+            return Ok(());
+        };
+        let shown = crop.unwrap_or(wayland::Rect::new(0, 0, shm.width, shm.height));
+        let seg = self.segment(conn, &shm.pool)?;
+        conn.shm_put_image(
+            window,
+            self.gc,
+            (shm.stride / 4).clamp(1, 65535) as u16,
+            shm.height.clamp(1, 65535) as u16,
+            shown.x as u16,
+            shown.y as u16,
+            shown.width as u16,
+            shown.height as u16,
+            0,
+            0,
+            24,
+            ImageFormat::Z_PIXMAP.into(),
+            false,
+            seg,
+            shm.offset as u32,
+        )?;
         Ok(())
     }
 

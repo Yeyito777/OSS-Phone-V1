@@ -222,7 +222,7 @@ impl App {
         }
         let name = std::ffi::CString::new("moon-wl-demo").unwrap();
         // SAFETY: a fresh memfd; ownership moves into OwnedFd.
-        let fd = unsafe { OwnedFd::from_raw_fd(libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC)) };
+        let fd = unsafe { OwnedFd::from_raw_fd(libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING)) };
         let file = File::from(fd);
         file.set_len((slot * 2) as u64).expect("size the pool");
         let fd = OwnedFd::from(file);

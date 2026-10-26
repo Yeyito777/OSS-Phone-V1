@@ -54,7 +54,7 @@ PY
         >"$DIR/xvfb.log" 2>&1 &
     echo $! >"$DIR/xvfb.pid"
     python3 "$PROJECT_ROOT/scripts/gpu/mock-compositor.py" --socket "$DIR/compositor.sock" \
-        --shot "$DIR/frame.ppm" --log "$DIR/mock.log" &
+        --shot "$DIR/frame.ppm" --log "$DIR/mock.log" ${MOCK_ARGS:-} &
     echo $! >"$DIR/mock.pid"
     sleep 1.5
     MOON_GPU_SOCKET="$DIR/compositor.sock" MOON_STATUS_ROOT="$DIR/sys" \

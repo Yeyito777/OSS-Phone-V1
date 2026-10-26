@@ -158,6 +158,48 @@ variable, so the browser stays on X11 until it has been tested.
 
 Not verified yet: the phone (`scripts/wayland/moon-phone.sh`).
 
+## Milestone 2, first part: direct display in GPU mode (built)
+
+In GPU mode, a Wayland app in front is no longer copied through X. Each of
+its `wl_shm` buffers becomes a moon-compositor surface on the client's
+pool (protocol v3: the buffer's byte offset). The app's frame is the X
+mirror (status strip, keyboard area) plus one image node of the client
+buffer over the app area. Every commit is one frame message:
+- the client's damage goes with it;
+- the frame's `MG_PRESENTED` makes that buffer current, releasing the
+  previous one;
+- the frame callback fires at that flip, so Wayland apps are paced by real
+  page flips.
+
+The X proxy stops receiving copies meanwhile. It is brought up to date
+(one `ShmPutImage` of the buffer on screen) whenever direct mode ends.
+
+| Shown directly when | Otherwise (X proxy path) |
+|---|---|
+| GPU mode, protocol v3, the app in front, nothing of Moon's over it | keyboard visible, volume HUD, notification banner (still X windows in the mirror) |
+| the pool is sealed against shrinking (moon-compositor maps it: a shrinking pool would SIGBUS it) | unsealable pools (memfd without `MFD_ALLOW_SEALING`) |
+| the toplevel has no popup or subsurface showing (those are X child windows) | menus open, subsurfaces |
+| no snapshot pending | the home gesture, the switcher and fades: the proxy is synced before the mirror is copied, so cards show the latest frame |
+
+**Protocol version.** Moon offers v3 and falls back to v2 when the
+compositor closes the link (pre-v3 compositors drop any other version).
+With v2, Wayland apps simply stay on the X path. Verified with the
+stand-in's new `--max-version 2` (`MOCK_ARGS` in `mock-run.sh`).
+
+Verified on whale with the stand-in compositor:
+- the demo's animation runs at 120.0 fps from flip-paced frame callbacks,
+  with the client surfaces (1080x2217 XRGB) on the stand-in;
+- the switcher card shows the frame that was on screen (the proxy is
+  synced before capture);
+- tapping a text field leaves direct mode (the keyboard is an X window);
+  typing works, and Enter returns to direct mode.
+
+Next in M2:
+- Moon's keyboard, volume HUD and banner as frame nodes in GPU mode, so
+  they no longer end direct mode;
+- popups and subsurfaces as extra nodes;
+- `linux-dmabuf` for clients with dmabufs (planes, zero copy).
+
 ## Requests for moon-compositor (M2)
 
 1. **Client memfd surfaces, which may be unsealed:** check `F_SEAL_SHRINK`

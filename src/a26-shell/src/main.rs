@@ -619,6 +619,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             )?;
         }
 
+        let mut wayland_direct = None;
         if let Some(server) = wayland.as_mut() {
             for action in server.dispatch(&conn) {
                 match action {
@@ -660,6 +661,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                     eprintln!("wayland: keyboard input had no focused client");
                 }
             }
+            // GPU mode: the app in front shows its own buffers when nothing
+            // of Moon's is drawn over it (keyboard, volume, banner) and no
+            // snapshot is about to be taken from the mirror.
+            let overlay = state.keyboard.is_visible()
+                || state
+                    .volume_overlay_until
+                    .is_some_and(|deadline| deadline > Instant::now())
+                || renderer.banner_window(&state, Instant::now()).is_some();
+            let direct_window = (state.screen_awake
+                && state.view.is_app()
+                && !state.shell_covers_app()
+                && state.pending_capture.is_none()
+                && !state.pending_switcher
+                && !state.pending_fade_capture
+                && !overlay)
+                .then(|| state.managed_windows.first().copied())
+                .flatten();
+            server.update_direct(&conn, renderer.compositor.gpu_mut(), direct_window);
+            wayland_direct = direct_window;
             // A Moon gesture (the home swipe, the switcher) owns the touch now.
             if server.touch_active()
                 && (state.gesture.is_some() || !state.view.is_app() || state.shell_covers_app())
@@ -876,6 +896,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         if std::mem::take(&mut state.pending_switcher) {
             state.open_switcher(apps.running_by_recency());
         }
+        if (state.pending_capture.is_some() || state.pending_fade_capture)
+            && let Some(server) = wayland.as_mut()
+        {
+            // The snapshot copies the X mirror: bring a directly shown
+            // Wayland app's proxy up to date first.
+            server.update_direct(&conn, renderer.compositor.gpu_mut(), None);
+        }
         if let Some(app) = state.pending_capture.take()
             && state.screen_awake
         {
@@ -1069,6 +1096,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             // An app in front: the compositor shows the X mirror by itself.
             let mirror = state.screen_awake && state.view.is_app() && !state.shell_covers_app();
             renderer.compositor.dispatch_gpu(&conn, mirror);
+            // Flips just reported settle directly shown Wayland buffers.
+            if let Some(server) = wayland.as_mut() {
+                server.update_direct(&conn, renderer.compositor.gpu_mut(), wayland_direct);
+            }
         }
         // Frames: one per vblank while anything moves, otherwise only when
         // something changed. Every frame samples the model at the time it
