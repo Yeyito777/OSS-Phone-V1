@@ -7,12 +7,18 @@
 #
 #   --dry-run              run every check and make the backup, write nothing
 #   --allow-kernel-change  accept a kernel that differs from the installed one
-#   --allow-init-change    accept a ramdisk /init (magiskinit) that differs
 #
 # Refuses an image whose size is not exactly the partition's, that is not a
 # boot v4 image ("ANDROID!", header version 4) with an AVB footer, or whose
-# kernel or Magisk init differ from the installed image (unless allowed). The
-# installed image is first read back into /data/adb/moon/boot-backups (newest
+# kernel differs from the installed image (unless allowed).
+#
+# Hard rule, no override: an image whose ramdisk /init differs from the
+# installed image's is refused. A new PID 1 is the one change whose failure
+# cannot be caught in userspace: both stage-2 images (/init = oss-init) reset
+# before adb and needed a physical Download-mode rescue. Such an image may only
+# be tried from a one-shot boot slot, which this non-A/B phone does not have.
+#
+# The installed image is first read back into /data/adb/moon/boot-backups (newest
 # three kept) and copied to the host under $A26_RESCUE/inplace-backups. After
 # dd + fsync + sync, the partition is re-read with O_DIRECT and must match the
 # image's sha256; on a mismatch the backup is written back and verified.
@@ -31,7 +37,8 @@ declare -A KNOWN_GOOD=(
     [3bf291627791e71ba00b4fcdde8b6bd92faa62d6fe2f14da9b906fd86619e9f6]='stock kernel + direct boot (stage-1 rollback)'
 )
 declare -A KNOWN_BAD=(
-    [4d27b69bed59fd075f00963d19b29d630307cf1a247d3193832cd381bcac62f3]='stage-2 oss-init: PID 1 panics after SwitchRoot fails (2026-10-25)'
+    [4d27b69bed59fd075f00963d19b29d630307cf1a247d3193832cd381bcac62f3]='stage-2 v2 oss-init: PID 1 panics after SwitchRoot fails (2026-10-25)'
+    [eaeb4494567f10459bc91f6c3eb156709f56bb066da0913bc307940b303c17e2]='stage-2 v3 oss-init: no adb, reset loop (2026-10-25)'
 )
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -42,20 +49,21 @@ WORK=/data/local/tmp/boot-flash
 
 DRY_RUN=0
 ALLOW_KERNEL=0
-ALLOW_INIT=0
 IMAGE=''
 while (( $# )); do
     case "$1" in
         --dry-run) DRY_RUN=1 ;;
         --allow-kernel-change) ALLOW_KERNEL=1 ;;
-        --allow-init-change) ALLOW_INIT=1 ;;
-        -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+        --allow-init-change)
+            echo "--allow-init-change was removed: a changed ramdisk /init is never flashed (see the header)" >&2
+            exit 2 ;;
+        -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *) [[ -z "$IMAGE" ]] || { echo "only one image" >&2; exit 2; }; IMAGE="$1" ;;
     esac
     shift
 done
-[[ -f "$IMAGE" ]] || { echo "usage: $0 [--dry-run] [--allow-kernel-change] [--allow-init-change] IMAGE" >&2; exit 2; }
+[[ -f "$IMAGE" ]] || { echo "usage: $0 [--dry-run] [--allow-kernel-change] IMAGE" >&2; exit 2; }
 SERIAL="$(a26_resolve_serial)"
 phone() { adb -s "$SERIAL" shell "/data/local/tmp/su -c '$1'" | tr -d '\r'; }
 
@@ -90,7 +98,7 @@ WORK=/data/local/tmp/boot-flash
 BACKUPS=/data/adb/moon/boot-backups
 MAGISKBOOT=/data/adb/magisk/magiskboot
 BB=/data/local/a26-linux/busybox.static
-image_sha=$1 dry_run=$2 allow_kernel=$3 allow_init=$4
+image_sha=$1 dry_run=$2 allow_kernel=$3
 fail() { echo "phone: $*" >&2; exit 1; }
 [ -x "$BB" ] || BB=''
 dd_cmd() { if [ -n "$BB" ]; then "$BB" dd "$@"; else toybox dd "$@"; fi; }
@@ -128,10 +136,8 @@ else
 fi
 if cmp -s "$WORK/cur/init" "$WORK/new/init"; then
     echo 'magisk init: identical'
-elif [ "$allow_init" = 1 ]; then
-    echo 'magisk init: DIFFERENT (allowed by --allow-init-change)'
 else
-    fail 'ramdisk /init differs from the installed image (use --allow-init-change)'
+    fail 'ramdisk /init differs from the installed image: refused, no override (a new PID 1 can only be tried from a one-shot boot slot)'
 fi
 [ "$current_sha" != "$image_sha" ] || echo 'note: the image is byte-identical to the installed one'
 [ "$dry_run" = 1 ] && { echo 'dry run: nothing written'; exit 0; }
@@ -170,7 +176,7 @@ adb -s "$SERIAL" push "$IMAGE" "$WORK/new.img" >/dev/null 2>&1 || fail 'cannot p
 adb -s "$SERIAL" push "$PHONE_SCRIPT" "$WORK/flash.sh" >/dev/null 2>&1 || fail 'cannot push the helper'
 
 set +e
-output="$(phone "sh $WORK/flash.sh $image_sha $DRY_RUN $ALLOW_KERNEL $ALLOW_INIT" 2>&1)"
+output="$(phone "sh $WORK/flash.sh $image_sha $DRY_RUN $ALLOW_KERNEL" 2>&1)"
 status=$?
 set -e
 echo "$output"

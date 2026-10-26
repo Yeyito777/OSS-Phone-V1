@@ -19,13 +19,27 @@ A266MUBU1AYB8-current/boot.img           BOOT read from the phone 2026-10-24, th
 A266MUBU1AYB8-current/{vendor_boot,recovery,vbmeta,vbmeta_system,dtbo}.img + SHA256SUMS
 stock-A266MUBU1AYB8/boot.img             unrooted stock BOOT (e35e0cd7…08c7), last resort
 inplace-backups/                         BOOT as read back before each in-OS flash
-stage2-failure/                          last_kmsg of the stage-2 boot that panicked PID 1
+stage2-failure/                          last_kmsg of the stage-2 v2 boot loop
+stage2-v3-failure/                       last_kmsg of the stage-2 v3 boot loop
 ```
 
-Never flash `boot-oss-stage2-A266MUBU1AYB8.img` (`4d27b69b…`): Android's
-SwitchRoot failed on the `/oss-run` mount, oss-init exited and PID 1
-panicked, a boot loop that needed Download mode (2026-10-25).
-`flash-boot-inplace.sh` refuses it.
+## Hard rule: never flash a different ramdisk `/init`
+
+No image whose ramdisk `/init` differs from the installed image's is flashed,
+with no override. Such an image may only be tried from a one-shot boot slot,
+and this non-A/B phone has none. A new PID 1 is the one change whose failure
+no userspace fallback can catch: both stage-2 images (`/init` = oss-init)
+reset before adb came up and needed a physical Download-mode rescue on
+2026-10-25:
+
+- `4d27b69b…` (v2): Android's SwitchRoot failed on the `/oss-run` mount,
+  oss-init exited and PID 1 panicked.
+- `eaeb4494…` (v3): no adb within 4 minutes, reset loop
+  (`stage2-v3-failure/last_kmsg.txt`).
+
+`flash-boot-inplace.sh` refuses any changed `/init` and both images by hash
+(`KNOWN_BAD`); its old `--allow-init-change` override is gone. Kernel-only
+changes on the same ramdisk (`--allow-kernel-change`) remain possible, attended.
 
 The research host holds the same images and its own samloader.
 
@@ -61,11 +75,12 @@ adb reboot
 
 It refuses an image that is not exactly the partition's size (64 MiB), not a
 boot v4 image with an AVB footer, or whose kernel or Magisk `/init` differ
-from the installed image (`--allow-kernel-change` / `--allow-init-change`
-override; never use them unattended). Images it knows (the `KNOWN_GOOD` table
+from the installed image. `--allow-kernel-change` overrides the kernel check
+(never unattended); a changed `/init` has no override at all (hard rule
+above). Images it knows (the `KNOWN_GOOD` table
 at its top: the two `known-good/` images) may change the kernel without an
 override, so rolling back never needs one; known non-booting images
-(`KNOWN_BAD`: stage 2) are refused. Before writing it reads the installed
+(`KNOWN_BAD`: both stage-2 builds) are refused. Before writing it reads the installed
 image back into `/data/adb/moon/boot-backups/` (newest three) and
 `~/Desktop/a26-rescue/inplace-backups/` on the Mac. It writes with root `dd`
 (`conv=fsync`), syncs, drops caches and re-reads the partition with O_DIRECT;
@@ -116,20 +131,28 @@ uses `/dev/cu.usbmodem*` instead.
 
 ## Level 3: no adb (boot loop or black screen) — the only case for Download mode
 
-What worked on 2026-10-25, from a boot loop:
+What worked twice on 2026-10-25, from a reset loop:
 
-1. Connect the USB cable to the Mac first.
-2. Hold **Volume Up + Volume Down + Power** together until the screen goes
-   black.
-3. Release **only Power**; keep both volume keys held until the teal
-   warning screen appears.
+1. Plug the USB cable into a **data port on the Mac itself**, not a hub.
+2. Hold **Volume Up + Volume Down + Power** together, and keep holding
+   through the phone's resets.
+3. The instant the screen goes black, lift **only Power**; keep both volume
+   keys held until the **teal** warning screen appears.
 4. Press **Volume Up** (Download mode).
-5. Run the Level 2 `samloader detect` and `flash` commands with
-   `known-good/boot-oss-kernel-direct.img`, then restart by hand (hold
-   **Power + Volume Down** about 7–10 s); Moon is up about 45 s later.
+5. Flash `known-good/boot-oss-kernel-direct.img` (below, or let the watcher
+   do it), then restart by hand (hold **Power + Volume Down** about 7–10 s);
+   Moon is up about 45 s later.
 
-The older sequence (Power + Volume Down until black, then quickly switch to
-both volume keys) depends on hitting a short window and was too hard to time.
+What did **not** work for the user: holding only the volume keys, and the
+Power + Volume Down variants (Power + Volume Down until black, then switching
+to both volume keys).
+
+**Mac-side watcher.** During attended tests the device lead's parent runs a
+watcher on the Mac that waits for Samsung's Download-mode USB device
+(product `0x685d`) and runs `tools/samloader flash -p BOOT
+known-good/boot-oss-kernel-direct.img` by itself. With it armed, steps 1–4
+are all the user does before the manual restart. Without it, run Level 2's
+`samloader detect` and `flash` commands.
 
 Alternative entry: stock recovery (Power + Volume Up with USB connected) →
 "Reboot to bootloader" enters Download mode.
