@@ -217,7 +217,7 @@ base magiskinit byte-for-byte, the Moon overlay files are unchanged,
 `/init.stock` is the decompressed backup, and the relay rc is present. An
 independent unpack confirmed **no `oss-run` anywhere** in the ramdisk.
 
-### 5.6 Corrected architecture (v4 design — not yet built)
+### 5.6 Corrected architecture (v4 — built and validated off-device, see V4-CONTAINMENT-VALIDATION.md)
 The real-binary findings (`V3-BOOTLOOP-ROOTCAUSE.md`) dictate three changes.
 Validated direction: with the normal Magisk layout, the real magiskinit
 decompresses `.backup/init.xz` and execs the real stock init (observed under

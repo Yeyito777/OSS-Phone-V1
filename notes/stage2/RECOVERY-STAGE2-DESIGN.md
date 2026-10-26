@@ -103,10 +103,15 @@ the no-A/B brick risk that stopped the BOOT-partition attempts. BOOT stays
   recovery-marker exception so Moon (not plain Android) comes up from recovery.
 
 ## Status
-Stage 1 (OSS-kernel recovery calibration, `aab7a301`) and **Stage 2
-(system-from-recovery, `fc974667`)** are built, deterministic, and qemu-validated
-— both unflashed, both whitelisted in `flash-recovery-inplace.sh`, ready to test
-from the recovery slot the moment the canary proves it returns to BOOT on
-failure. Stage 3 (oss-init containment) is blocked only on the §5.6 private-rootfs
-oss-init build; its recovery packaging is already a one-command wrap of that
-BOOT image. Nothing flashed.
+All three stages are built, deterministic and whitelisted in
+`flash-recovery-inplace.sh`, unflashed:
+1. OSS-kernel recovery calibration `aab7a301` (stock recovery UI, OSS kernel).
+2. System-from-recovery `5a445db7` (normal boot in the recovery slot + the
+   `oss-recovery-slot` marker, so `moon-direct-policy.sh` lets a recovery-reason
+   boot continue to Moon; supersedes `fc974667`).
+3. Stage-2 v4 containment `b67b68d3` (oss-init PID 1, private-rootfs container;
+   validation in V4-CONTAINMENT-VALIDATION.md).
+Test order after the canary passes: 2, then 3. Each from the recovery slot via
+`reboot-recovery`, with `--check-bcb` before and after and `--restore-stock`
+at the end. The policy exception needs the updated `moon-direct-policy.sh`
+installed on /data (a normal Moon script update) before stage 2 is tried.

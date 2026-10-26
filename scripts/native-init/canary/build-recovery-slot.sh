@@ -20,6 +20,14 @@
 # BOOT itself is never touched: this goes to RECOVERY and is entered once via
 # the BCB-free reboot-recovery tool.
 #
+# Every image this script builds carries overlay.d/sbin/oss-recovery-slot
+# (magiskinit copies it to /debug_ramdisk). moon-direct-policy.sh lets a
+# "recovery" boot reason continue to Moon ONLY when that marker exists, so a
+# recovery-slot test image can show Moon while normal recovery boots (stock
+# recovery, which never runs the policy) and BOOT images (no marker) are
+# unaffected. The marker is added with magiskboot, the tool and lz4 format
+# Magisk itself uses for this ramdisk.
+#
 # Deterministic: inputs are copied verbatim, AVB uses a fixed salt.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,6 +38,7 @@ NAME="${3:-recovery-slot-moon-A266MUBU1AYB8.img}"
 VENDOR_BOOT="${A26_VENDOR_BOOT:-$HOME/oss-kernel/.recslot/in/vendor_boot.img}"
 STOCK_RECOVERY="$R/images/stock-A266MUBU1AYB8/recovery.img"
 KEY="$R/keys/recovery-avb-rsa4096.pem"
+MAGISKBOOT="${MAGISKBOOT:-$R/tools/magiskboot-x86_64}"
 SALT=9413599eee2c3c4ad1a16b47eb3dc5036d93c908c656b18881680b979e1e547c
 PARTITION_SIZE=$((24576 * 4096))   # RECOVERY, PIT entry #22
 VENDOR_BOOT_SHA=74723185dc3ae25be122418e8d401b91cfd27eac688395e97067f77a849692d2
@@ -43,7 +52,17 @@ printf '%s  %s\n' "$STOCK_RECOVERY_SHA" "$STOCK_RECOVERY" | sha256sum -c - >/dev
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$OUT"
-unpack_bootimg --boot_img "$BOOT" --out "$WORK/boot" >/dev/null
+# Add the recovery-slot marker to (a copy of) the BOOT ramdisk.
+mkdir -p "$WORK/mb"; cp "$BOOT" "$WORK/mb/b.img"
+printf 'OSS-Phone recovery-slot test image\n' >"$WORK/mb/marker"
+( cd "$WORK/mb" && "$MAGISKBOOT" unpack b.img >/dev/null 2>&1 &&
+  "$MAGISKBOOT" cpio ramdisk.cpio "add 0644 overlay.d/sbin/oss-recovery-slot marker" >/dev/null 2>&1 &&
+  "$MAGISKBOOT" repack b.img slot.img >/dev/null 2>&1 )
+"$MAGISKBOOT" cpio "$WORK/mb/ramdisk.cpio" "exists overlay.d/sbin/oss-recovery-slot" >/dev/null 2>&1 ||
+  { echo "marker not added" >&2; exit 1; }
+unpack_bootimg --boot_img "$WORK/mb/slot.img" --out "$WORK/boot" >/dev/null
+unpack_bootimg --boot_img "$BOOT" --out "$WORK/boot-orig" >/dev/null
+cmp "$WORK/boot/kernel" "$WORK/boot-orig/kernel" || { echo "magiskboot changed the kernel" >&2; exit 1; }
 unpack_bootimg --boot_img "$VENDOR_BOOT" --out "$WORK/vb" >/dev/null
 unpack_bootimg --boot_img "$STOCK_RECOVERY" --out "$WORK/rec" --format=mkbootimg -0 >"$WORK/args.bin"
 

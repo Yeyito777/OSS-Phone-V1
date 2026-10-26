@@ -30,7 +30,8 @@ declare -A KNOWN=(
   [9ab6cefe06b18ddd7d2410f8ce06233fb0c14a39687fe085b4e74ad18a91a7e8]='stock recovery (rescue baseline)'
   [25540aa188cf00ea007a1a4c52746bd07be7e75e5bcfd0b18a411bf2f89a96ef]='panic canary recovery (2026-10-26)'
   [aab7a30153acb342edc397d3c471098f4cb0f5ceb55f196775a32950df3ac410]='OSS-kernel recovery calibration (stock recovery UI, OSS kernel)'
-  [fc97466761d1ba0173181d023f1c568186d8f98e6340e88d27c59213dddb03a6]='recovery-slot normal boot (BOOT+vendor_boot merged; boots the system from recovery)'
+  [5a445db7cc325e8b233f7a9f5a5323f0d464f3472bb26db420801560706531ee]='recovery-slot normal boot (BOOT+vendor_boot merged + recovery-slot marker; Moon from recovery)'
+  [b67b68d37a6779ef03995122934eced38634d06ef4d8666df720138f88481711]='recovery-slot stage-2 v4 (oss-init PID 1, Android in a PID+mount namespace)'
 )
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"

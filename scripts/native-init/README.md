@@ -1,61 +1,52 @@
 # Stage 2: OSS Phone's own init as PID 1
 
-Two artifacts, lowest-risk first. See `notes/stage2/DESIGN.md` for the full
-research and `notes/stage2/TEST-PLAN.md` for the attended morning test. **Do not
-flash unattended** — there is no A/B slot.
+Everything here is tried **only from the RECOVERY partition**, once, through the
+BCB-free `reboot-recovery` entry, so a failed boot returns to the untouched BOOT
+(`notes/stage2/CANARY-RUNBOOK.md`). No image whose `/init` changes ever goes to
+BOOT: `flash-boot-inplace.sh` refuses it, and v2/v3 (on BOOT) both reset-looped
+(`notes/stage2/V2-BOOTLOOP-ROOTCAUSE.md`, `V3-BOOTLOOP-ROOTCAUSE.md`).
 
-## `oss-init` — containment (the real stage 2)
+## `oss-init` v4 — containment
 
-On the **OSS Phone kernel** (`CONFIG_PID_NS`, `CONFIG_DEVTMPFS`, no DEFEX),
-`oss-init` is the ramdisk `/init`, so the kernel execs it as the **real PID 1**,
-and it stays PID 1. It runs Android's entire init (the existing magiskinit →
-stock-init → Moon stack) as its child in a **new PID + mount namespace**, so
-Android sees `getpid()==1` in its namespace and does the full hardware bring-up
-unchanged. OSS Phone owns the real init seat; Android is contained.
+On the OSS Phone kernel (`CONFIG_PID_NS`, `CONFIG_DEVTMPFS`, no DEFEX) the
+kernel execs `oss-init` as the real PID 1. It clones Android's whole init into
+a new PID + mount namespace whose root is a **private tmpfs copy of the ramdisk
+in the normal Magisk layout** (`/init` = magiskinit), so magiskinit and stock
+init run exactly as in today's boot without touching oss-init's rootfs.
 
-Iron rule — **oss-init can never exit/return**; every path execs the stock stack
-or loops+reboots. The fallback is always a re-exec in oss-init's own (pristine)
-namespace, so a failure stays in THIS boot and goes uncontained — never a reset
-loop. Validated under real namespaces on whale (healthy→supervise;
-crash→uncontained with a switch_root-style mount-move pristine-ns proof;
-hang→kill+uncontained):
-- setup fails (e.g. no PID_NS) → boot stock stack uncontained (today's boot)
-- container crash / early death / SwitchRoot failure → clean uncontained boot
-- container hang (no kernel-log marker in 60 s) → kill + uncontained boot
+- **No mounts** in oss-init's own namespace; it watches `/dev/kmsg` instead.
+- **Fallback = the stock init only**, exec'd through an fd held from the start.
+- **Early failure** (before Samsung's `sec_reboot` registered) → exec stock init.
+  **Late failure** → controlled `reboot(2)`, which then writes the normal reason
+  and lands on BOOT. A reboot requested by the contained Android → performed.
+- No `return`/`exit` on the PID-1 path: every path ends in an exec or a reboot.
 
-v3 mounts **nothing** (v2's `/oss-run` tmpfs broke Android's SwitchRoot and
-boot-looped — see `../../notes/stage2/V2-BOOTLOOP-ROOTCAUSE.md`). Liveness rides
-the global kernel log; there is no reboot relay (a contained `adb reboot` drops
-to an uncontained boot — the escape hatch).
+Design: `notes/stage2/DESIGN.md` §5.6. Validation (real namespaces, the real
+merged ramdisk, the real magiskinit and stock init):
+`notes/stage2/V4-CONTAINMENT-VALIDATION.md`.
 
 | File | Role |
 | --- | --- |
-| `oss-init.c` | the real PID 1 / host supervisor |
-| `overlay.d/oss-contain.rc` | one `/dev/kmsg` liveness marker (no mount) |
-| `build-stage2-image.sh` | build on the OSS-kernel image `8c0461ee…` |
+| `oss-init.c` | the real PID 1 / supervisor |
+| `overlay.d/oss-contain.rc` | liveness line on `/dev/kmsg` (no mount) |
+| `build-stage2-v4.sh` | today's BOOT + oss-init → recovery-slot image |
+| `canary/build-recovery-slot.sh` | any BOOT + vendor_boot → a v2 recovery-slot image (+ marker) |
+| `canary/build-canary-recovery.sh`, `canary/*.c` | the panic canary and `reboot-recovery` |
+| `test/run-tests.sh`, `test/stub-*.c` | the off-device test bench |
 
 ```sh
-# research host (whale): needs aarch64 gcc, magiskboot, avbtool, xz, the AVB key,
-# and the OSS-kernel base image ($HOME/oss-kernel/out/boot/boot-oss-mirror-…img).
-scripts/native-init/build-stage2-image.sh OUT_DIR
+# research host (whale): aarch64 gcc, magiskboot, mkbootimg/unpack_bootimg,
+# avbtool, xz, lz4, the project AVB key, the OSS-kernel BOOT and vendor_boot.
+scripts/native-init/build-stage2-v4.sh OUT_DIR       # recovery-slot-stage2-v4-…img
+scripts/native-init/canary/build-recovery-slot.sh OUT_DIR   # recovery-slot-moon-…img
+scripts/native-init/test/run-tests.sh all            # live, layout-crash, hang, late-reboot, contained-reboot
 ```
-Output `boot-oss-stage2-A266MUBU1AYB8.img`. The build verifies the kernel is
-byte-identical to the OSS base, `/init` is oss-init, `/init.magisk` is the base
-magiskinit byte-for-byte, the Moon overlay files are unchanged, `/init.stock` is
-the decompressed backup, and the relay rc is present. Built image is git-ignored
+Outputs are deterministic and whitelisted by sha256 in
+`scripts/direct-boot/flash-recovery-inplace.sh`; built images are git-ignored
 (`/images/oss-stage2/`).
 
-## `oss-pid1` — pre-init stepping stone (safe fallback)
+## `oss-pid1` — pre-init stepping stone
 
-`oss-pid1.c` + `build-boot-image.sh`: OSS Phone's own binary as `/init` that
-owns PID 1 then *execs* the stack (no containment), built on the **stock**
-kernel. Boot is bit-for-bit today's. It is the lowest-risk artifact and a
-bisection point — "does our-init-as-PID-1 boot at all, before namespaces?" — if
-`oss-init` containment misbehaves on-device.
-
-## Rollback
-
-A BOOT flash leaves data, Magisk and `/data/adb` untouched. To recover, flash
-`images/kernel/boot-oss-mirror-…img` (OSS kernel, passthrough) or the
-stock-kernel `images/kernel/rollback/boot-moon-direct-…img` per
-`notes/direct-boot/RESCUE.md`.
+`oss-pid1.c` + `build-boot-image.sh`: an `/init` that owns PID 1 and then execs
+the stack (no containment). Kept as a bisection point; like everything changing
+`/init`, it is only to be tried from the recovery slot.

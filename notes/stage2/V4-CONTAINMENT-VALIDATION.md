@@ -1,0 +1,81 @@
+# oss-init v4 (private-rootfs containment): design and off-device validation
+
+Built 2026-10-26, unflashed. Source `scripts/native-init/oss-init.c`; image
+builder `scripts/native-init/build-stage2-v4.sh` (recovery slot only); test
+bench `scripts/native-init/test/run-tests.sh`.
+
+## Images (deterministic, whitelisted in flash-recovery-inplace.sh)
+| Image | sha256 | What it is |
+| --- | --- | --- |
+| `recovery-slot-stage2-v4-A266MUBU1AYB8.img` | `b67b68d3…88481711` | Today's BOOT (`8c0461ee`) + vendor_boot in the recovery slot; ramdisk `/init` = oss-init v4, `/init.magisk` = magiskinit, `/init.stock` = static stock init, `overlay.d/oss-contain.rc`, recovery-slot marker |
+| `recovery-slot-moon-A266MUBU1AYB8.img` | `5a445db7…706531ee` | The same without oss-init: the normal boot from the recovery slot, plus the marker so Moon (not plain Android) comes up. Supersedes `fc974667` |
+
+Both are in `images/oss-stage2/recovery-slot/` (Mac) and on whale. Built twice,
+byte-identical.
+
+## What v4 does (requirements → implementation)
+- **Private ramdisk copy, normal Magisk layout.** The cloned child (new PID +
+  mount namespace) makes its mounts private, mounts a tmpfs on `/mnt` *in its
+  own namespace*, copies the root filesystem into it (skipping mountpoints,
+  keeping `/dev`, `/proc`, `/sys` empty), renames `init.magisk` → `/init`,
+  drops `init.stock`, then `MS_MOVE`s the tmpfs onto `/` and chroots, exactly
+  like init's own SwitchRoot, and execs `/init` (magiskinit).
+- **Fallback execs only the stock init, via a held fd.** `/init.stock` is opened
+  at start (`O_CLOEXEC`, so the container never inherits it). At fallback
+  CLOEXEC is cleared and `execveat(fd, "", AT_EMPTY_PATH)` runs it; the path is
+  a second try. magiskinit is never the fallback.
+- **No mounts in oss-init's namespace.** oss-init calls `mount()` only inside
+  the child. It reads `/dev/kmsg` (a `mknod` if missing, not a mount) for two
+  markers: `OSSPHONE_CONTAIN_LIVE` (liveness, from `oss-contain.rc`) and
+  `sec-reboot … register restart handler successfully` (reboot-safe).
+- **Every error path ends in an exec or a reboot.** Early failure (before
+  `sec_reboot` registered) → exec stock init: kernel state is clean, and a
+  reboot would keep the RECOVERY reason and re-enter the slot. Late failure →
+  controlled `reboot(2)`; with `sec_reboot` loaded that writes the normal reason
+  and lands on BOOT (proven on this phone by the stock round trip:
+  recovery-reason entry + recovery's own `reboot("")` → system). A reboot
+  requested by the contained Android (its init dies by SIGHUP/SIGINT,
+  `pid_namespace.c:331-338`) → oss-init performs the real reboot/power-off. No
+  `return`/`exit` exists on the PID-1 path; exec failure loops into reboot.
+
+## Validation (whale; real namespaces; real merged ramdisk)
+oss-init (x86 build of the identical source, `-DTEST_STDERR`) ran as PID 1 of a
+fresh user+pid+mount+net namespace, chrooted on a bind mount (rootfs is a mount
+on the phone) into the real merged recovery-slot ramdisk (vendor fragments +
+BOOT ramdisk). aarch64 binaries ran via binfmt qemu.
+
+| Case | Container | oss-init | Result |
+| --- | --- | --- | --- |
+| layout + crash | stub sees `/init`, no `init.magisk`/`init.stock`, `.backup/init.xz` and empty `/mnt` present, PID 1; makes 2 tmpfs mounts + `MS_MOVE` (SwitchRoot-style), crashes | early → exec stock init via fd | stock-init stub runs as PID 1 (`exe=/init.stock`); oss-init's namespace holds only root + the proc the stub mounted: **no leak**; original tree intact |
+| hang | never live | deadline → SIGKILL → exec stock init | same clean fallback |
+| late failure | exits after the `sec_reboot` marker | controlled `reboot(2)` | real reboot syscall (test namespace killed by SIGHUP, status 129) |
+| contained reboot | `reboot(RESTART)` in its PID ns | init SIGHUP'd → real reboot | 129 |
+| live | liveness marker seen, then idles | logs `container is live … supervising as the real PID 1`; no deadline kill, no fallback | supervised until the bench's own SIGKILL (137) |
+| **real binaries** | real **magiskinit** from the copy: proc/sys, `/data` tmpfs, `/init`→`/sdcard` hijack, restored `.backup/init.xz` → `/init`, exec'd the real **stock init** → `FirstStageMain` mounted `/dev`, devpts, proc, sysfs, then died on test-environment limits (no selinuxfs, `gid=1000` unmapped) | early → `execveat(3, "", AT_EMPTY_PATH) = 0` → real stock init `FirstStageMain` as PID 1 | strace shows **zero `mount()` calls by oss-init** between its start and the fallback |
+| **image's exact aarch64 /init** (qemu) | — | qemu-user returns EINVAL for `clone(NEWNS\|NEWPID)` → "clone failed" path | `execveat(held fd)` of the real stock init **succeeded** |
+
+Bug found and fixed by the real-binary run: `execveat` on an `O_CLOEXEC` fd
+returns ENOENT when the binary is handed to an interpreter as `/dev/fd/N`
+(binfmt). Native ELF on the phone would not hit it, but the fallback must never
+depend on that, so CLOEXEC is cleared just before the exec.
+
+## Not provable off-device (resolved only by booting it from the slot)
+- The real stock init's full first and second stage *inside* the namespace on
+  the real device (selinuxfs, device nodes, dm, SwitchRoot, property service,
+  ueventd, watchdogd) — the test environment cannot create device nodes.
+- The `sec_reboot` marker timing and the controlled reboot landing on BOOT from
+  the slot (sound by source + the stock round trip; confirmed only on device).
+- Containment from the aarch64 binary itself (qemu-user cannot do the
+  namespace clone; the x86 build of the same source can and did).
+
+## Test order on the phone (after the canary passes)
+1. `recovery-slot-moon` (`5a445db7`): the normal boot from the recovery slot,
+   Moon via the marker. Proves the slot boots a full system.
+2. `recovery-slot-stage2-v4`: oss-init containment. adb runs **inside** the
+   container, so its `/proc/1` is Android's init and the real PID 1 is not
+   visible from there. Pass = the global kernel log (`dmesg | grep oss-init`)
+   shows `the real PID 1 (v4…)` then `container is live … supervising as the
+   real PID 1`, with no fallback line, and Moon is up. Any failure → stock init
+   or a reboot to BOOT, by design (the log says which).
+Each run: `--check-bcb`, `flash-recovery-inplace.sh <image>`,
+`reboot-recovery`, observe, then `--restore-stock`.

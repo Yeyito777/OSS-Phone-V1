@@ -45,7 +45,20 @@ if [ -e "$PERSIST/skip-once" ]; then
     decide android 'consumed skip-once'
 fi
 case "$(getprop ro.boot.bootreason)" in
-    *recovery*|*download*) decide android 'recovery/download boot reason' ;;
+    *download*) decide android 'download boot reason' ;;
+    *recovery*)
+        # Exception: a recovery-slot TEST image (scripts/native-init/canary/
+        # build-recovery-slot.sh) is entered with a recovery reason, so it would
+        # always land in plain Android. Such images carry this marker in their
+        # own ramdisk (overlay.d/sbin, copied by magiskinit to /debug_ramdisk).
+        # A normal recovery boot runs stock recovery, which never runs this
+        # policy, and BOOT images never carry the marker. Every later check
+        # (panic, failure limit, battery, ...) still applies.
+        if [ -e /debug_ramdisk/oss-recovery-slot ]; then
+            log 'recovery reason, but this is a recovery-slot test image: policy continues'
+        else
+            decide android 'recovery boot reason'
+        fi ;;
 esac
 # A prior kernel panic gets one Android-only diagnostic boot instead of an
 # automatic panic loop.
