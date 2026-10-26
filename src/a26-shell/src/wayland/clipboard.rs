@@ -195,11 +195,12 @@ impl Dispatch<WlDataDevice, ()> for WlState {
                 let devices = focused_devices(state);
                 offer_selection(state, handle, &devices);
             }
-            wl_data_device::Request::StartDrag { source, .. } => {
+            wl_data_device::Request::StartDrag {
+                source: Some(source),
+                ..
+            } => {
                 // No drag and drop on a phone: the drag ends at once.
-                if let Some(source) = source {
-                    source.cancelled();
-                }
+                source.cancelled();
             }
             wl_data_device::Request::Release => {
                 state.clipboard.devices.retain(|device| device != resource);
