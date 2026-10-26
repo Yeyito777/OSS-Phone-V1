@@ -71,12 +71,15 @@ backward compatible.
 | `zxdg_decoration_manager_v1` | 1 | Always "server side": nobody draws decorations |
 | `wl_seat` | 7 | Touch and keyboard. The keymap is a fixed US XKB keymap; repeat rate 0, because Moon repeats keys itself |
 | `wl_output` | 4 | 1080x2340 at 120 Hz, integer scale 3 by default (`MOON_WAYLAND_SCALE`, 1-4); the server converts surface units to pixels, so Moon only deals in pixels |
-| `wl_data_device_manager` | 3 | Stub: no clipboard yet |
+| `wl_data_device_manager` | 3 | Clipboard between Wayland apps: the selection is offered to the app with keyboard focus, and reading it hands the reader's pipe to the source's owner (Moon never sees the contents). No drag and drop |
+| `wp_presentation` | 1 | Answered when the commit's buffer is on screen: at the page flip (vsync, hardware clock) in GPU direct mode, at the end of the X copy otherwise |
 | `zwp_text_input_manager_v3` | 1 | Enable/disable and the content purpose drive Moon's keyboard |
 
-Not yet offered: `linux-dmabuf` (M2: with the X proxy it would mean Xorg
-reading write-combined memory), `wp_presentation` (M2), `wp_viewporter`,
-pointer, clipboard and primary selection, xdg-activation.
+Not yet offered:
+- `linux-dmabuf` (needs the direct path for dmabufs, since Xorg would read
+  write-combined memory);
+- `wp_viewporter` and fractional scale;
+- pointer, primary selection and xdg-activation.
 
 ### How the pieces map
 
