@@ -103,3 +103,13 @@ Before relying on the module in the recovery-slot canary, read its
 `before:` line from a recovery boot. It should show reboot-cmd 0x01 and
 panic-inform 0x12345674. If 0x810 holds another value there, the module will
 not change it and logs that instead.
+
+## v2 on-device re-test (approved; 2026-10-26, no reboot)
+
+sha256 `7130cf3c04626745b1036262bf264053539906058948c95b7dbda344054e2568`.
+
+- `dry_run=1`: `before: reboot-cmd[0x810]=0x48 (mode 0) magic-inform[0x808]=0x4e4e0000 panic-inform[0x80c]=0x25b7ce71 (dry run)`, rc 0, rmmod OK.
+- `require_mode=1` on a normal boot: the same `before:`, then
+  `after:  reboot-cmd[0x810]=0x48 (mode 0) magic-inform[0x808]=0x4e4e0000 panic-inform[0x80c]=0x12345670`,
+  then `FAIL: require_mode: no reboot mode was set (mode bits 0), nothing cleared`.
+  The load was refused (`-ENOENT`) and the module is not resident, as intended.
