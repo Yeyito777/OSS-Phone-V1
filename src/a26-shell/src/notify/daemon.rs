@@ -67,7 +67,11 @@ const MAX_LINE: usize = 16 * 1024;
 const MAX_BACKLOG: usize = 4 * 1024 * 1024;
 const VIBRATE_PULSE_MS: u32 = 500;
 const VIBRATE_PERIOD: Duration = Duration::from_secs(1);
-const FIFO_RETRY: Duration = Duration::from_secs(2);
+/// moon-audiod closes the FIFO for ~250 ms after each sound while its stream
+/// drains, so an open can fail briefly even when audio is up: retry soon.
+const FIFO_RETRY: Duration = Duration::from_millis(250);
+/// A notification chime that cannot start within this long is dropped.
+const CHIME_PATIENCE: Duration = Duration::from_secs(2);
 /// 100 ms of audio per refill; the pipe holds ~340 ms.
 const RENDER_FRAMES: usize = 4800;
 /// Audio is produced in real time, at most this far ahead of the clock (the
@@ -443,6 +447,8 @@ struct Player {
     volume: u8,
     /// Real-time pacing of what has been produced since the FIFO opened.
     clock: Option<(Instant, u64)>,
+    /// When the pending chime was requested (it waits at most CHIME_PATIENCE).
+    chime_since: Option<Instant>,
 }
 
 impl Player {
@@ -490,6 +496,7 @@ impl Player {
     fn chime(&mut self) {
         if self.ring.is_none() {
             self.chime = Tone::new(Pattern::Chime, self.volume.max(1));
+            self.chime_since = Some(Instant::now());
         }
     }
 
@@ -513,7 +520,7 @@ impl Player {
 
     /// Opens the alert FIFO when there is something to play. O_NONBLOCK makes
     /// the open fail (ENXIO) instead of hanging when moon-audiod is not
-    /// reading; ringing then stays vibration-only and retries every 2 s.
+    /// reading; ringing then stays vibration-only and retries every 250 ms.
     fn ensure_open(&mut self, path: &Path) {
         if !self.wants_output() {
             self.fifo = None;
@@ -537,9 +544,15 @@ impl Player {
             }
             Err(_) => {
                 self.retry_at = Some(Instant::now() + FIFO_RETRY);
-                // A one-shot chime is not worth waiting for.
-                self.chime = None;
-                self.pending.clear();
+                // A one-shot chime is worth a short wait, not a long one.
+                if self
+                    .chime_since
+                    .is_some_and(|since| since.elapsed() >= CHIME_PATIENCE)
+                {
+                    self.chime = None;
+                    self.chime_since = None;
+                    self.pending.clear();
+                }
             }
         }
     }
