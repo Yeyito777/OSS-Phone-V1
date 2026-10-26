@@ -11,8 +11,18 @@ scripts/kernel/build-module.sh src/oss-rebootmode-clear
 # -> $KROOT/out/modules/oss-rebootmode-clear/oss-rebootmode-clear.ko
 ```
 
-Parameters: `dry_run=1` reads and logs only. Messages go to kmsg with the
-prefix `oss-rebootmode-clear:` (`before:` and `after:` lines).
+Parameters:
+- `dry_run=1` reads and logs only.
+- `require_mode=1` fails the load (`-ENOENT`) unless this load found a
+  reboot mode (1..5) in reboot-cmd bits 2:0 and cleared it. The
+  recovery-slot canary uses it, so it only panics on purpose when the
+  selector was really cleared; oss-init and the plain slot image keep the
+  default.
+
+After any write the module reads all three registers back and fails the
+load (`-EIO`) unless they select a NORMAL boot: mode bits 0, magic bits
+23:16 = 0x4E, panic-inform 0x12345670. Messages go to kmsg with the prefix
+`oss-rebootmode-clear:`: `before:`, `after:`, then `OK:` or `FAIL:`.
 
 ## What it does, and where each operation comes from
 
@@ -28,7 +38,7 @@ which first-stage init loads after oss-init.
 
 | Register (DT property, live value) | Read | Write (only if the value differs) | Same operation in the kernel |
 | --- | --- | --- | --- |
-| `reboot-cmd-offset` = 0x810 (PMU SYSIP_DAT0) | yes | `0x00` REBOOT_MODE_NORMAL, **only if it holds 0x01..0x05** (a mode exynos-reboot writes); any other value is left alone and logged | `exynos_reboot_parse()`: `regmap_write(pmureg, reboot_cmd_offset, REBOOT_MODE_*)` on charge/bootloader/recovery/sfactory reboots |
+| `reboot-cmd-offset` = 0x810 (PMU SYSIP_DAT0) | yes | mode bits 2:0 := 0 (REBOOT_MODE_NORMAL), **only if they hold 1..5**; other bits kept (a normal boot reads 0x48: mode 0 plus flag bits 6 and 3 from the bootloader). Other mode values are left alone, and the read-back check then fails the load | `exynos_reboot_parse()`: `regmap_write(pmureg, reboot_cmd_offset, REBOOT_MODE_*)` on charge/bootloader/recovery/sfactory reboots |
 | `magic-inform` = 0x808 (PMU INFORM2) | yes | bits 23:16 := `0x4E` SEC_REBOOT_NORMAL, other bits kept | `sec_reboot()` → `sec_set_reboot_magic(SEC_REBOOT_NORMAL, 16, 0xFF)` (read, mask, write) on **every** reboot, panic included |
 | `panic-inform` = 0x80c (PMU INFORM3) | yes | `0x12345670` SEC_RESET_REASON_UNKNOWN | `sec_reboot()` on every reboot without a special command; `sec_power_off()` before its fallback reset |
 

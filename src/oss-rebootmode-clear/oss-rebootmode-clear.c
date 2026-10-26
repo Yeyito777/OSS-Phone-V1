@@ -11,8 +11,9 @@
  *
  *   drivers/power/reset/exynos-reboot.c  exynos_reboot_parse():
  *       regmap_write(pmureg, reboot_cmd_offset, REBOOT_MODE_*)
- *     here REBOOT_MODE_NORMAL (0x00), and only if the register holds one of
- *     the modes that driver writes (0x01..0x05); anything else is left alone.
+ *     here REBOOT_MODE_NORMAL in the mode bits 2:0 only, and only if they
+ *     hold a mode (1..5). The other bits are kept: a normal boot reads 0x48
+ *     (mode 0 plus flag bits 6 and 3, set by the bootloader, not the kernel).
  *   drivers/samsung/sec_reboot.c  sec_reboot(), every non-panic reboot:
  *       sec_set_reboot_magic(SEC_REBOOT_NORMAL, SEC_REBOOT_END_OFFSET, 0xFF)
  *         = read magic_inform, replace bits 23:16 with 0x4E, write back
@@ -21,6 +22,12 @@
  * sec_set_reboot_magic() itself is exported by sec_reboot.ko, but that is a
  * vendor module loaded by Android's first-stage init, after oss-init runs;
  * the syscon regmap is built in and needs no module.
+ *
+ * After writing it reads all three back and fails the load unless the mode
+ * bits are 0, magic bits 23:16 are 0x4E and panic-inform is UNKNOWN. With
+ * require_mode=1 it also fails unless this load found and cleared a mode
+ * (1..5); a recovery-slot canary uses that, so it only panics on purpose
+ * when the selector it knows about was really cleared.
  *
  * Safe twice (idempotent; unchanged registers are not rewritten) and during
  * normal operation (the next clean reboot rewrites the sec informs anyway).
@@ -38,6 +45,7 @@
 /* exynos-reboot.c */
 #define REBOOT_MODE_NORMAL	0x00
 #define REBOOT_MODE_LAST	0x05	/* FASTBOOTD; RECOVERY is 0x01 */
+#define REBOOT_MODE_MASK	0x07
 /* sec_reboot.c */
 #define SEC_REBOOT_END_OFFSET	16
 #define SEC_REBOOT_NORMAL	0x4E
@@ -52,6 +60,10 @@
 static bool dry_run;
 module_param(dry_run, bool, 0444);
 MODULE_PARM_DESC(dry_run, "only read and log the registers");
+
+static bool require_mode;
+module_param(require_mode, bool, 0444);
+MODULE_PARM_DESC(require_mode, "fail unless a reboot mode (1..5) was found and cleared");
 
 static int lookup(const char *compatible, const char *prop, u32 expect,
 		  struct regmap **map, u32 *offset)
@@ -83,7 +95,8 @@ static int __init oss_rebootmode_clear_init(void)
 {
 	struct regmap *pmu, *sec_pmu;
 	u32 cmd_off, magic_off, panic_off;
-	u32 cmd, magic, panic, want_magic;
+	u32 cmd, magic, panic, want_magic, mode;
+	bool found_mode;
 	int ret;
 
 	ret = lookup("samsung,exynos-reboot", "reboot-cmd-offset", EXPECT_REBOOT_CMD,
@@ -108,16 +121,18 @@ static int __init oss_rebootmode_clear_init(void)
 		pr_err("read failed (%d)\n", ret);
 		return ret;
 	}
-	pr_info("before: reboot-cmd[%#x]=%#x magic-inform[%#x]=%#x panic-inform[%#x]=%#x%s\n",
-		cmd_off, cmd, magic_off, magic, panic_off, panic,
+	mode = cmd & REBOOT_MODE_MASK;
+	found_mode = mode > REBOOT_MODE_NORMAL && mode <= REBOOT_MODE_LAST;
+	pr_info("before: reboot-cmd[%#x]=%#x (mode %u) magic-inform[%#x]=%#x panic-inform[%#x]=%#x%s\n",
+		cmd_off, cmd, mode, magic_off, magic, panic_off, panic,
 		dry_run ? " (dry run)" : "");
 	if (dry_run)
 		return 0;
 
-	if (cmd > REBOOT_MODE_NORMAL && cmd <= REBOOT_MODE_LAST)
-		ret = regmap_write(pmu, cmd_off, REBOOT_MODE_NORMAL);
-	else if (cmd != REBOOT_MODE_NORMAL)
-		pr_warn("reboot-cmd %#x is not a reboot mode; left unchanged\n", cmd);
+	if (found_mode)
+		ret = regmap_write(pmu, cmd_off, (cmd & ~REBOOT_MODE_MASK) | REBOOT_MODE_NORMAL);
+	else if (mode != REBOOT_MODE_NORMAL)
+		pr_warn("reboot-cmd mode bits %u are not a reboot mode; left unchanged\n", mode);
 
 	want_magic = (magic & ~SEC_REBOOT_MASK) | (SEC_REBOOT_NORMAL << SEC_REBOOT_END_OFFSET);
 	if (!ret && magic != want_magic)
@@ -130,11 +145,29 @@ static int __init oss_rebootmode_clear_init(void)
 		pr_err("write failed (%d)\n", ret);
 		return ret;
 	}
-	regmap_read(pmu, cmd_off, &cmd);
-	regmap_read(pmu, magic_off, &magic);
-	regmap_read(pmu, panic_off, &panic);
-	pr_info("after:  reboot-cmd[%#x]=%#x magic-inform[%#x]=%#x panic-inform[%#x]=%#x\n",
-		cmd_off, cmd, magic_off, magic, panic_off, panic);
+
+	ret = regmap_read(pmu, cmd_off, &cmd) ?:
+	      regmap_read(pmu, magic_off, &magic) ?:
+	      regmap_read(pmu, panic_off, &panic);
+	if (ret) {
+		pr_err("read-back failed (%d)\n", ret);
+		return ret;
+	}
+	pr_info("after:  reboot-cmd[%#x]=%#x (mode %u) magic-inform[%#x]=%#x panic-inform[%#x]=%#x\n",
+		cmd_off, cmd, cmd & REBOOT_MODE_MASK, magic_off, magic, panic_off, panic);
+
+	if ((cmd & REBOOT_MODE_MASK) != REBOOT_MODE_NORMAL ||
+	    ((magic & SEC_REBOOT_MASK) >> SEC_REBOOT_END_OFFSET) != SEC_REBOOT_NORMAL ||
+	    panic != SEC_RESET_REASON_UNKNOWN) {
+		pr_err("FAIL: registers do not select a NORMAL boot\n");
+		return -EIO;
+	}
+	if (require_mode && !found_mode) {
+		pr_err("FAIL: require_mode: no reboot mode was set (mode bits %u), nothing cleared\n",
+		       mode);
+		return -ENOENT;
+	}
+	pr_info("OK: NORMAL boot selected%s\n", found_mode ? " (cleared a reboot mode)" : "");
 	return 0;
 }
 
