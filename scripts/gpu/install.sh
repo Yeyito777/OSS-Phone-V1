@@ -43,8 +43,30 @@ EOF
     exit 0
 fi
 
+# Only an image built from these sources (its SOURCE stamp, written by
+# build.sh) is installed: one left in images/ by another checkout is
+# rebuilt, and if no build is possible here the phone keeps its own.
 GPU_DIR="$PROJECT_ROOT/images/moon-gpu"
-[[ -x "$GPU_DIR/moon-compositor" ]] || "$PROJECT_ROOT/scripts/gpu/build.sh"
+source "$PROJECT_ROOT/scripts/gpu/source-hash.sh"
+SOURCE_HASH="$(moon_gpu_source_hash)"
+fresh() {
+    [[ -x "$GPU_DIR/moon-compositor" && "$(cat "$GPU_DIR/SOURCE" 2>/dev/null)" == "$SOURCE_HASH" ]]
+}
+if ! fresh; then
+    echo "images/moon-gpu is not built from these sources ($SOURCE_HASH); building"
+    "$PROJECT_ROOT/scripts/gpu/build.sh" || true
+fi
+NEW_BIN=1
+if ! fresh; then
+    if adb -s "$SERIAL" shell su -c "'test -x /data/local/a26-linux/opt/moon-gpu/moon-compositor'"; then
+        echo "WARNING: no moon-compositor built from these sources; the phone keeps its own" >&2
+        NEW_BIN=0
+    else
+        echo "No moon-compositor built from these sources and none on the phone; set NDK or" >&2
+        echo "MOON_GPU_BUILD_HOST (scripts/gpu/build.sh) and run this again." >&2
+        exit 1
+    fi
+fi
 
 # Alpine's xf86-video-dummy for the chroot's release, verified by apk
 # against the rootfs's Alpine signing keys when installed.
@@ -65,7 +87,9 @@ done
 
 T=/data/local/tmp/moon-gpu-install
 adb -s "$SERIAL" shell "rm -rf $T && mkdir -p $T"
-adb -s "$SERIAL" push "$GPU_DIR/moon-compositor" "$T/" >/dev/null
+if [[ "$NEW_BIN" == 1 ]]; then
+    adb -s "$SERIAL" push "$GPU_DIR/moon-compositor" "$GPU_DIR/SOURCE" "$T/" >/dev/null
+fi
 adb -s "$SERIAL" push "$CACHE/$DUMMY_APK" "$T/" >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/gpu/xorg/20-a26-gpu.conf" "$T/" >/dev/null
 for script in moon-gpu-session.sh moon-boot-supervisor.sh a26-xorg-takeover.sh \
@@ -91,7 +115,10 @@ ls \$ROOT/usr/lib/xorg/modules/drivers/dummy_drv.so
 install_file() { # src dst mode
     cp "\$1" "\$2.new" && chown 0:0 "\$2.new" && chmod "\$3" "\$2.new" && mv -f "\$2.new" "\$2"
 }
-install_file \$T/moon-compositor \$ROOT/opt/moon-gpu/moon-compositor 0755
+if [ -e \$T/moon-compositor ]; then
+    install_file \$T/moon-compositor \$ROOT/opt/moon-gpu/moon-compositor 0755
+    install_file \$T/SOURCE \$ROOT/opt/moon-gpu/moon-compositor.source 0644
+fi
 install_file \$T/20-a26-gpu.conf \$ROOT/etc/X11/xorg-gpu.conf.d/20-a26-gpu.conf 0644
 # Input is the same device setup as the panel session.
 install_file \$ROOT/etc/X11/xorg.conf.d/30-a26-input.conf \
@@ -111,6 +138,7 @@ rm -f /data/local/tmp/moon-gpu/failed-boot
 rm -rf \$T
 grep GPU_COMPOSITOR /data/adb/moon/config || echo "GPU_COMPOSITOR unset (GPU mode, the default)"
 sha256sum \$ROOT/opt/moon-gpu/moon-compositor
+echo "sources: \$(cat \$ROOT/opt/moon-gpu/moon-compositor.source 2>/dev/null || echo unknown)"
 EOF
 echo "Installed the GPU display path${MODE:+ ($MODE)}; it takes effect at the next boot."
 echo "Opt out with: scripts/gpu/install.sh --disable"

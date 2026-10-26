@@ -8,7 +8,11 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUTPUT="$PROJECT_ROOT/images/moon-gpu"
+source "$PROJECT_ROOT/scripts/gpu/source-hash.sh"
 mkdir -p "$OUTPUT"
+# Stamped only once this build succeeds (scripts/gpu/install.sh checks it).
+SOURCE_HASH="$(moon_gpu_source_hash)"
+rm -f "$OUTPUT/SOURCE"
 
 if [[ -z "${NDK:-}" ]]; then
     for candidate in "$HOME"/Library/Android/sdk/ndk/* /opt/homebrew/share/android-ndk \
@@ -30,4 +34,5 @@ else
     echo "or set MOON_GPU_BUILD_HOST to a host with one (and NDK=path there)." >&2
     exit 1
 fi
-echo "Built $OUTPUT/moon-compositor, moon-gpu-poc"
+echo "$SOURCE_HASH" >"$OUTPUT/SOURCE"
+echo "Built $OUTPUT/moon-compositor, moon-gpu-poc (sources $SOURCE_HASH)"
