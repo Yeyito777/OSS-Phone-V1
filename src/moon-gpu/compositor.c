@@ -56,6 +56,10 @@
 #define MAX_FDS 4
 /* A flip that has not completed after this long is presumed lost. */
 #define FLIP_TIMEOUT_NS 250000000ull
+/* The loop wakes at least this often when idle, to re-arm its watchdog,
+ * which ends the process when the loop has not turned for WATCHDOG_S. */
+#define IDLE_WAKE_MS 20000
+#define WATCHDOG_S 60
 
 static volatile sig_atomic_t quit, shot, toggle_profile;
 static void on_signal(int s) {
@@ -1148,6 +1152,7 @@ int main(int argc, char **argv) {
     c.floor_khz = floor_khz;
     c.profile = getenv("MOON_GPU_PROFILE") && *getenv("MOON_GPU_PROFILE") == '1';
     uint64_t t_start = now_ns();
+    alarm(WATCHDOG_S); /* startup, too, must not hang */
     if (kms_open(&c.k, card, hz))
         return 10;
     c.width = c.k.mode.hdisplay;
@@ -1229,25 +1234,17 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* A heartbeat next to the socket: moon-gpu-session.sh kills a compositor
-     * whose loop stops turning (a GPU or display hang). */
-    char heartbeat[256];
-    snprintf(heartbeat, sizeof heartbeat, "%s.alive", socket_path);
-    uint64_t last_report = now_ns(), last_beat = 0;
+    uint64_t last_report = now_ns();
     int lost_in_a_row = 0;
     while (!quit) {
-        if (now_ns() - last_beat > 2000000000ull) {
-            last_beat = now_ns();
-            int fd = open(heartbeat, O_WRONLY | O_CREAT | O_CLOEXEC, 0600);
-            if (fd >= 0) {
-                futimens(fd, NULL);
-                close(fd);
-            }
-        }
+        /* A watchdog that costs nothing while idle: if the loop stops
+         * turning (a GPU or display hang), SIGALRM ends the process and
+         * moon-gpu-session.sh restarts it. */
+        alarm(WATCHDOG_S);
         struct pollfd p[3] = {{.fd = c.k.fd, .events = POLLIN},
                               {.fd = c.listen_fd, .events = POLLIN},
                               {.fd = c.client_fd, .events = POLLIN}};
-        int timeout = c.flip_pending || c.floored ? 50 : 2000;
+        int timeout = c.flip_pending || c.floored ? 50 : IDLE_WAKE_MS;
         int n = poll(p, c.client_fd >= 0 ? 3 : 2, timeout);
         if (n < 0 && errno != EINTR) {
             LOG("poll: %s", strerror(errno));
@@ -1306,9 +1303,9 @@ int main(int argc, char **argv) {
                 (unsigned long long)c.path_counts[MG_PATH_CPU]);
         }
     }
+    alarm(0);
     set_floor(&c, 0);
     LOG("exiting");
-    unlink(heartbeat);
     unlink(socket_path);
     if (ready_file)
         unlink(ready_file);

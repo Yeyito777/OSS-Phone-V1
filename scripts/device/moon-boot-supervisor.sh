@@ -329,8 +329,9 @@ start_moon() {
     rm -f "$ROOT/run/a26-shell/control.sock"
     : >"$ROOT/root/a26-shell.log"
     # GPU mode (moon-gpu-session.sh): Moon draws through moon-compositor.
+    # Only a compositor started this boot counts (the flag lives on /data).
     gpu_env=''
-    [ ! -e /data/local/tmp/moon-gpu/active ] ||
+    [ "$(cat /data/local/tmp/moon-gpu/active 2>/dev/null)" != "$boot_id" ] ||
         gpu_env=MOON_GPU_SOCKET=/run/moon-gpu/compositor.sock
     "$BB" nohup "$BB" setsid /system/bin/sh "$ROOT/a26-enter-chroot.sh" \
         /usr/bin/env DISPLAY=:0 A26_SHELL_CONFIG=/etc/a26-shell/config.json $gpu_env \
@@ -494,9 +495,9 @@ local_recoveries=0
 suspend_cycle_seen=0
 gpu_fallback_waits=0
 while :; do
-    # Thirty seconds, cut short when the GPU path falls back.
-    for _ in $($BB seq 1 30); do
-        sleep 1
+    # Thirty seconds, cut short (in 5 s steps) when the GPU path falls back.
+    for _ in 1 2 3 4 5 6; do
+        sleep 5
         [ -e "$XORG_STATE/gpu-fallback" ] && break
     done
     # The GPU compositor gave up (moon-gpu-session.sh): the takeover restarts
@@ -504,7 +505,7 @@ while :; do
     if [ -e "$XORG_STATE/gpu-fallback" ]; then
         if [ -z "$(pidof Xorg 2>/dev/null || true)" ]; then
             gpu_fallback_waits=$((gpu_fallback_waits + 1))
-            [ "$gpu_fallback_waits" -lt 60 ] && continue
+            [ "$gpu_fallback_waits" -lt 12 ] && continue
             log 'Xorg did not return after the GPU fallback; restoring Android'
             /system/bin/sh /data/local/tmp/a26-android-graphics-restore.sh
             break

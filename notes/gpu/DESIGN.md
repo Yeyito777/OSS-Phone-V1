@@ -393,7 +393,24 @@ Battery (on battery via slate mode, 60 s each, same session, brightness
 | --- | --- | --- |
 | Home screen, idle | 220 mA, CPU 1 % | 218 mA, CPU 2 % |
 | Switcher scrolling continuously | 443 mA, CPU 15 % | 337 mA, CPU 10 % (GPU-drawn); **273 mA, CPU 7 %** (planes) |
-| Screen off | 37 mA, CPU 1 % | **46 mA, CPU 2 %** (under investigation) |
+| Screen off, 150 s | 40 mA, CPU 1 % | 36 mA, 36 mA (two runs), CPU 1 %; Mali runtime-suspended |
+
+The first screen-off measurement in GPU mode read 46 mA against 37 mA. The
+cause was the session keeper: a shell that checked the compositor every
+second forked about 16 processes a second (484 in 30 s of screen-off, 18
+CPU ticks), while Xorg, Moon and the compositor used no CPU and the Mali
+was runtime-suspended with its clock floor released. The keeper now runs
+the compositor as its child and simply waits for it; the compositor
+guards itself with `alarm()` (re-armed every loop, at least every 20 s
+when idle) instead of a heartbeat file; the supervisor's fallback watch
+wakes every 5 s. Screen-off then measured 36 mA twice in GPU mode against
+40 mA on the software path over 150 s windows, the same within noise.
+
+The same round found one more bug, by falling back to Android: a GPU boot
+left its `active` flag on /data, the next boot had GPU mode switched off,
+and the supervisor still gave Moon the compositor's socket. Moon waited for
+a compositor that never started, and the boot's safety net restored
+Android. The flag now names its boot and is cleared at every session start.
 
 Fallback, on the phone: killing the compositor twice restarted it within a
 second and Moon reconnected and re-sent its layers both times; the third
@@ -404,7 +421,7 @@ reboot. A reboot with `GPU_COMPOSITOR=0` returned the plain software path.
 ## Migration plan
 
 1. **On the phone, opt-in** (done, above): merged with `GPU_COMPOSITOR`
-   off by default. Open: the screen-off drain in GPU mode.
+   off by default; screen-off drain matches the software path.
 2. **Default on** once a week of daily use shows no regressions; the
    software session remains the fallback.
 3. **Fewer copies and more planes:** double-buffer the X mirror (no
