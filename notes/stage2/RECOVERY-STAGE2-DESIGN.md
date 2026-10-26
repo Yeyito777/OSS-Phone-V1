@@ -41,19 +41,46 @@ on-device iteration, which the canary makes safe.
    kernel running the stock recovery UI from the recovery slot** — proving the
    kernel swap and that a real (non-panic) recovery boot of our packaging
    returns to BOOT on normal exit. No containment yet.
-2. **Moon-from-recovery (next, needs device iteration):** Magisk-patch the stock
-   recovery ramdisk (add magiskinit as `/init`, `.backup/.magisk`
-   `RECOVERYMODE=true`, the `scripts/direct-boot/overlay.d` Moon overlay),
-   keep the OSS kernel. Entered with no keys → magiskinit → system boot → the
-   existing direct-boot overlay stops zygote and starts Moon. Milestone: **Moon
-   on screen, booted from the recovery partition.** Still no oss-init.
+2. **System-from-recovery (built): `recovery-slot-moon-A266MUBU1AYB8.img`** —
+   a cleaner approach than the RECOVERYMODE trick above. Instead of patching the
+   recovery ramdisk, pack the phone's **normal boot** into the recovery slot:
+   the bootloader assembles a normal boot from BOOT (v4 kernel + generic
+   ramdisk) + vendor_boot (vendor ramdisk fragments + dtb + cmdline/bootconfig),
+   so the recovery image (`build-recovery-slot.sh`) is a standalone v2 image
+   carrying exactly that — BOOT's kernel, the ramdisk
+   `vendor_ramdisk00 + vendor_ramdisk01 + BOOT-ramdisk` in v4 load order, the
+   stock recovery dtb (verified == vendor_boot dtb) and recovery_dtbo, and the
+   stock recovery cmdline (which already carries `bootconfig
+   buildtime_bootconfig=enable loop.max_part=7`). The merged ramdisk has **no**
+   `/system/bin/recovery` or `/sbin/recovery`, so AOSP init's `IsRecoveryMode()`
+   (`util.cpp:672`, a pure `access()` check) and magiskinit both take the normal
+   2SI path — **no RECOVERYMODE needed**. Deterministic, sha256
+   `fc97466761d1ba0173181d023f1c568186d8f98e6340e88d27c59213dddb03a6`
+   (`images/oss-stage2/recovery-slot/`, whale `~/oss-kernel/.recslot/outA/`).
+   Validated under qemu + namespaces: the real magiskinit, run on the merged
+   tree, restored `.backup/init.xz` → `/init` and exec'd the real stock init,
+   exactly as in a normal boot. Verified at build: every component byte-matches
+   its source; header v2.
+   - **Boot-reason caveat:** entered via `reboot-recovery` the boot reason is
+     `recovery`, and `moon-direct-policy.sh:48` sends a `*recovery*` boot to
+     **Android**, not Moon. So this image boots the **full stock system** from
+     the recovery slot (the milestone: the whole vendor stack + Android come up
+     from recovery, BOOT untouched), not Moon specifically. Showing Moon from
+     recovery needs a one-line policy exception for a trusted recovery marker,
+     or a different entry reason — a cosmetic follow-up; the hard part (the whole
+     system boots from the standalone recovery image) is what this proves.
 3. **Containment (the actual stage-2 goal):** add oss-init as the real `/init`
    per DESIGN.md §5.6 — oss-init PID 1, which clones a PID+mount namespace,
    gives the container a **private rootfs** with the normal Magisk layout, and
    runs magiskinit→stock-init→Moon inside it; fallback execs the stock init.
    The Step-1 harness (STEP1-HARNESS-RESULT.md) already proved magiskinit runs
-   correctly as a namespaced PID 1 in a private rootfs on this hardware; stage 3
-   wires that into the recovery boot.
+   correctly as a namespaced PID 1 in a private rootfs on this hardware.
+   **Packaging is now trivial given stage 2:** `build-recovery-slot.sh` takes
+   the source BOOT image as its 2nd argument, so once a BOOT image with oss-init
+   as `/init` exists (the §5.6 build, not yet implemented), running
+   `build-recovery-slot.sh OUT <that-boot.img>` drops it straight into the
+   recovery slot. The remaining work is the oss-init private-rootfs
+   implementation itself, not the recovery packaging.
 
 ## Why this is safe to iterate (unlike the BOOT attempts)
 Every stage is flashed only to **recovery**, entered via the BCB-free one-shot,
@@ -63,18 +90,23 @@ the no-A/B brick risk that stopped the BOOT-partition attempts. BOOT stays
 `8c0461ee` throughout; stock recovery is restored with
 `flash-recovery-inplace.sh --restore-stock` between iterations.
 
-## Open points for stages 2–3 (to resolve on-device)
-- Does `legacy_system_as_root()` + the recovery ramdisk's fstab mount `/system`
-  and bring up the vendor stack fully enough for Moon? (Recovery mounts system
-  for OTA, so the pieces exist, but a full UI boot from recovery is unproven
-  here.)
-- SELinux: the recovery ramdisk ships its own sepolicy; a full system boot from
-  it may need the system sepolicy path Magisk normally handles.
+## Open points (to resolve on-device, after the canary)
+- Does the bootloader load the standalone v2 recovery-slot image and boot the
+  full system from it as expected? (qemu validates the ramdisk logic, not the
+  bootloader's handling of a system-shaped payload in the recovery slot.)
+- SELinux / first-stage mount of `/system` from the merged ramdisk on the real
+  device — the vendor fragments carry the fstab and modules, so this should
+  match a normal boot, but it is unproven from the recovery slot.
 - oss-init's private-rootfs construction in PID 1 (copy vs overlayfs) — the
-  remaining implementation risk flagged in DESIGN.md §5.6.
-- `check_key_combo()` waits for input: confirm the no-key timeout path is taken
-  under the BCB-free entry (no user at the keys) and that it is short.
+  remaining implementation risk flagged in DESIGN.md §5.6 (stage 3).
+- The boot-reason → Android policy (above): decide whether to add a trusted
+  recovery-marker exception so Moon (not plain Android) comes up from recovery.
 
 ## Status
-Foundation built and verified. Stages 2–3 are specified here and gated on the
-canary proving the recovery slot returns to BOOT on failure. Nothing flashed.
+Stage 1 (OSS-kernel recovery calibration, `aab7a301`) and **Stage 2
+(system-from-recovery, `fc974667`)** are built, deterministic, and qemu-validated
+— both unflashed, both whitelisted in `flash-recovery-inplace.sh`, ready to test
+from the recovery slot the moment the canary proves it returns to BOOT on
+failure. Stage 3 (oss-init containment) is blocked only on the §5.6 private-rootfs
+oss-init build; its recovery packaging is already a one-command wrap of that
+BOOT image. Nothing flashed.
