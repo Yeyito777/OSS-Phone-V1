@@ -28,10 +28,14 @@ set -euo pipefail
 
 declare -A KNOWN=(
   [9ab6cefe06b18ddd7d2410f8ce06233fb0c14a39687fe085b4e74ad18a91a7e8]='stock recovery (rescue baseline)'
-  [25540aa188cf00ea007a1a4c52746bd07be7e75e5bcfd0b18a411bf2f89a96ef]='panic canary recovery (2026-10-26)'
-  [aab7a30153acb342edc397d3c471098f4cb0f5ceb55f196775a32950df3ac410]='OSS-kernel recovery calibration (stock recovery UI, OSS kernel)'
-  [5a445db7cc325e8b233f7a9f5a5323f0d464f3472bb26db420801560706531ee]='recovery-slot normal boot (BOOT+vendor_boot merged + recovery-slot marker; Moon from recovery)'
-  [b67b68d37a6779ef03995122934eced38634d06ef4d8666df720138f88481711]='recovery-slot stage-2 v4 (oss-init PID 1, Android in a PID+mount namespace)'
+  # Every test image below loads oss-rebootmode-clear.ko as /init's first action,
+  # so a failed boot returns to BOOT instead of looping in recovery
+  # (notes/stage2/RECOVERY-PERSISTENCE-ROOTCAUSE.md). Images without that clear
+  # (the first canary 25540aa1, the OSS-kernel calibration aab7a301, slot images
+  # 5a445db7 / b67b68d3) were removed on purpose.
+  [0e4e70b2fcb156662decec93957a4d0c736d105d6fef1be5624fadbff0c06bbe]='panic canary v2 (clear first; no clear -> stock recovery, no panic)'
+  [583ad993f1d5d647ada2be9d6f0344c9a2ba75e833f7bfb3df02aecec3e25e9c]='recovery-slot plain boot (oss-pid1 clear -> magiskinit -> Moon)'
+  [84768b63f34ade8215da653c8251691552b61e9fb916354ac95b546e9f4108c0]='recovery-slot stage-2 v4 (clear -> oss-init containment)'
 )
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"

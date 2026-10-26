@@ -29,7 +29,9 @@ merged ramdisk, the real magiskinit and stock init):
 | --- | --- |
 | `oss-init.c` | the real PID 1 / supervisor |
 | `overlay.d/oss-contain.rc` | liveness line on `/dev/kmsg` (no mount) |
-| `build-stage2-v4.sh` | today's BOOT + oss-init → recovery-slot image |
+| `build-slot-image.sh` | today's BOOT + oss-init (`containment`) or oss-pid1 (`plain`) → recovery-slot image |
+| `rebootmode-clear.h` | the shared first action: load `oss-rebootmode-clear.ko` |
+| `oss-pid1.c` | plain-slot `/init`: clear, put magiskinit back at `/init`, exec it |
 | `canary/build-recovery-slot.sh` | any BOOT + vendor_boot → a v2 recovery-slot image (+ marker) |
 | `canary/build-canary-recovery.sh`, `canary/*.c` | the panic canary and `reboot-recovery` |
 | `test/run-tests.sh`, `test/stub-*.c` | the off-device test bench |
@@ -37,16 +39,22 @@ merged ramdisk, the real magiskinit and stock init):
 ```sh
 # research host (whale): aarch64 gcc, magiskboot, mkbootimg/unpack_bootimg,
 # avbtool, xz, lz4, the project AVB key, the OSS-kernel BOOT and vendor_boot.
-scripts/native-init/build-stage2-v4.sh OUT_DIR       # recovery-slot-stage2-v4-…img
-scripts/native-init/canary/build-recovery-slot.sh OUT_DIR   # recovery-slot-moon-…img
-scripts/native-init/test/run-tests.sh all            # live, layout-crash, hang, late-reboot, contained-reboot
+scripts/native-init/build-slot-image.sh OUT_DIR containment   # recovery-slot-stage2-v4-…img
+scripts/native-init/build-slot-image.sh OUT_DIR plain         # recovery-slot-moon-…img
+scripts/native-init/canary/build-canary-recovery.sh OUT_DIR   # canary v2 + reboot-recovery
+# (canary/build-recovery-slot.sh OUT_DIR PAYLOAD NAME is called by build-slot-image.sh)
+scripts/native-init/test/run-tests.sh all            # containment matrix + no-clear and handoff cases
 ```
 Outputs are deterministic and whitelisted by sha256 in
 `scripts/direct-boot/flash-recovery-inplace.sh`; built images are git-ignored
 (`/images/oss-stage2/`).
 
-## `oss-pid1` — pre-init stepping stone
+## The clear comes first
 
-`oss-pid1.c` + `build-boot-image.sh`: an `/init` that owns PID 1 and then execs
-the stack (no containment). Kept as a bisection point; like everything changing
-`/init`, it is only to be tried from the recovery slot.
+Every recovery-slot `/init` (oss-init, oss-pid1, the canary) first loads the
+kernel agent's `oss-rebootmode-clear.ko`, which sets the PMU reboot registers to
+a NORMAL boot; otherwise a failed slot boot would loop in recovery
+(`notes/stage2/RECOVERY-PERSISTENCE-ROOTCAUSE.md`). If the load fails, none of
+them panics or reboots on purpose: oss-init and oss-pid1 exec the stock init,
+the canary execs the stock recovery init. `build-recovery-slot.sh` refuses a
+payload whose `/init` is not one of these pre-inits.

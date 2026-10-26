@@ -28,6 +28,13 @@
 # unaffected. The marker is added with magiskboot, the tool and lz4 format
 # Magisk itself uses for this ramdisk.
 #
+# Every image also carries /oss-rebootmode-clear.ko (sha256-pinned), and the
+# script REFUSES a payload whose /init is not one of our recovery-slot pre-inits
+# (oss-init or oss-pid1, recognised by the /init.magisk + /init.stock layout and
+# /init differing from magiskinit). Those load the module as their first action;
+# a slot image without that clear would loop in recovery after any failure
+# (notes/stage2/RECOVERY-PERSISTENCE-ROOTCAUSE.md).
+#
 # Deterministic: inputs are copied verbatim, AVB uses a fixed salt.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,6 +46,8 @@ VENDOR_BOOT="${A26_VENDOR_BOOT:-$HOME/oss-kernel/.recslot/in/vendor_boot.img}"
 STOCK_RECOVERY="$R/images/stock-A266MUBU1AYB8/recovery.img"
 KEY="$R/keys/recovery-avb-rsa4096.pem"
 MAGISKBOOT="${MAGISKBOOT:-$R/tools/magiskboot-x86_64}"
+KO="${A26_REBOOTMODE_CLEAR_KO:-$HOME/oss-kernel/out/modules/oss-rebootmode-clear/oss-rebootmode-clear.ko}"
+KO_SHA=a18606a8bd699b2f56426188642b13a8e35c452260f6c8c1ecac57491cba4054
 SALT=9413599eee2c3c4ad1a16b47eb3dc5036d93c908c656b18881680b979e1e547c
 PARTITION_SIZE=$((24576 * 4096))   # RECOVERY, PIT entry #22
 VENDOR_BOOT_SHA=74723185dc3ae25be122418e8d401b91cfd27eac688395e97067f77a849692d2
@@ -49,15 +58,30 @@ for t in unpack_bootimg mkbootimg avbtool sha256sum; do
 printf '%s  %s\n' "$VENDOR_BOOT_SHA" "$VENDOR_BOOT" | sha256sum -c - >/dev/null
 printf '%s  %s\n' "$STOCK_RECOVERY_SHA" "$STOCK_RECOVERY" | sha256sum -c - >/dev/null
 [[ -f "$BOOT" ]] || { echo "missing BOOT image: $BOOT" >&2; exit 1; }
+printf '%s  %s\n' "$KO_SHA" "$KO" | sha256sum -c - >/dev/null
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$OUT"
 # Add the recovery-slot marker to (a copy of) the BOOT ramdisk.
 mkdir -p "$WORK/mb"; cp "$BOOT" "$WORK/mb/b.img"
 printf 'OSS-Phone recovery-slot test image\n' >"$WORK/mb/marker"
-( cd "$WORK/mb" && "$MAGISKBOOT" unpack b.img >/dev/null 2>&1 &&
-  "$MAGISKBOOT" cpio ramdisk.cpio "add 0644 overlay.d/sbin/oss-recovery-slot marker" >/dev/null 2>&1 &&
+( cd "$WORK/mb" && "$MAGISKBOOT" unpack b.img >/dev/null 2>&1 )
+# Interlock: only payloads whose /init is a clear-first pre-init.
+( cd "$WORK/mb"
+  for f in init.magisk init.stock; do
+    "$MAGISKBOOT" cpio ramdisk.cpio "exists $f" >/dev/null 2>&1 ||
+      { echo "refusing: payload has no /$f, so its /init is not an oss pre-init" >&2; exit 1; }
+  done
+  "$MAGISKBOOT" cpio ramdisk.cpio "extract init $WORK/p-init" "extract init.magisk $WORK/p-magisk" >/dev/null 2>&1
+  ! cmp -s "$WORK/p-init" "$WORK/p-magisk" || { echo "refusing: /init is magiskinit (no rebootmode clear)" >&2; exit 1; }
+  grep -q oss-rebootmode-clear.ko "$WORK/p-init" ||
+    { echo "refusing: /init does not reference oss-rebootmode-clear.ko" >&2; exit 1; } )
+( cd "$WORK/mb" &&
+  "$MAGISKBOOT" cpio ramdisk.cpio "add 0644 overlay.d/sbin/oss-recovery-slot marker" \
+                                  "add 0644 oss-rebootmode-clear.ko $KO" >/dev/null 2>&1 &&
   "$MAGISKBOOT" repack b.img slot.img >/dev/null 2>&1 )
+"$MAGISKBOOT" cpio "$WORK/mb/ramdisk.cpio" "extract oss-rebootmode-clear.ko $WORK/chk-ko" >/dev/null 2>&1
+cmp "$WORK/chk-ko" "$KO" || { echo "module not added byte-exact" >&2; exit 1; }
 "$MAGISKBOOT" cpio "$WORK/mb/ramdisk.cpio" "exists overlay.d/sbin/oss-recovery-slot" >/dev/null 2>&1 ||
   { echo "marker not added" >&2; exit 1; }
 unpack_bootimg --boot_img "$WORK/mb/slot.img" --out "$WORK/boot" >/dev/null

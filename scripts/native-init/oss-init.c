@@ -1,6 +1,8 @@
 /* OSS-Phone-V1 stage-2 init ("oss-init") -- containment, v4 (private rootfs).
  *
- * RECOVERY-SLOT ONLY. Packed with build-stage2-v4.sh + build-recovery-slot.sh
+ * RECOVERY-SLOT ONLY. Packed with build-slot-image.sh containment (which uses
+ * canary/build-recovery-slot.sh). Its first action loads oss-rebootmode-clear.ko
+ * (rebootmode-clear.h); if that fails it does not contain and execs stock init.
  * and tried once from the RECOVERY partition (CANARY-RUNBOOK.md). Never on BOOT:
  * flash-boot-inplace.sh refuses any image whose ramdisk /init differs.
  *
@@ -57,6 +59,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <linux/reboot.h>
+
+#include "rebootmode-clear.h"
 
 extern char **environ;
 
@@ -118,7 +122,7 @@ static void real_reboot(int poweroff) {
 /* Exec the stock init as the real PID 1 (an ordinary stock boot). Only the
  * stock init, never magiskinit. Held fd first (immune to any rootfs change),
  * then the path; if neither can be exec'd, reboot. */
-static void exec_stock_init(int fd_stock, char **argv) {
+static void exec_stock_init(int fd_stock, char **argv, int allow_reboot) {
     /* The fd is O_CLOEXEC so the container never inherits it. Clear that now:
      * execveat(AT_EMPTY_PATH) on a close-on-exec fd fails with ENOENT whenever
      * the binary is handed to an interpreter as /dev/fd/N (seen on the binfmt
@@ -130,8 +134,14 @@ static void exec_stock_init(int fd_stock, char **argv) {
         (void)execve(STOCK_INIT, argv, environ);
         sleep_ms(200);
     }
-    kmsg("<3>oss-init: cannot exec the stock init; rebooting\n");
-    real_reboot(0);
+    if (allow_reboot) {
+        kmsg("<3>oss-init: cannot exec the stock init; rebooting\n");
+        real_reboot(0);
+    }
+    /* The PMU may still select recovery: a reboot could loop. Stay put; the
+     * Download-mode escape (CANARY-RUNBOOK.md) recovers the phone. */
+    kmsg("<3>oss-init: cannot exec the stock init and must not reboot; halting\n");
+    for (;;) pause();
 }
 
 /* ---- kernel-log watcher --------------------------------------------------- */
@@ -168,7 +178,7 @@ static void fall_back(const char *why, struct watch *w, int fd_stock, char **arg
         real_reboot(0);
     }
     kmsg("<4>oss-init: container failed early; exec stock init (uncontained stock boot)\n");
-    exec_stock_init(fd_stock, argv);
+    exec_stock_init(fd_stock, argv, 1);
 }
 
 /* ---- the container's private rootfs --------------------------------------- */
@@ -281,18 +291,28 @@ static void container_main(char **argv) {
 
 int main(int argc, char **argv) {
     (void)argc;
+    /* FIRST, before anything that can fail: select a NORMAL boot in the PMU,
+     * so any later panic, hang or reset returns to BOOT, not to this slot. */
+    int clear_err = load_rebootmode_clear();
     /* /dev/kmsg may not exist yet on the bare rootfs; creating the node is a
      * file, not a mount. Stock first-stage mounts its own tmpfs over /dev. */
     (void)mknod("/dev/kmsg", S_IFCHR | 0600, makedev(1, 11));
     kmsg("<6>oss-init: OSS-Phone init is the real PID 1 (v4, private-rootfs containment)\n");
 
     int fd_stock = open(STOCK_INIT, O_RDONLY | O_CLOEXEC);
+    if (clear_err) {
+        char line[160];
+        kmsg(errno_line(line, sizeof(line),
+             "<3>oss-init: oss-rebootmode-clear did not load; not containing, exec stock init without a reboot fallback; errno=", clear_err));
+        exec_stock_init(fd_stock, argv, 0);
+    }
+    kmsg("<6>oss-init: PMU reboot state set to NORMAL (oss-rebootmode-clear loaded)\n");
     struct watch w = {.fd = open(KMSG_READ, O_RDONLY | O_NONBLOCK | O_CLOEXEC)};
 
     if (fd_stock < 0) {
         /* Without the fallback in hand, don't attempt containment at all. */
         kmsg("<3>oss-init: no stock init fd; not containing\n");
-        exec_stock_init(fd_stock, argv);
+        exec_stock_init(fd_stock, argv, 1);
     }
 
     long pid = syscall(SYS_clone, (long)(CLONE_NEWPID | CLONE_NEWNS | SIGCHLD), 0L, 0L, 0L, 0L);

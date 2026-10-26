@@ -102,16 +102,14 @@ the no-A/B brick risk that stopped the BOOT-partition attempts. BOOT stays
 - The boot-reason → Android policy (above): decide whether to add a trusted
   recovery-marker exception so Moon (not plain Android) comes up from recovery.
 
-## Status
-All three stages are built, deterministic and whitelisted in
-`flash-recovery-inplace.sh`, unflashed:
-1. OSS-kernel recovery calibration `aab7a301` (stock recovery UI, OSS kernel).
-2. System-from-recovery `5a445db7` (normal boot in the recovery slot + the
-   `oss-recovery-slot` marker, so `moon-direct-policy.sh` lets a recovery-reason
-   boot continue to Moon; supersedes `fc974667`).
-3. Stage-2 v4 containment `b67b68d3` (oss-init PID 1, private-rootfs container;
-   validation in V4-CONTAINMENT-VALIDATION.md).
-Test order after the canary passes: 2, then 3. Each from the recovery slot via
-`reboot-recovery`, with `--check-bcb` before and after and `--restore-stock`
-at the end. The policy exception needs the updated `moon-direct-policy.sh`
-installed on /data (a normal Moon script update) before stage 2 is tried.
+## Status (2026-10-26, clear-first rebuild)
+Built, deterministic, whitelisted, unflashed; every image loads
+`oss-rebootmode-clear.ko` first (RECOVERY-PERSISTENCE-ROOTCAUSE.md):
+1. Canary v2 `0e4e70b2` (CANARY-RUNBOOK.md Stage 1).
+2. System-from-recovery `583ad993` (`build-slot-image.sh plain`: oss-pid1 →
+   magiskinit → Moon, with the `oss-recovery-slot` marker for the policy).
+3. Stage-2 v4 containment `84768b63` (`build-slot-image.sh containment`).
+The earlier OSS-kernel calibration (`aab7a301`) and slot images without the
+clear (`fc974667`, `5a445db7`, `b67b68d3`) are retired and off the whitelist.
+Order: module on-device test (kernel agent) → canary → 2 → 3. Stage 2 needs the
+updated `moon-direct-policy.sh` on /data first.

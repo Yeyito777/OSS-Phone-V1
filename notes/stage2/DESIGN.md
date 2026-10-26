@@ -249,7 +249,7 @@ before exec; a bug there is itself a PID-1 crash. It must be built and proven in
 the userspace harness first.
 
 ### 5.7 `oss-pid1` — the safe stepping stone (kept)
-`scripts/native-init/oss-pid1.c` + `build-boot-image.sh` remain: a pre-init that
+`scripts/native-init/oss-pid1.c` remains, now as the plain recovery-slot `/init` (clear, then magiskinit as `/init`; see V4-CONTAINMENT-VALIDATION.md). Originally it was a pre-init that
 owns PID 1 then *execs* the stack (no containment), with a built image on the
 **stock** kernel. It is the lowest-risk artifact and a useful bisection point
 ("does our-init-as-PID-1 boot at all, without namespaces?") if stage-2
@@ -306,7 +306,7 @@ Test attended, OSS kernel (passthrough) first, then stage 2 (§ TEST-PLAN.md).
 - `scripts/native-init/oss-init.c` — the containing PID-1 supervisor (v3).
 - `scripts/native-init/overlay.d/oss-contain.rc` — one kernel-log liveness marker.
 - `scripts/native-init/build-stage2-image.sh` — reproducible builder (OSS base).
-- `scripts/native-init/oss-pid1.c`, `build-boot-image.sh` — the stepping stone.
+- `scripts/native-init/oss-pid1.c` — the plain recovery-slot `/init` (built by `build-slot-image.sh plain`).
 - `notes/stage2/V2-BOOTLOOP-ROOTCAUSE.md` — the v2 failure write-up.
 - Built, **unflashed** image (git-ignored):
   `images/oss-stage2/boot-oss-stage2-A266MUBU1AYB8.img`
