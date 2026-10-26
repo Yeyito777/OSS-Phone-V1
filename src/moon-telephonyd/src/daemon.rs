@@ -1015,7 +1015,7 @@ impl Daemon {
             if missed {
                 let who = display_number(&call);
                 self.notifier.post(json!({
-                    "app": "phone", "tag": format!("missed-{}", store::normalize_peer(&who)),
+                    "app": "phone", "tag": peer_tag("missed", &store::normalize_peer(&who)),
                     "title": "Missed call", "body": who, "urgency": "normal",
                     "open": {"app": "phone", "target": format!("call:{}", store::normalize_peer(&call.number))},
                 }));
@@ -1182,7 +1182,7 @@ impl Daemon {
             .count();
         let body: String = message.text.chars().take(200).collect();
         self.notifier.post(json!({
-            "app": "messages", "tag": format!("sms-{}", tag_safe(&peer)), "title": peer,
+            "app": "messages", "tag": peer_tag("sms", &peer), "title": peer,
             "body": if unread > 1 { format!("{body}\n({unread} new messages)") } else { body },
             "urgency": "normal", "open": {"app": "messages", "target": format!("thread:{peer}")},
         }));
@@ -1809,8 +1809,7 @@ impl Daemon {
                     };
                     self.broadcast(json!({"event": event, "ids": changed}));
                     if let Some(p) = &peer {
-                        self.notifier
-                            .withdraw("messages", &format!("sms-{}", tag_safe(p)));
+                        self.notifier.withdraw("messages", &peer_tag("sms", p));
                     }
                 }
                 Some(Ok(json!({"count": changed.len()})))
@@ -2209,17 +2208,22 @@ fn call_json(t: &TrackedCall) -> Value {
     })
 }
 
-/// Notification tags allow `[A-Za-z0-9._-]`.
-fn tag_safe(peer: &str) -> String {
-    peer.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .take(60)
+/// The moon-notifyd tag for a per-peer notification (docs/telephony-protocol.md
+/// §5): `PREFIX-` + the peer with every character outside `[A-Za-z0-9._-]`
+/// replaced by `_`, cut to moon-notifyd's 64 characters. Deterministic, so
+/// a withdraw finds the post.
+fn peer_tag(prefix: &str, peer: &str) -> String {
+    let mapped = peer.chars().map(|c| {
+        if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+            c
+        } else {
+            '_'
+        }
+    });
+    format!("{prefix}-")
+        .chars()
+        .chain(mapped)
+        .take(64)
         .collect()
 }
 
@@ -2342,4 +2346,26 @@ fn group_id(path: &Path, name: &str) -> Option<u32> {
             .then(|| fields.nth(1)?.parse().ok())
             .flatten()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::peer_tag;
+
+    #[test]
+    fn peer_tags_fit_moon_notifyd() {
+        assert_eq!(peer_tag("sms", "+16475551234"), "sms-_16475551234");
+        assert_eq!(
+            peer_tag("missed", "Private number"),
+            "missed-Private_number"
+        );
+        assert_eq!(peer_tag("sms", "Freedom"), "sms-Freedom");
+        let long = peer_tag("sms", &"x".repeat(100));
+        assert_eq!(long.len(), 64);
+        let valid = |t: &str| {
+            t.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        };
+        assert!(valid(&peer_tag("sms", "+1 (647) é#*")));
+    }
 }

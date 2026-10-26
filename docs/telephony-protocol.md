@@ -10,6 +10,10 @@ Revision 1.2 (2026-10-26): `call.hangup` names its call `call` (it was `id`,
 which is the request id and never reached the command); requests with
 duplicate JSON keys are rejected (`invalid_request`).
 
+Revision 1.2.1 (2026-10-26): per-peer notification tags map the peer into
+moon-notifyd's tag alphabet (§5); `+` made every international-number post
+fail.
+
 `moon-telephonyd` is OSS-Phone-V1's telephony service: SIM, network and
 signal status, SMS, voice calls and mobile data. It talks to the modem through
 Samsung's vendor radio HAL (rild's `android.hardware.radio@1.x::IRadio` over
@@ -204,9 +208,14 @@ The daemon posts to `moon-notifyd` (Moon does not need to):
 
 | When | `notify.post` |
 | --- | --- |
-| SMS received | `app: "messages"`, `tag: "sms-<peer>"` (one per thread, replaced), `title`: peer, `body`: text, `urgency: normal`, `open: {"app":"messages","target":"thread:<peer>"}` |
+| SMS received | `app: "messages"`, `tag: "sms-<peer tag>"` (one per thread, replaced), `title`: peer, `body`: text, `urgency: normal`, `open: {"app":"messages","target":"thread:<peer>"}` |
 | Incoming call | `app: "phone"`, `tag: "call-<n>"`, `title: "Incoming call"`, `urgency: high` (wakes the screen), `ringing: true` when moon-notifyd's `ping` reports revision ≥ 3; withdrawn (which stops the ringing) when answered, declined or ended |
-| Missed call | `app: "phone"`, `tag: "missed-<peer>"`, `title: "Missed call"`, `urgency: normal`, `open: {"app":"phone","target":"call:<peer>"}` |
+| Missed call | `app: "phone"`, `tag: "missed-<peer tag>"`, `title: "Missed call"`, `urgency: normal`, `open: {"app":"phone","target":"call:<peer>"}` |
+
+`<peer tag>` is the peer with every character outside moon-notifyd's tag
+alphabet `[A-Za-z0-9._-]` replaced by `_`, and the whole tag cut to 64
+characters: `+16475551234` → `sms-_16475551234`. Tapping one hands the app
+`open.target`, which keeps the peer unchanged (`thread:+16475551234`).
 
 App ids `phone` and `messages` are reserved for Moon's Phone and Messages
 apps. With an older moon-notifyd (revision < 3) an incoming call chimes once
