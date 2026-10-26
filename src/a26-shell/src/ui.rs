@@ -12,6 +12,7 @@ use std::time::Instant;
 
 use x11rb::connection::Connection;
 
+use crate::backdrop::{DIM_STEP, DimLevels, StripeFade};
 use crate::clock::LocalTime;
 use crate::compositor::{Compositor, Frame, Node, SurfaceId};
 use crate::gfx::{self, Canvas, Image, Path, RectF, Rgb};
@@ -315,11 +316,22 @@ pub struct Renderer {
     pub compositor: Compositor,
     wallpaper: Canvas,
     wall: SurfaceId,
-    /// The wallpaper darkened toward the keypad's dim, in DIM_LEVELS steps.
-    wall_dims: Vec<SurfaceId>,
+    /// The wallpaper darkened toward the keypad's dim, a level per DIM_STEP.
+    wall_levels: DimLevels,
+    /// The home screen darkened toward the switcher's dim.
+    home_levels: DimLevels,
+    lock_fade: StripeFade,
+    home_fade: StripeFade,
+    /// The targets (in levels) of the last frame, for `settling`.
+    lock_target: f32,
+    home_target: f32,
+    /// The lock/home split of the previous frame, to start a screen's
+    /// background at its level rather than fading into it.
+    last_locked: Option<bool>,
+    /// Power and wake fades ramp the panel backlight (no frames are drawn);
+    /// without a backlight they fade a black overlay instead.
+    pub backlight_fades: bool,
     /// The home screen under the app switcher's dim.
-    /// The home screen darkened halfway and fully to the switcher's dim.
-    home_dims: Vec<SurfaceId>,
     home: Layer<HomeKey>,
     clock: Layer<ClockKey>,
     lock_status: Layer<StatusInfo>,
@@ -337,7 +349,30 @@ pub struct Renderer {
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
 /// How much the passcode keypad darkens the wallpaper.
 const DIMMED: f32 = 0.42;
-const DIM_LEVELS: usize = 2;
+/// Unlock progress, 1 at unlock falling to 0 as the keypad fades away.
+fn unlock_progress(state: &ShellState, t: Instant) -> f32 {
+    state.unlock_at.map_or(0.0, |at| {
+        1.0 - gfx::ease_out(
+            t.saturating_duration_since(at).as_secs_f32() / UNLOCK_ANIMATION.as_secs_f32(),
+        )
+    })
+}
+
+/// How dark the home screen behind everything should be right now.
+fn home_dim(state: &ShellState, t: Instant) -> f32 {
+    if let Some(switcher) = &state.switcher {
+        return SWITCHER_DIM * (1.0 - switcher.exit_progress(t));
+    }
+    if let Some(gesture) = &state.gesture {
+        return gesture.backdrop_dim(t);
+    }
+    DIMMED * unlock_progress(state, t)
+}
+
+/// Wallpaper levels for the keypad's dim (7 x 0.06 = 0.42).
+const LOCK_DIM_LEVELS: u32 = 7;
+/// Home-screen levels for the switcher's dim (9 x 0.06 = 0.54).
+const HOME_DIM_LEVELS: u32 = 9;
 const SPINNER_SIZE: i32 = 96;
 const LABEL_W: i32 = 640;
 const LABEL_H: i32 = 96;
@@ -355,11 +390,8 @@ impl Renderer {
         let wallpaper = wallpaper(w, h);
         let wall = compositor.create_layer(conn, width, height, false)?;
         compositor.upload(conn, wall, &wallpaper)?;
-        let mut wall_dims = Vec::with_capacity(DIM_LEVELS);
-        for level in 1..=DIM_LEVELS {
-            let dim = DIMMED * level as f32 / DIM_LEVELS as f32;
-            wall_dims.push(compositor.create_dimmed(conn, wall, dim)?);
-        }
+        let mut wall_levels = DimLevels::new(wall, LOCK_DIM_LEVELS as usize);
+        wall_levels.ensure(conn, &mut compositor)?;
         let icons = [AppIcon::new(AppId::System), AppIcon::new(AppId::Browser)];
         let mut icon_layers = [wall; 2];
         let mut labels = [wall; 2];
@@ -393,7 +425,7 @@ impl Renderer {
             compositor.upload(conn, label, &canvas)?;
             labels[app.index()] = label;
         }
-        Ok(Self {
+        let mut renderer = Self {
             twenty_four_hour,
             pin_length,
             home: Layer::new(conn, &mut compositor, w, h, false)?,
@@ -418,14 +450,22 @@ impl Renderer {
             compositor,
             wallpaper,
             wall,
-            wall_dims,
-            home_dims: Vec::new(),
+            wall_levels,
+            home_levels: DimLevels::new(wall, HOME_DIM_LEVELS as usize),
+            lock_fade: StripeFade::default(),
+            home_fade: StripeFade::default(),
+            lock_target: 0.0,
+            home_target: 0.0,
+            last_locked: None,
+            backlight_fades: false,
             icons,
             icon_layers,
             labels,
             snapshots: [None, None],
             fade_snapshot: None,
-        })
+        };
+        renderer.home_levels = DimLevels::new(renderer.home.id, HOME_DIM_LEVELS as usize);
+        Ok(renderer)
     }
 
     fn status(&self, state: &ShellState) -> StatusInfo {
@@ -492,6 +532,10 @@ impl Renderer {
                 }
             }
         }
+        if self.home_levels.stale() && home_dim(state, display_time) > 0.0 {
+            // Normally prepared while idle (`prepare_idle`).
+            self.home_levels.ensure(conn, &mut self.compositor)?;
+        }
         let frame = self.frame(state, display_time);
         self.compositor.compose(conn, frame)
     }
@@ -508,8 +552,9 @@ impl Renderer {
         if !state.screen_awake {
             return Ok(());
         }
-        let shows_home = state.view != View::Locked || state.unlock_at.is_some();
-        if shows_home {
+        // The home screen stays current while locked too, so unlocking never
+        // waits for it (or for its darkened copies) to be drawn.
+        {
             let key = HomeKey {
                 status: status.clone(),
                 date: (time.weekday, time.day, time.month),
@@ -528,20 +573,8 @@ impl Renderer {
                 }
                 draw_status_bar(canvas, &status, None);
             })?;
-            if redrawn || self.home_dims.is_empty() {
-                // The switcher's backdrop: the home screen darkened once,
-                // server-side, instead of blending a dim every frame. The
-                // half level softens the step as the switcher arms.
-                for (index, dim) in [SWITCHER_DIM / 2.0, SWITCHER_DIM].into_iter().enumerate() {
-                    match self.home_dims.get(index) {
-                        Some(id) => compositor.refresh_dimmed(conn, *id, self.home.id, dim)?,
-                        None => self.home_dims.push(compositor.create_dimmed(
-                            conn,
-                            self.home.id,
-                            dim,
-                        )?),
-                    }
-                }
+            if redrawn {
+                self.home_levels.invalidate();
             }
         }
         if state.view == View::Locked || state.unlock_at.is_some() {
@@ -771,7 +804,21 @@ impl Renderer {
         }
     }
 
-    fn frame(&self, state: &ShellState, t: Instant) -> Frame {
+    /// Work done while nothing moves: the home screen's darkened copies.
+    pub fn prepare_idle<C: Connection>(&mut self, conn: &C) -> Result<(), Box<dyn Error>> {
+        if self.home_levels.stale() {
+            self.home_levels.ensure(conn, &mut self.compositor)?;
+        }
+        Ok(())
+    }
+
+    /// Background bands still stepping toward their target: keep drawing.
+    pub fn settling(&self) -> bool {
+        self.lock_fade.settling(self.lock_target, LOCK_DIM_LEVELS)
+            || self.home_fade.settling(self.home_target, HOME_DIM_LEVELS)
+    }
+
+    fn frame(&mut self, state: &ShellState, t: Instant) -> Frame {
         let mut nodes = Vec::new();
         if !state.screen_awake {
             nodes.push(Node::Fill {
@@ -781,11 +828,11 @@ impl Renderer {
                 radius: 0.0,
             });
             return Frame {
-                base: self.wall,
+                base: Some(self.wall),
                 nodes,
             };
         }
-        if let Some(fade) = state.fade.filter(|fade| fade.out)
+        if let Some(fade) = state.fade.filter(|fade| fade.out && !self.backlight_fades)
             && let Some(snapshot) = self.fade_snapshot
         {
             nodes.push(Node::Fill {
@@ -795,9 +842,21 @@ impl Renderer {
                 radius: 0.0,
             });
             return Frame {
-                base: snapshot,
+                base: Some(snapshot),
                 nodes,
             };
+        }
+        let locked = state.view == View::Locked;
+        if self.last_locked != Some(locked) {
+            self.last_locked = Some(locked);
+            if locked {
+                let shown = state.lock_motion.progress(t).clamp(0.0, 1.0);
+                self.lock_fade
+                    .snap(shown * LOCK_DIM_LEVELS as f32, LOCK_DIM_LEVELS);
+            } else {
+                self.home_fade
+                    .snap(home_dim(state, t) / DIM_STEP, HOME_DIM_LEVELS);
+            }
         }
         let base = match state.view {
             View::Locked => self.lock_nodes(state, t, &mut nodes),
@@ -816,7 +875,7 @@ impl Renderer {
         ));
         let black = state
             .fade
-            .filter(|fade| !fade.out)
+            .filter(|fade| !fade.out && !self.backlight_fades)
             .map_or(0.0, |fade| fade.black(t));
         nodes.push(Node::Fill {
             dst: SCREEN,
@@ -828,17 +887,19 @@ impl Renderer {
     }
 
     /// Adds the lock screen's nodes and returns its base surface.
-    fn lock_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) -> SurfaceId {
+    fn lock_nodes(
+        &mut self,
+        state: &ShellState,
+        t: Instant,
+        nodes: &mut Vec<Node>,
+    ) -> Option<SurfaceId> {
         let p = state.lock_motion.progress(t);
         let shown = p.clamp(0.0, 1.0);
-        // The keypad's darker wallpaper is one of a few pre-darkened copies,
-        // so the drag never blends a full-screen dim per frame.
-        let level = (shown * DIM_LEVELS as f32).round() as usize;
-        let base = if level == 0 {
-            self.wall
-        } else {
-            self.wall_dims[level - 1]
-        };
+        // The keypad's darker wallpaper dithers through pre-darkened copies
+        // (see backdrop.rs): no full-screen blend per frame.
+        self.lock_target = shown * LOCK_DIM_LEVELS as f32;
+        let eighths = self.lock_fade.update(self.lock_target, LOCK_DIM_LEVELS);
+        nodes.push(self.wall_levels.node(eighths));
         // The clock rises with the finger and fades; the keypad rises into
         // place behind it.
         let clock_alpha = (1.0 - p * 1.7).clamp(0.0, 1.0);
@@ -884,23 +945,23 @@ impl Renderer {
             0.0,
             1.0,
         ));
-        base
+        None
     }
 
     /// Adds the home screen's nodes and returns its base surface.
-    fn home_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) -> SurfaceId {
+    fn home_nodes(
+        &mut self,
+        state: &ShellState,
+        t: Instant,
+        nodes: &mut Vec<Node>,
+    ) -> Option<SurfaceId> {
+        // The home screen, darkened (dithered between copies) for unlock,
+        // the switcher, and the held home gesture.
+        self.home_target = home_dim(state, t) / DIM_STEP;
+        let eighths = self.home_fade.update(self.home_target, HOME_DIM_LEVELS);
+        nodes.push(self.home_levels.node(eighths));
         // Unlock: the keypad fades away over the home screen.
-        let unlock = state.unlock_at.map_or(0.0, |at| {
-            1.0 - gfx::ease_out(
-                t.saturating_duration_since(at).as_secs_f32() / UNLOCK_ANIMATION.as_secs_f32(),
-            )
-        });
-        nodes.push(Node::Fill {
-            dst: SCREEN,
-            color: BLACK,
-            alpha: DIMMED * unlock,
-            radius: 0.0,
-        });
+        let unlock = unlock_progress(state, t);
         nodes.push(Self::full(
             self.passcode.id,
             SCREEN_W,
@@ -934,9 +995,7 @@ impl Renderer {
         if let Some(switcher) = &state.switcher {
             let enter = switcher.entrance(t);
             let fade = 1.0 - switcher.exit_progress(t);
-            // At rest the backdrop is the pre-darkened home screen; only the
-            // exit fades a dim over the live one.
-            let base = self.home_base(SWITCHER_DIM * fade);
+            let base = None;
             nodes.push(Node::Fill {
                 dst: SCREEN,
                 color: BLACK,
@@ -971,9 +1030,8 @@ impl Renderer {
             return base;
         }
 
-        let mut base = self.home.id;
+        let base = None;
         if let Some(gesture) = &state.gesture {
-            base = self.home_base(gesture.backdrop_dim(t));
             nodes.push(Node::Fill {
                 dst: SCREEN,
                 color: BLACK,
@@ -1043,19 +1101,6 @@ impl Renderer {
             );
         }
         base
-    }
-
-    /// The home screen pre-darkened to the level nearest `dim`.
-    fn home_base(&self, dim: f32) -> SurfaceId {
-        let level = (dim / SWITCHER_DIM * 2.0).round() as usize;
-        match level {
-            0 => self.home.id,
-            level => self
-                .home_dims
-                .get(level.min(self.home_dims.len()).saturating_sub(1))
-                .copied()
-                .unwrap_or(self.home.id),
-        }
     }
 
     pub fn destroy<C: Connection>(&mut self, conn: &C) {

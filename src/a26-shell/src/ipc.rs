@@ -28,6 +28,9 @@ pub enum Command {
     Profile(bool),
     /// Diagnostics: skip drawing the frame nodes in this bitmask.
     ProfileSkip(u64),
+    /// Diagnostics: background stripe height and fade steps per frame.
+    ProfileStripes(i32),
+    ProfileSteps(u32),
     LaunchSystem,
     LaunchBrowser,
     KeyboardShow(KeyboardPurpose),
@@ -159,6 +162,20 @@ fn parse_command(line: &str) -> Result<Command, String> {
         "profile" => match parts.next() {
             Some("on") => Command::Profile(true),
             Some("off") => Command::Profile(false),
+            Some("stripes") => Command::ProfileStripes(
+                parts
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|rows| (1..=4).contains(rows))
+                    .ok_or("profile stripes requires 1..4")?,
+            ),
+            Some("steps") => Command::ProfileSteps(
+                parts
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|steps| (1..=8).contains(steps))
+                    .ok_or("profile steps requires 1..8")?,
+            ),
             Some("skip") => Command::ProfileSkip(
                 parts
                     .next()

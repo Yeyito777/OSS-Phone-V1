@@ -194,6 +194,8 @@ pub struct ShellState {
     /// Snapshot requests for the main loop (taken before restacking).
     pub pending_capture: Option<AppId>,
     pub pending_fade_capture: bool,
+    /// Power fades ramp the backlight instead of drawing (set at startup).
+    pub backlight_fades: bool,
     /// Apps the user closed from the switcher, for the main loop to stop.
     pub pending_kills: Vec<AppId>,
     /// A cancelled home gesture finished; the app window must be raised.
@@ -273,6 +275,7 @@ impl ShellState {
             unlock_at: None,
             pending_capture: None,
             pending_fade_capture: false,
+            backlight_fades: false,
             pending_kills: Vec::new(),
             pending_reveal: false,
             pending_switcher: false,
@@ -369,7 +372,7 @@ impl ShellState {
                 out: true,
                 started: Instant::now(),
             });
-            self.pending_fade_capture = true;
+            self.pending_fade_capture = !self.backlight_fades;
             self.pointer = None;
             self.pressed = None;
             self.keyboard.hide();
@@ -949,7 +952,9 @@ impl ShellState {
             && (self.app_launching()
                 || self.gesture.is_some()
                 || self.returning.is_some()
-                || self.fade.is_some_and(|fade| fade.out))
+                || self
+                    .fade
+                    .is_some_and(|fade| fade.out && !self.backlight_fades))
     }
 
     pub fn finish_app_launch(&mut self) {

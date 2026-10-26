@@ -1,5 +1,6 @@
 mod apps;
 mod audio;
+mod backdrop;
 mod clock;
 mod compositor;
 mod config;
@@ -440,6 +441,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             None
         }
     };
+    // Power and wake fades ramp the panel backlight: smooth, and no frame
+    // has to be drawn. MOON_OVERLAY_FADES=1 (or no backlight) draws them.
+    let backlight_fades = backlight.is_some() && env::var_os("MOON_OVERLAY_FADES").is_none();
+    state.backlight_fades = backlight_fades;
+    renderer.backlight_fades = backlight_fades;
+    let mut backlight_ramping = false;
     let (platform_suspend, persisted_suspend) = match PlatformSuspend::open() {
         Ok((_, persisted)) if !config.deep_suspend => {
             eprintln!("deep suspend disabled by config; screen-off keeps Moon resident");
@@ -574,6 +581,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if let Err(error) = lease_result {
                         ipc::respond::<model::PublicState>(stream, Err(error));
                         continue;
+                    }
+                    if let Command::ProfileStripes(rows) = command {
+                        compositor::STRIPE_ROWS.store(rows, std::sync::atomic::Ordering::Relaxed);
+                        renderer.compositor.invalidate();
+                    }
+                    if let Command::ProfileSteps(steps) = command {
+                        backdrop::FADE_STEPS.store(steps, std::sync::atomic::Ordering::Relaxed);
                     }
                     if let Command::ProfileSkip(mask) = command {
                         renderer.compositor.skip_nodes = mask;
@@ -752,6 +766,23 @@ fn main() -> Result<(), Box<dyn Error>> {
             next_clock_tick = clock::next_minute_boundary(Instant::now());
         }
         state.tick();
+        if backlight_fades && let Some(device) = backlight.as_ref() {
+            match state.fade.filter(|_| state.screen_awake) {
+                Some(fade) => {
+                    if let Err(error) = device.set_fraction(1.0 - fade.black(Instant::now())) {
+                        eprintln!("backlight fade failed: {error}");
+                    }
+                    backlight_ramping = true;
+                }
+                None => {
+                    if backlight_ramping && state.screen_awake {
+                        // The fade-in finished: exactly the saved brightness.
+                        let _ = device.on();
+                    }
+                    backlight_ramping = false;
+                }
+            }
+        }
         if state.shell_covers_app() {
             raise_shell(&conn, shell_window)?;
         }
@@ -759,7 +790,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // something changed. Every frame samples the model at the time it
         // will reach the panel.
         let now = Instant::now();
-        let animating = state.animating(now);
+        let animating = state.animating(now) || renderer.settling();
         let shell_visible =
             state.screen_awake && (!state.view.is_app() || state.shell_covers_app());
         let wants_frame = shell_visible && (state.redraw || animating || state.shell_exposed);
@@ -847,8 +878,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // Waking is also transactional: the complete lock frame is
                 // presented while the panel is dark, before either input or
                 // brightness is restored.
-                // The first frame is black; once the panel is lit the lock
-                // screen fades in from it.
+                // The lock screen then fades in: by ramping the backlight up
+                // from dark, or (without one) from a black first frame.
                 state.fade_in();
                 raise_shell(&conn, shell_window)?;
                 renderer.compositor.invalidate();
@@ -860,6 +891,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     &display_power,
                     backlight.as_ref(),
                     touchscreen.as_ref(),
+                    !backlight_fades,
                 ) {
                     Ok(()) => {
                         suspend_coordinator.complete_wake();
@@ -900,6 +932,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             &display_power,
                             backlight.as_ref(),
                             touchscreen.as_ref(),
+                            true,
                         );
                         suspend_coordinator.fail_wake("deep_suspend_handoff_failed");
                     }
@@ -915,7 +948,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         let shell_visible =
             state.screen_awake && (!state.view.is_app() || state.shell_covers_app());
-        if shell_visible && (state.redraw || state.animating(now)) {
+        if shell_visible && (state.redraw || state.animating(now) || renderer.settling()) {
             // A frame in flight wakes the loop through its Present event;
             // otherwise wake when the next frame may be drawn.
             let frame_deadline = if renderer.compositor.frame_in_flight() {
@@ -935,6 +968,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         if let Some(input_deadline) = next_input_deadline(&state, &raw_touch) {
             deadline = deadline.min(input_deadline);
+        }
+        if backlight_fades && state.screen_awake && state.fade.is_some() {
+            // Backlight fade steps, at the panel's refresh rate.
+            deadline = deadline.min(now + Duration::from_micros(8_333));
+        }
+        if !state.animating(now) && !renderer.settling() && state.screen_awake {
+            renderer.prepare_idle(&conn)?;
         }
         if apps.needs_process_poll() {
             deadline = deadline.min(now + FALLBACK_PROCESS_STATUS_INTERVAL);
@@ -1037,6 +1077,7 @@ fn power_up_display<C: Connection>(
     display: &DisplayPower,
     backlight: Option<&Backlight>,
     touchscreen: Option<&TouchscreenPower>,
+    lit: bool,
 ) -> Result<(), &'static str> {
     // First: the panel powers up and scans out the lock frame that was
     // already rendered; brightness and touch follow.
@@ -1048,7 +1089,13 @@ fn power_up_display<C: Connection>(
     let Some(backlight) = backlight else {
         return Err("backlight_unavailable");
     };
-    backlight.on().map_err(|_| "backlight_wake_failed")
+    if lit {
+        backlight.on()
+    } else {
+        // A fade ramps it up from dark.
+        backlight.set_fraction(0.0)
+    }
+    .map_err(|_| "backlight_wake_failed")
 }
 
 fn next_input_deadline(state: &ShellState, raw_touch: &RawTouchTracker) -> Option<Instant> {
@@ -2203,7 +2250,12 @@ fn apply_command(
     key_repeat_timing: KeyRepeatTiming,
 ) {
     match command {
-        Command::Ping | Command::State | Command::Profile(_) | Command::ProfileSkip(_) => {}
+        Command::Ping
+        | Command::State
+        | Command::Profile(_)
+        | Command::ProfileSkip(_)
+        | Command::ProfileStripes(_)
+        | Command::ProfileSteps(_) => {}
         Command::Digit(digit) => state.input_digit(digit, config),
         Command::Backspace => state.backspace_pin(),
         Command::Submit => {
