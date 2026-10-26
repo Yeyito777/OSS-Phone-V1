@@ -73,6 +73,7 @@ pub enum Outgoing {
     Activate(String),
     MarkSeen(Vec<String>),
     Ring(RingKind, String, RingAction),
+    SetDnd(bool),
 }
 
 #[derive(Debug)]
@@ -391,8 +392,12 @@ impl ShellState {
 
     /// The shell must cover the foreground app: the centre or the ringing
     /// screen is up.
+    /// The centre, Control Centre or the ringing screen is up: the shell
+    /// covers the foreground app.
     pub fn alerts_cover_app(&self, now: Instant) -> bool {
-        self.alerts.ringing().is_some() || self.alerts.centre.visible(now)
+        self.alerts.ringing().is_some()
+            || self.alerts.centre.visible(now)
+            || self.control.visible(now)
     }
 
     pub fn alerts_animating(&self, now: Instant) -> bool {
@@ -604,6 +609,7 @@ impl ShellState {
         }
         let pull_allowed = self.screen_awake
             && y <= PULL_ZONE
+            && x < crate::control_centre::SPLIT_X
             && (self.view == View::Launcher || self.view.is_app())
             && self.switcher.is_none()
             && self.gesture.is_none()
@@ -1704,6 +1710,7 @@ mod tests {
             alarms: vec![],
             timers: vec![],
             ringing: vec![],
+            settings: None,
         });
         assert!(state.alerts_pointer_begin(540.0, 40.0));
         for y in [120.0, 400.0, 900.0, 1400.0] {

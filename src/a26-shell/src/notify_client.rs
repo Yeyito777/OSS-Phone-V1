@@ -87,6 +87,13 @@ pub struct Timer {
     pub remaining_s: u32,
 }
 
+/// The daemon's settings Moon shows (Do Not Disturb, in Control Centre).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct NotifySettings {
+    #[serde(default)]
+    pub do_not_disturb: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RingKind {
@@ -121,6 +128,11 @@ pub enum Event {
         timers: Vec<Timer>,
         #[serde(default)]
         ringing: Vec<Ringing>,
+        #[serde(default)]
+        settings: Option<NotifySettings>,
+    },
+    SettingsChanged {
+        settings: NotifySettings,
     },
     NotificationPosted {
         notification: Notification,
@@ -170,6 +182,7 @@ pub struct NotifyStore {
     pub timers: Vec<Timer>,
     pub ringing: Vec<Ringing>,
     pub connected: bool,
+    pub do_not_disturb: bool,
 }
 
 impl NotifyStore {
@@ -180,7 +193,11 @@ impl NotifyStore {
                 alarms,
                 timers,
                 ringing,
+                settings,
             } => {
+                if let Some(settings) = settings {
+                    self.do_not_disturb = settings.do_not_disturb;
+                }
                 self.notifications = notifications;
                 self.notifications
                     .sort_by(|a, b| b.posted_at.cmp(&a.posted_at));
@@ -233,6 +250,7 @@ impl NotifyStore {
             Event::AlarmEnded { id } | Event::TimerEnded { id } => {
                 self.ringing.retain(|r| r.id != id);
             }
+            Event::SettingsChanged { settings } => self.do_not_disturb = settings.do_not_disturb,
             Event::Unknown => {}
         }
     }
@@ -335,6 +353,10 @@ impl NotifyClient {
         if !notifications.is_empty() {
             self.send("notify.mark_seen", json!({ "ids": notifications }));
         }
+    }
+
+    pub fn set_do_not_disturb(&mut self, on: bool) {
+        self.send("settings.set", json!({ "do_not_disturb": on }));
     }
 
     pub fn ring_action(&mut self, kind: RingKind, id: &str, action: RingAction) {

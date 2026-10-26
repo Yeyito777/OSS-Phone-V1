@@ -87,6 +87,8 @@ pub struct StatusInfo {
     pub battery_charging: bool,
     /// An alarm is set (the status bar shows a small alarm clock).
     pub alarm_set: bool,
+    /// Do Not Disturb is on (a crescent).
+    pub dnd: bool,
 }
 
 impl StatusInfo {
@@ -97,6 +99,7 @@ impl StatusInfo {
             battery_percent: state.battery_percent.map(|value| value.min(100)),
             battery_charging: state.battery_charging,
             alarm_set: state.alerts.store.alarm_set(),
+            dnd: state.alerts.store.do_not_disturb,
         }
     }
 }
@@ -184,91 +187,11 @@ fn fallback_icon(app: AppId) -> Image {
     }
 }
 
-/// Moon's default wallpaper: a deep night-sky gradient lit by soft indigo,
-/// blue, and violet glows, dithered so the 8-bit panel shows no banding.
-fn wallpaper(width: i32, height: i32) -> Canvas {
-    struct Glow {
-        x: f32,
-        y: f32,
-        radius: f32,
-        color: (f32, f32, f32),
-        strength: f32,
-    }
-    let glows = [
-        Glow {
-            x: 0.86,
-            y: 0.10,
-            radius: 0.62,
-            color: (94.0, 92.0, 230.0),
-            strength: 0.62,
-        },
-        Glow {
-            x: 0.06,
-            y: 0.58,
-            radius: 0.64,
-            color: (10.0, 110.0, 230.0),
-            strength: 0.42,
-        },
-        Glow {
-            x: 0.78,
-            y: 0.98,
-            radius: 0.56,
-            color: (150.0, 70.0, 210.0),
-            strength: 0.40,
-        },
-    ];
-    let w = width as f32;
-    let mut canvas = Canvas::new(width, height);
-    let mut columns: Vec<Vec<f32>> = Vec::with_capacity(glows.len());
-    for glow in &glows {
-        let sigma = glow.radius * w;
-        columns.push(
-            (0..width)
-                .map(|x| {
-                    let d = x as f32 - glow.x * w;
-                    (-(d * d) / (2.0 * sigma * sigma)).exp()
-                })
-                .collect(),
-        );
-    }
-    for y in 0..height {
-        let t = y as f32 / height as f32;
-        let base = (
-            gfx::lerp(10.0, 4.0, t),
-            gfx::lerp(12.0, 5.0, t),
-            gfx::lerp(30.0, 16.0, t),
-        );
-        let rows: Vec<f32> = glows
-            .iter()
-            .map(|glow| {
-                let sigma = glow.radius * w;
-                let d = y as f32 - glow.y * height as f32;
-                (-(d * d) / (2.0 * sigma * sigma)).exp() * glow.strength
-            })
-            .collect();
-        for x in 0..width {
-            let (mut r, mut g, mut b) = base;
-            for (index, glow) in glows.iter().enumerate() {
-                let k = rows[index] * columns[index][x as usize];
-                r += glow.color.0 * k;
-                g += glow.color.1 * k;
-                b += glow.color.2 * k;
-            }
-            // Ordered-noise dither of +/- half a code value.
-            let hash = (x as u32).wrapping_mul(0x9e37_79b1) ^ (y as u32).wrapping_mul(0x85eb_ca77);
-            let noise = ((hash >> 13) & 0xff) as f32 / 255.0 - 0.5;
-            let channel = |v: f32| (v + noise).clamp(0.0, 255.0) as u32;
-            canvas.pixels[(y * width + x) as usize] =
-                channel(r) << 16 | channel(g) << 8 | channel(b);
-        }
-    }
-    canvas
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HomeKey {
     status: StatusInfo,
     date: (u8, u8, u8),
+    wallpaper: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,6 +267,10 @@ pub struct Renderer {
     pin_length: usize,
     pub compositor: Compositor,
     wallpaper: Canvas,
+    wallpaper_id: String,
+    /// Control Centre: its toggles, and the brightness and volume sliders.
+    control: Layer<u64>,
+    sliders: [Layer<u64>; 2],
     wall: SurfaceId,
     /// The wallpaper darkened toward the keypad's dim.
     wall_levels: DimLevels,
@@ -428,7 +355,7 @@ impl Renderer {
         pin_length: usize,
     ) -> Result<Self, Box<dyn Error>> {
         let (w, h) = (i32::from(width), i32::from(height));
-        let wallpaper = wallpaper(w, h);
+        let wallpaper = crate::wallpaper::render("moon", w, h);
         let wall = compositor.create_layer(conn, width, height, false)?;
         compositor.upload(conn, wall, &wallpaper)?;
         let wall_levels = DimLevels::new(wall, level_dims(&LOCK_DIM_STOPS, LEVEL_STEP));
@@ -505,8 +432,26 @@ impl Renderer {
                 true,
             )?,
             ring: Layer::new(conn, &mut compositor, w, h, true)?,
+            control: Layer::new(conn, &mut compositor, w, h, true)?,
+            sliders: [
+                Layer::new(
+                    conn,
+                    &mut compositor,
+                    crate::control_centre::BRIGHTNESS.w as i32,
+                    crate::control_centre::BRIGHTNESS.h as i32,
+                    true,
+                )?,
+                Layer::new(
+                    conn,
+                    &mut compositor,
+                    crate::control_centre::VOLUME.w as i32,
+                    crate::control_centre::VOLUME.h as i32,
+                    true,
+                )?,
+            ],
             compositor,
             wallpaper,
+            wallpaper_id: "moon".into(),
             wall,
             wall_levels,
             home_levels: DimLevels::new(wall, Vec::new()),
@@ -620,6 +565,7 @@ impl Renderer {
             let key = HomeKey {
                 status: status.clone(),
                 date: (time.weekday, time.day, time.month),
+                wallpaper: self.wallpaper_id.clone(),
             };
             let wallpaper = &self.wallpaper;
             let icons = &self.icons;
@@ -878,6 +824,43 @@ impl Renderer {
                 )?;
             }
         }
+        if state.control.visible(Instant::now()) {
+            use crate::control_centre::{self as cc, ControlKey, Slider};
+            let next_alarm = store
+                .alarms
+                .iter()
+                .filter_map(|a| a.snoozed_until.or(a.next_fire_at))
+                .min()
+                .map(|at| LocalTime::at(at).time_text(self.twenty_four_hour));
+            let key = ControlKey {
+                wifi: state.wifi_connected.then(|| "Wi-Fi".to_owned()),
+                dnd: store.do_not_disturb,
+                flashlight: state.control.flashlight.as_ref().map(|f| f.on),
+                alarm: next_alarm,
+                pressed: state.control.pressed,
+            };
+            let drawn = key.clone();
+            self.control
+                .update(conn, compositor, key_of(&(key, status)), |canvas| {
+                    cc::draw_control(canvas, &drawn);
+                    draw_status_bar(canvas, status, None);
+                })?;
+            for (index, slider) in [Slider::Brightness, Slider::Volume].into_iter().enumerate() {
+                let value = state
+                    .control
+                    .slider_value(slider, state.display_view, state.volume);
+                let auto = match slider {
+                    Slider::Brightness => state
+                        .display_view
+                        .filter(|view| view.sensor_available)
+                        .map(|view| view.auto),
+                    Slider::Volume => None,
+                };
+                self.sliders[index].update(conn, compositor, key_of(&(value, auto)), |canvas| {
+                    cc::draw_slider(canvas, slider, value, auto);
+                })?;
+            }
+        }
         if let Some(ring) = state.alerts.ringing() {
             let info = RingInfo::from_store(store, ring);
             let time = LocalTime::now().time_text(self.twenty_four_hour);
@@ -966,6 +949,48 @@ impl Renderer {
             radius: 0.0,
             smooth: false,
         });
+        // Control Centre: the same curtain, with its sliders.
+        let edge = state.control.edge(t).round();
+        nodes.push(clipped(deep, 0.0, edge, 1.0));
+        nodes.push(clipped(self.control.id, 0.0, edge, 1.0));
+        for (index, slider) in [
+            crate::control_centre::Slider::Brightness,
+            crate::control_centre::Slider::Volume,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let rect = slider.rect();
+            let shown = (edge - rect.y).clamp(0.0, rect.h);
+            nodes.push(Node::Image {
+                surface: self.sliders[index].id,
+                src: RectF::new(0.0, 0.0, rect.w, shown),
+                dst: RectF::new(rect.x, rect.y, rect.w, shown),
+                alpha: if shown > 0.0 { 1.0 } else { 0.0 },
+                radius: 0.0,
+                smooth: false,
+            });
+        }
+    }
+
+    /// Shows a built-in wallpaper (settings.rs); the darkened copies are
+    /// redrawn in idle time.
+    pub fn set_wallpaper<C: Connection>(
+        &mut self,
+        conn: &C,
+        id: &str,
+    ) -> Result<(), Box<dyn Error>> {
+        if self.wallpaper_id == id {
+            return Ok(());
+        }
+        self.wallpaper = crate::wallpaper::render(id, self.wallpaper.width, self.wallpaper.height);
+        self.compositor.upload(conn, self.wall, &self.wallpaper)?;
+        self.wallpaper_id = id.to_owned();
+        if !self.compositor.gpu() {
+            self.wall_levels.invalidate_all();
+            self.home_levels.invalidate_all();
+        }
+        Ok(())
     }
 
     /// The banner over an app (its own window, see banner.rs): its top,
@@ -1679,8 +1704,13 @@ pub fn draw_status_bar(canvas: &mut Canvas, status: &StatusInfo, background: Opt
         cy + 15.0,
         status.wifi_connected,
     );
+    let mut glyph_x = right - 92.0 - 46.0 - 78.0;
     if status.alarm_set {
-        alerts::draw_status_alarm(canvas, (right - 92.0 - 46.0 - 78.0, cy), WHITE);
+        alerts::draw_status_alarm(canvas, (glyph_x, cy), WHITE);
+        glyph_x -= 60.0;
+    }
+    if status.dnd {
+        crate::control_centre::draw_status_moon(canvas, (glyph_x, cy), background);
     }
 }
 
@@ -1728,13 +1758,23 @@ fn draw_battery_glyph(
 /// Three-band Wi-Fi fan with its apex at (`cx`, `apex_y`); dimmed when
 /// disconnected.
 fn draw_wifi_glyph(canvas: &mut Canvas, cx: f32, apex_y: f32, connected: bool) {
+    draw_wifi_glyph_in(canvas, cx, apex_y, connected, WHITE);
+}
+
+pub(crate) fn draw_wifi_glyph_in(
+    canvas: &mut Canvas,
+    cx: f32,
+    apex_y: f32,
+    connected: bool,
+    color: Rgb,
+) {
     let alpha = if connected { 1.0 } else { 0.32 };
     let quarter = std::f32::consts::FRAC_PI_4;
     let mut wedge = Path::new();
     wedge.move_to(cx, apex_y);
     wedge.arc(cx, apex_y, 11.5, -3.0 * quarter, -quarter);
     wedge.close();
-    canvas.fill_path(&wedge, WHITE, alpha);
+    canvas.fill_path(&wedge, color, alpha);
     for radius in [23.0, 35.0] {
         canvas.ring_arc(
             cx,
@@ -1743,7 +1783,7 @@ fn draw_wifi_glyph(canvas: &mut Canvas, cx: f32, apex_y: f32, connected: bool) {
             7.0,
             -quarter + 0.08,
             quarter - 0.08,
-            WHITE,
+            color,
             alpha,
         );
     }
@@ -1922,7 +1962,7 @@ pub fn draw_volume_hud(canvas: &mut Canvas, rect: RectF, volume: u8) {
     draw_speaker(canvas, rect.x + rect.w / 2.0 - 8.0, icon_cy, volume, color);
 }
 
-fn draw_speaker(canvas: &mut Canvas, cx: f32, cy: f32, volume: u8, color: Rgb) {
+pub(crate) fn draw_speaker(canvas: &mut Canvas, cx: f32, cy: f32, volume: u8, color: Rgb) {
     let mut body = Path::new();
     body.polygon(&[
         (cx - 18.0, cy - 8.0),
@@ -2003,6 +2043,7 @@ mod tests {
             battery_percent: Some(100),
             battery_charging: true,
             alarm_set: true,
+            dnd: true,
         };
         draw_status_bar(&mut canvas, &status, Some(BLACK));
         let below = &canvas.pixels[(status_bar::HEIGHT as usize) * 1080..];
@@ -2037,7 +2078,7 @@ mod bench {
     #[ignore]
     fn primitive_costs() {
         let t = Instant::now();
-        let wall = wallpaper(1080, 2340);
+        let wall = crate::wallpaper::render("moon", 1080, 2340);
         eprintln!("wallpaper {:?}", t.elapsed());
         let mut canvas = Canvas::new(1080, 2340);
         for _ in 0..3 {
@@ -2057,6 +2098,7 @@ mod bench {
                 battery_percent: Some(80),
                 battery_charging: false,
                 alarm_set: false,
+                dnd: false,
             };
             let t = Instant::now();
             draw_status_bar(&mut canvas, &status, None);

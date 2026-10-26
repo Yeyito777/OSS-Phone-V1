@@ -48,6 +48,8 @@ pub enum Command {
     LeaseRelease(AppId, LeaseKind),
     SimulateMemoryPressure,
     SuspendTest(u64),
+    /// `settings set KEY VALUE` (docs/settings.md).
+    SettingsSet(String, String),
     Quit,
 }
 
@@ -233,6 +235,12 @@ fn parse_command(line: &str) -> Result<Command, String> {
                     .min(100),
             ),
             None => return Err("volume requires up, down, or 0..100".into()),
+        },
+        "settings" => match (parts.next(), parts.next(), parts.next()) {
+            (Some("set"), Some(key), Some(value)) => {
+                Command::SettingsSet(key.to_owned(), value.to_owned())
+            }
+            _ => return Err("settings requires set KEY VALUE".into()),
         },
         "screen" => match parts.next() {
             Some("off") => Command::ScreenOff,
