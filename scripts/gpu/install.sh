@@ -63,10 +63,12 @@ ROOT=/data/local/a26-linux
 mkdir -p \$ROOT/opt/moon-gpu \$ROOT/etc/X11/xorg-gpu.conf.d /data/local/tmp/moon-gpu
 chmod 0700 /data/local/tmp/moon-gpu
 
-# Xorg's dummy driver, offline from the pushed package.
-cp \$T/$DUMMY_APK \$ROOT/tmp/$DUMMY_APK
-chroot \$ROOT /sbin/apk add --no-network --quiet /tmp/$DUMMY_APK
-rm -f \$ROOT/tmp/$DUMMY_APK
+# Xorg's dummy driver, offline from the pushed package (through the chroot
+# wrapper, which provides /dev and /proc; /root is not a mount point).
+cp \$T/$DUMMY_APK \$ROOT/root/$DUMMY_APK
+A26_ROOT=\$ROOT A26_BUSYBOX=\$ROOT/busybox.static /system/bin/sh \$ROOT/a26-enter-chroot.sh \
+    /sbin/apk add --no-network --quiet /root/$DUMMY_APK
+rm -f \$ROOT/root/$DUMMY_APK
 ls \$ROOT/usr/lib/xorg/modules/drivers/dummy_drv.so
 
 install_file() { # src dst mode
