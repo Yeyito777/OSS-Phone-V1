@@ -1,5 +1,11 @@
 # Moon telephony: `moon-telephonyd` protocol, version 1
 
+Revision 1.1 (2026-10-26): call history (`call.history`,
+`call.history_delete`, `call_history_changed`); `sim.slots` (physical
+slots, eSIM), `sim.state` `no_profile`, `network.emergency_only`; raw SIM
+logical channels for eSIM management (root only, §3.1); the incoming-call
+notification rings (`ringing`) with moon-notifyd r3. Backward compatible.
+
 `moon-telephonyd` is OSS-Phone-V1's telephony service: SIM, network and
 signal status, SMS, voice calls and mobile data. It talks to the modem through
 Samsung's vendor radio HAL (rild's `android.hardware.radio@1.x::IRadio` over
@@ -54,9 +60,11 @@ call).
   "available": true,
   "radio": "on",
   "airplane": false,
-  "sim": {"slot": 1, "state": "ready", "pin_retries": null},
+  "sim": {"slot": 1, "state": "ready", "pin_retries": null,
+          "slots": [{"physical": 1, "logical": 1, "card": "present", "esim": false, "active": true}]},
   "network": {
     "registration": "home",
+    "emergency_only": false,
     "data_registration": "home",
     "operator": "Freedom",
     "numeric": "30249",
@@ -76,17 +84,19 @@ call).
 | --- | --- |
 | `available` | false while the daemon has no connection to rild (everything else is then stale or unknown) |
 | `radio` | `on`, `off` (airplane mode or modem off), `unavailable`, `unknown` |
-| `sim.state` | `absent`, `pin_required`, `puk_required`, `network_locked`, `not_ready` (detected, still reading), `ready`, `error`, `restricted`, `unknown` |
+| `sim.state` | `absent`, `pin_required`, `puk_required`, `network_locked`, `not_ready` (detected, still reading), `no_profile` (an eSIM chip with no enabled profile), `ready`, `error`, `restricted`, `unknown` |
+| `sim.slots` | the physical slots (IRadioConfig): `card` `absent`/`present`/`error`/`restricted`/`unknown`, `esim` (the card is an eUICC), `active`, and the `logical` slot it is mapped to; empty until known |
 | `sim.pin_retries` | attempts left, known only after a PIN attempt; else `null` |
 | `network.registration` | voice service: `home`, `roaming`, `searching`, `denied`, `none`, `unknown`; `data_registration` likewise for packet service |
+| `network.emergency_only` | not registered, but the modem reports that emergency calls are possible (show "Emergency calls only") |
 | `network.operator` | name to show (long name, else short); `null` when unknown |
 | `network.rat` | `gsm`, `umts`, `lte`, `nr`, `iwlan`, `unknown`, or `null` |
 | `signal.level` | 0–4 bars (Android's thresholds); `signal` is `null` until the modem reports |
 | `data.state` | `off`, `connecting`, `connected`, `disconnecting`, `failed` (`error` says why; it retries with backoff) |
 
 The status bar needs only `sim.state`, `network.registration`,
-`network.operator`, `network.rat`, `signal.level`, `data.state` and
-`airplane`.
+`network.emergency_only`, `network.operator`, `network.rat`,
+`signal.level`, `data.state` and `airplane`.
 
 ### Call
 
@@ -98,6 +108,19 @@ The status bar needs only `sim.state`, `network.registration`,
 `state`: `dialing`, `alerting` (the other phone rings), `incoming`,
 `waiting` (incoming while another call is active), `active`, `held`; in
 `call_ended`, `ended`. `number` is `null` for private/unknown callers.
+
+### Call record (history)
+
+```json
+{"id": "c3", "number": "+16475551234", "name": null, "direction": "incoming",
+ "started_at": 1793001234, "connected_at": 1793001240, "ended_at": 1793001300,
+ "duration_s": 60, "missed": false, "rejected": false}
+```
+
+One per ended call, with the call's id. `connected_at` is `null` for calls
+that never connected; `missed` is an unanswered incoming call the user did not
+decline, `rejected` one declined with `call.reject`/`call.hangup`. The newest
+500 are kept.
 
 ### Message
 
@@ -132,12 +155,27 @@ as concatenated SMS and incoming parts are reassembled.
 | `call.swap` ⧗ | — | `{}`; swaps active and held |
 | `call.dtmf` ⧗ | `digits` (`0-9 * # A-D`) | `{}` |
 | `call.audio` | optional `speaker`, `mute` (bools) | `{"speaker", "mute"}` |
+| `call.history` | optional `before` (call id), `limit` (1–200, default 50) | `{"calls": [CallRecord…]}`, newest first |
+| `call.history_delete` | `ids` or `all: true` | `{"count": n}`; event `call_history_changed` |
 | `data.get` | — | `{"data": {...}, "apn": {"apn","protocol","user","auth"}}` |
 | `data.set` | optional `enabled`, `apn`, `protocol` (`IP`, `IPV6`, `IPV4V6`), `user`, `password`, `auth` (0 none, 1 PAP, 2 CHAP, 3 either) | as `data.get`; persistent |
 | `radio.set` ⧗ | `airplane` (bool) | `{}`; persistent |
 
 Placing calls and sending SMS cost money and reach real people: Moon must
 only issue them on an explicit user action.
+
+### 3.1 SIM logical channels (root only)
+
+For eSIM management with lpac (GSMA SGP.22 LPA; Alpine package `lpac`):
+`moon-telephonyctl lpac ARGS…` runs lpac with its stdio APDU driver and
+carries its APDUs through these commands. They are refused
+(`permission_denied`) for any peer but root.
+
+| `cmd` | Arguments | Result |
+| --- | --- | --- |
+| `sim.channel_open` ⧗ | `aid` (hex), optional `p2`, `slot` (1–2, default the main slot) | `{"channel": n, "select": hex}` |
+| `sim.apdu` ⧗ | `channel`, `apdu` (hex, the whole command APDU), optional `slot` | `{"response": hex}` (data followed by SW1 SW2) |
+| `sim.channel_close` ⧗ | `channel`, optional `slot` | `{}` |
 
 ## 4. Events
 
@@ -148,6 +186,7 @@ only issue them on an explicit user action.
 | `calls_changed` | `calls` | update the in-call UI |
 | `call_incoming` | `call` | **turn the screen on and show the incoming-call screen** (works locked: Answer/Decline call `call.answer`/`call.reject` without unlocking) |
 | `call_ended` | `call` (state `ended`), `duration_s`, `missed` | dismiss the call UI |
+| `call_history_changed` | `ids` (records added or deleted) | refresh Recents (`call.history`) |
 | `sms_received` | `message` | update Messages (the notification is posted by the daemon) |
 | `sms_updated` | `message` | an outgoing message's status changed (also sent once at `sms.send`) |
 | `sms_read` / `sms_deleted` | `ids` | update lists and badges |
@@ -160,14 +199,12 @@ The daemon posts to `moon-notifyd` (Moon does not need to):
 | When | `notify.post` |
 | --- | --- |
 | SMS received | `app: "messages"`, `tag: "sms-<peer>"` (one per thread, replaced), `title`: peer, `body`: text, `urgency: normal`, `open: {"app":"messages","target":"thread:<peer>"}` |
-| Incoming call | `app: "phone"`, `tag: "call-<n>"`, `title: "Incoming call"`, `urgency: high` (wakes the screen); withdrawn when answered or ended |
+| Incoming call | `app: "phone"`, `tag: "call-<n>"`, `title: "Incoming call"`, `urgency: high` (wakes the screen), `ringing: true` when moon-notifyd's `ping` reports revision ≥ 3; withdrawn (which stops the ringing) when answered, declined or ended |
 | Missed call | `app: "phone"`, `tag: "missed-<peer>"`, `title: "Missed call"`, `urgency: normal`, `open: {"app":"phone","target":"call:<peer>"}` |
 
 App ids `phone` and `messages` are reserved for Moon's Phone and Messages
-apps. A ringtone that repeats until the call is answered needs a
-moon-notifyd addition (a looping alert tied to a notification); until then an
-incoming call rings with the `high` notification's alert once and Moon shows
-the call screen.
+apps. With an older moon-notifyd (revision < 3) an incoming call chimes once
+instead of ringing.
 
 ## 6. Call audio
 
@@ -195,6 +232,7 @@ chroot's `/etc/resolv.conf` when Wi-Fi is not up.
 | `/data/local/a26-linux/opt/moon-telephony/moon-call-audio` | bionic call-audio helper |
 | `/data/local/a26-linux/opt/moon-telephony/mobile-data` | data interface hook |
 | `/var/lib/moon-telephony/sms.json` (chroot) | message history, newest 5000 (root, `0600`) |
+| `/var/lib/moon-telephony/calls.json` (chroot) | call history, newest 500 (`0600`) |
 | `/var/lib/moon-telephony/settings.json` (chroot) | data/APN/airplane settings (`0600`) |
 
 ```sh

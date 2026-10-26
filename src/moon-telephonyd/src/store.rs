@@ -187,6 +187,108 @@ impl SmsStore {
     }
 }
 
+/// The newest call records kept.
+pub const MAX_CALLS: usize = 500;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallRecord {
+    pub id: u64,
+    pub number: Option<String>,
+    pub name: Option<String>,
+    pub incoming: bool,
+    pub started_at: i64,
+    pub connected_at: Option<i64>,
+    pub ended_at: i64,
+    pub missed: bool,
+    pub rejected: bool,
+}
+
+impl CallRecord {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "id": format!("c{}", self.id),
+            "number": self.number,
+            "name": self.name,
+            "direction": if self.incoming { "incoming" } else { "outgoing" },
+            "started_at": self.started_at,
+            "connected_at": self.connected_at,
+            "ended_at": self.ended_at,
+            "duration_s": self.connected_at.map_or(0, |c| (self.ended_at - c).max(0)),
+            "missed": self.missed,
+            "rejected": self.rejected,
+        })
+    }
+
+    fn from_json(v: &Value) -> Option<Self> {
+        Some(Self {
+            id: v.get("id")?.as_str()?.strip_prefix('c')?.parse().ok()?,
+            number: v.get("number").and_then(Value::as_str).map(str::to_owned),
+            name: v.get("name").and_then(Value::as_str).map(str::to_owned),
+            incoming: v.get("direction")?.as_str()? == "incoming",
+            started_at: v.get("started_at")?.as_i64()?,
+            connected_at: v.get("connected_at").and_then(Value::as_i64),
+            ended_at: v.get("ended_at")?.as_i64()?,
+            missed: v.get("missed")?.as_bool()?,
+            rejected: v.get("rejected")?.as_bool()?,
+        })
+    }
+}
+
+/// Parses "c42" (or 42) into a call id.
+pub fn parse_call_id(v: &Value) -> Option<u64> {
+    v.as_u64()
+        .or_else(|| v.as_str()?.strip_prefix('c')?.parse().ok())
+}
+
+pub struct CallLog {
+    path: PathBuf,
+    /// Oldest first.
+    pub records: Vec<CallRecord>,
+}
+
+impl CallLog {
+    pub fn load(path: &Path) -> Self {
+        let records = fs::read(path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .and_then(|v| v.get("calls")?.as_array().cloned())
+            .map(|a| a.iter().filter_map(CallRecord::from_json).collect())
+            .unwrap_or_default();
+        Self {
+            path: path.to_owned(),
+            records,
+        }
+    }
+
+    pub fn max_id(&self) -> u64 {
+        self.records.iter().map(|r| r.id).max().unwrap_or(0)
+    }
+
+    pub fn save(&mut self) -> io::Result<()> {
+        if self.records.len() > MAX_CALLS {
+            let excess = self.records.len() - MAX_CALLS;
+            self.records.drain(..excess);
+        }
+        let all: Vec<Value> = self.records.iter().map(CallRecord::to_json).collect();
+        let bytes = serde_json::to_vec(&json!({"version": 1, "calls": all}))?;
+        atomic_write(&self.path, &bytes, 0o600)
+    }
+
+    /// Newest first, older than the record `before` (an id).
+    pub fn list(&self, before: Option<u64>, limit: usize) -> Vec<Value> {
+        let mut list: Vec<&CallRecord> = self
+            .records
+            .iter()
+            .filter(|r| before.is_none_or(|b| r.id < b))
+            .collect();
+        list.sort_by(|a, b| b.started_at.cmp(&a.started_at).then(b.id.cmp(&a.id)));
+        list.into_iter()
+            .take(limit)
+            .map(CallRecord::to_json)
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Apn {
     pub apn: String,
@@ -286,6 +388,36 @@ pub fn atomic_write(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn call_log_round_trips() {
+        let dir = std::env::temp_dir().join(format!("moon-telephony-calls-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut log = CallLog::load(&dir.join("calls.json"));
+        for (id, started, connected) in [(1, 100, Some(110)), (2, 200, None)] {
+            log.records.push(CallRecord {
+                id,
+                number: Some("+16475551234".into()),
+                name: None,
+                incoming: id == 2,
+                started_at: started,
+                connected_at: connected,
+                ended_at: started + 70,
+                missed: connected.is_none(),
+                rejected: false,
+            });
+        }
+        log.save().unwrap();
+        let loaded = CallLog::load(&dir.join("calls.json"));
+        assert_eq!(loaded.records, log.records);
+        let list = loaded.list(None, 50);
+        assert_eq!(list[0]["id"], "c2");
+        assert_eq!(list[1]["duration_s"], 60);
+        assert_eq!(loaded.list(Some(2), 50).len(), 1);
+        assert_eq!(loaded.max_id(), 2);
+        assert_eq!(parse_call_id(&json!("c7")), Some(7));
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn peers_are_normalized_for_threading() {
