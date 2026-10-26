@@ -6,6 +6,7 @@ mod banner;
 mod clock;
 mod compositor;
 mod config;
+mod display;
 mod display_power;
 mod freezer;
 mod gfx;

@@ -162,6 +162,16 @@ pub struct PointerGesture {
 
 #[derive(Debug)]
 pub struct ShellState {
+    /// In-shell brightness requests, drained by the brightness backend.
+    #[allow(dead_code)]
+    pub display_requests: Vec<crate::display::DisplayRequest>,
+    /// Brightness as in-shell controls should show it (backend-refreshed).
+    #[allow(dead_code)]
+    pub display_view: Option<crate::display::DisplayView>,
+    /// Auto-Lock's pre-timeout dim is active: the brightness backend must not
+    /// write the backlight, and restores its level when this clears.
+    #[allow(dead_code)]
+    pub idle_dimmed: bool,
     pub view: View,
     pub screen_awake: bool,
     pub pin_input: Vec<u8>,
@@ -247,6 +257,9 @@ pub struct PublicState {
 impl ShellState {
     pub fn new(start_locked: bool, initial_volume: u8) -> Self {
         Self {
+            display_requests: Vec::new(),
+            display_view: None,
+            idle_dimmed: false,
             view: if start_locked {
                 View::Locked
             } else {
