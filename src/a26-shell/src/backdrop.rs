@@ -29,7 +29,7 @@ pub const LEVEL_STEP: f32 = 0.035;
 /// Pixels a frame may redraw in all (`ctl profile budget KPX`): a fade
 /// takes what the rest of the frame leaves of it. About 0.75 Mpx fits one
 /// 120 Hz refresh on the A26.
-pub static FRAME_BUDGET_KPX: AtomicU32 = AtomicU32::new(600);
+pub static FRAME_BUDGET_KPX: AtomicU32 = AtomicU32::new(520);
 /// Rows a fade always gets per frame (a sixteenth of the screen), and at
 /// most.
 const MIN_ROWS: usize = 146;

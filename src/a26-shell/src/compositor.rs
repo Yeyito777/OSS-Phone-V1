@@ -208,6 +208,8 @@ struct InFlight {
     buffer: usize,
     sent: Instant,
     damage_area: i64,
+    /// Of which outside changed background rows.
+    foreground_area: i64,
     build: Duration,
     /// Submitted right after the previous frame completed: only then is a
     /// late completion a missed vblank (otherwise Moon simply had nothing
@@ -791,9 +793,10 @@ impl Compositor {
                         }
                         if self.profile {
                             eprintln!(
-                                "present msc +{delta} interval {interval_ms:.2} ms submit-to-scanout {latency_ms:.2} ms build {:.2} ms damage {} px{}",
+                                "present msc +{delta} interval {interval_ms:.2} ms submit-to-scanout {latency_ms:.2} ms build {:.2} ms damage {} px fg {} px{}",
                                 in_flight.build.as_secs_f64() * 1000.0,
                                 in_flight.damage_area,
+                                in_flight.foreground_area,
                                 if in_flight.back_to_back {
                                     ""
                                 } else {
@@ -1099,6 +1102,7 @@ impl Compositor {
                     buffer: index,
                     sent,
                     damage_area,
+                    foreground_area: self.foreground_area,
                     build,
                     back_to_back,
                     target_delta,

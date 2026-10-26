@@ -893,15 +893,15 @@ impl Renderer {
             fade.snap(target, levels.max_level());
         } else {
             let budget = backdrop::row_budget(self.compositor.foreground_area, SCREEN_W as u16);
-            // Far behind (a flick, or a release ahead of the fade): rows
-            // two levels apart for a few frames halve the rows to redraw.
-            // While a finger is down only a large lag allows that.
+            // Behind the target (a fast swipe, or a release ahead of the
+            // fade), neighbouring rows may sit two levels apart (about 7%),
+            // which halves the rows to redraw (three would read as grain
+            // again). The gaps close as the fade finishes smoothly.
             let behind = (target - fade.mean()).abs();
-            let finger_down = state.pointer.is_some();
-            let gap = if behind > if finger_down { 4.0 } else { 1.5 } {
-                2
-            } else {
-                1
+            let gap = match (state.pointer.is_some(), behind) {
+                (true, b) if b > 2.0 => 2,
+                (false, b) if b > 0.5 => 2,
+                _ => 1,
             };
             fade.update(target, levels.max_level(), budget, gap);
         }
