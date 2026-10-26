@@ -152,6 +152,7 @@ impl Blob {
         }
     }
     /// Raw element bytes (e.g. a `vec<uint8_t>`'s contents).
+    #[cfg(test)]
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         Self {
             bytes,
