@@ -662,9 +662,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             // GPU mode: the app in front shows its own buffers when nothing
-            // of Moon's is drawn over it (keyboard, volume, banner) and no
-            // snapshot is about to be taken from the mirror.
-            let overlay = state.keyboard.is_visible()
+            // of Moon's is drawn over it (the key callout, volume, banner)
+            // and no snapshot is about to be taken from the mirror. The
+            // keyboard itself sits below the app's area.
+            let overlay = (state.keyboard.is_visible() && state.keyboard.latest_pressed().is_some())
                 || state
                     .volume_overlay_until
                     .is_some_and(|deadline| deadline > Instant::now())
