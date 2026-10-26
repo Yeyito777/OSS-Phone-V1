@@ -77,6 +77,11 @@ if [ -x /data/local/tmp/a26-wifi-cleanup-android.sh ]; then
     /system/bin/sh /data/local/tmp/a26-wifi-cleanup-android.sh 2>/dev/null || true
 fi
 
+# GPU mode: moon-compositor holds DRM master; release it before the composer.
+if [ -x /data/adb/moon/moon-gpu-session.sh ]; then
+    /system/bin/sh /data/adb/moon/moon-gpu-session.sh stop 2>/dev/null || true
+fi
+
 # Restore the three services deliberately stopped for DRM-master handoff.  The
 # composer must be ready before SurfaceFlinger reconnects to it.
 /system/bin/start vendor.hwcomposer-2-4 2>/dev/null || true

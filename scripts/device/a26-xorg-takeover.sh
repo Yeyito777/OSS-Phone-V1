@@ -115,9 +115,29 @@ if card_in_use; then
 fi
 
 echo "DRM card released; entering Alpine Xorg supervisor up=$(uptime_now)"
-A26_ROOT="$ROOT" A26_BUSYBOX="$ROOT/busybox.static" \
-    /system/bin/sh "$ROOT/a26-enter-chroot.sh" \
-    /usr/local/sbin/a26-xorg-persistent-session
-rc=$?
-echo "Alpine Xorg supervisor returned rc=$rc"
+# GPU mode (opt-in, notes/gpu/DESIGN.md): moon-compositor takes DRM master and
+# Xorg runs headless. Anything short of a ready compositor is the software
+# path, Xorg on the panel, exactly as before.
+GPU_SESSION=/data/adb/moon/moon-gpu-session.sh
+session_arg=''
+rm -f "$STATE/gpu-fallback"
+if [ -x "$GPU_SESSION" ] && /system/bin/sh "$GPU_SESSION" start; then
+    session_arg=--gpu
+    echo "GPU compositor ready up=$(uptime_now)"
+fi
+while :; do
+    A26_ROOT="$ROOT" A26_BUSYBOX="$ROOT/busybox.static" \
+        /system/bin/sh "$ROOT/a26-enter-chroot.sh" \
+        /usr/local/sbin/a26-xorg-persistent-session $session_arg
+    rc=$?
+    echo "Alpine Xorg supervisor returned rc=$rc"
+    # The GPU path gave up at runtime (moon-gpu-session.sh keep): run the same
+    # session again on the panel instead of restoring Android.
+    if [ -n "$session_arg" ] && [ -e /data/local/tmp/moon-gpu/fallback ]; then
+        echo "GPU compositor failed; restarting Xorg on the panel up=$(uptime_now)"
+        session_arg=''
+        continue
+    fi
+    break
+done
 exit "$rc"

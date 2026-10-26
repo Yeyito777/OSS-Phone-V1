@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,7 +24,7 @@ static int xioctl(int fd, unsigned long req, void *arg) {
     return r == -1 ? -errno : 0;
 }
 
-/* Looks up a property id by name on an object. */
+/* Looks up a property id by name on an object (and its current value). */
 static uint32_t prop_id(int fd, uint32_t obj, uint32_t type, const char *name,
                         uint64_t *value) {
     struct drm_mode_obj_get_properties gp = {.obj_id = obj, .obj_type = type};
@@ -51,6 +52,25 @@ static uint32_t prop_id(int fd, uint32_t obj, uint32_t type, const char *name,
     return found;
 }
 
+/* The value of an enum property's entry named `name`, or `fallback`. */
+static uint64_t enum_value(int fd, uint32_t prop, const char *name,
+                           uint64_t fallback) {
+    struct drm_mode_get_property p = {.prop_id = prop};
+    if (!prop || xioctl(fd, DRM_IOCTL_MODE_GETPROPERTY, &p) || !p.count_enum_blobs)
+        return fallback;
+    struct drm_mode_property_enum *e = calloc(p.count_enum_blobs, sizeof *e);
+    p.enum_blob_ptr = U64(e);
+    p.count_values = 0;
+    p.values_ptr = 0;
+    uint64_t v = fallback;
+    if (!xioctl(fd, DRM_IOCTL_MODE_GETPROPERTY, &p))
+        for (uint32_t i = 0; i < p.count_enum_blobs; i++)
+            if (!strcmp(e[i].name, name))
+                v = e[i].value;
+    free(e);
+    return v;
+}
+
 static int mode_hz(const struct drm_mode_modeinfo *m) {
     if (!m->htotal || !m->vtotal)
         return 0;
@@ -58,8 +78,31 @@ static int mode_hz(const struct drm_mode_modeinfo *m) {
                  ((long long)m->htotal * m->vtotal));
 }
 
+static void load_plane(int fd, struct kms_plane *p) {
+#define PP(field, name) p->field = prop_id(fd, p->id, DRM_MODE_OBJECT_PLANE, name, NULL)
+    PP(p_fb, "FB_ID");
+    PP(p_crtc, "CRTC_ID");
+    PP(p_in_fence, "IN_FENCE_FD");
+    PP(p_sx, "SRC_X");
+    PP(p_sy, "SRC_Y");
+    PP(p_sw, "SRC_W");
+    PP(p_sh, "SRC_H");
+    PP(p_cx, "CRTC_X");
+    PP(p_cy, "CRTC_Y");
+    PP(p_cw, "CRTC_W");
+    PP(p_ch, "CRTC_H");
+    PP(p_alpha, "alpha");
+    PP(p_zpos, "zpos");
+    PP(p_blend, "pixel blend mode");
+    PP(p_hdr_fd, "HDR_FD");
+#undef PP
+    p->blend_none = enum_value(fd, p->p_blend, "None", 0);
+    p->blend_premult = enum_value(fd, p->p_blend, "Pre-multiplied", 1);
+}
+
 int kms_open(struct kms *k, const char *path, int want_hz) {
     memset(k, 0, sizeof *k);
+    k->primary = -1;
     k->fd = open(path, O_RDWR | O_CLOEXEC);
     if (k->fd < 0) {
         int e = -errno;
@@ -162,23 +205,35 @@ int kms_open(struct kms *k, const char *path, int want_hz) {
     }
 
     struct drm_mode_get_plane_res pr = {0};
-    uint32_t planes[32];
-    pr.plane_id_ptr = U64(planes);
+    uint32_t plane_ids[32];
+    pr.plane_id_ptr = U64(plane_ids);
     pr.count_planes = 32;
     if ((r = xioctl(fd, DRM_IOCTL_MODE_GETPLANERESOURCES, &pr)))
         goto fail;
-    for (uint32_t i = 0; i < pr.count_planes && i < 32 && !k->plane_id; i++) {
-        struct drm_mode_get_plane p = {.plane_id = planes[i]};
-        if (xioctl(fd, DRM_IOCTL_MODE_GETPLANE, &p))
-            continue;
-        if (!(p.possible_crtcs & (1u << k->crtc_index)))
+    for (uint32_t i = 0; i < pr.count_planes && i < 32; i++) {
+        struct drm_mode_get_plane p = {.plane_id = plane_ids[i]};
+        if (xioctl(fd, DRM_IOCTL_MODE_GETPLANE, &p) ||
+            !(p.possible_crtcs & (1u << k->crtc_index)) ||
+            k->nplanes == KMS_MAX_PLANES)
             continue;
         uint64_t type = 0;
-        if (prop_id(fd, planes[i], DRM_MODE_OBJECT_PLANE, "type", &type) &&
-            type == DRM_PLANE_TYPE_PRIMARY)
-            k->plane_id = planes[i];
+        prop_id(fd, plane_ids[i], DRM_MODE_OBJECT_PLANE, "type", &type);
+        struct kms_plane *kp = &k->planes[k->nplanes];
+        memset(kp, 0, sizeof *kp);
+        kp->id = plane_ids[i];
+        load_plane(fd, kp);
+        if (!kp->p_fb || !kp->p_crtc)
+            continue;
+        /* The CRTC's own primary: the first primary-typed plane (the
+         * other CRTC's primary can also show here, as an overlay). */
+        if (type == DRM_PLANE_TYPE_PRIMARY && k->primary < 0) {
+            kp->primary = 1;
+            k->primary = k->nplanes;
+            k->plane_id = kp->id;
+        }
+        k->nplanes++;
     }
-    if (!k->plane_id) {
+    if (k->primary < 0) {
         fprintf(stderr, "kms: no primary plane for crtc %u\n", k->crtc_id);
         r = -ENODEV;
         goto fail;
@@ -189,26 +244,10 @@ int kms_open(struct kms *k, const char *path, int want_hz) {
         prop_id(fd, k->crtc_id, DRM_MODE_OBJECT_CRTC, "ACTIVE", &active);
     k->crtc_mode_prop =
         prop_id(fd, k->crtc_id, DRM_MODE_OBJECT_CRTC, "MODE_ID", &cur_mode);
+    k->crtc_dqe_fd = prop_id(fd, k->crtc_id, DRM_MODE_OBJECT_CRTC, "DQE_FD", NULL);
     k->conn_crtc_prop =
         prop_id(fd, k->conn_id, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID", NULL);
-#define PP(field, name)                                                        \
-    k->field = prop_id(fd, k->plane_id, DRM_MODE_OBJECT_PLANE, name, NULL)
-    PP(plane_fb, "FB_ID");
-    PP(plane_crtc, "CRTC_ID");
-    PP(plane_in_fence, "IN_FENCE_FD");
-    PP(plane_src_x, "SRC_X");
-    PP(plane_src_y, "SRC_Y");
-    PP(plane_src_w, "SRC_W");
-    PP(plane_src_h, "SRC_H");
-    PP(plane_crtc_x, "CRTC_X");
-    PP(plane_crtc_y, "CRTC_Y");
-    PP(plane_crtc_w, "CRTC_W");
-    PP(plane_crtc_h, "CRTC_H");
-    PP(plane_hdr_fd, "HDR_FD");
-#undef PP
-    k->crtc_dqe_fd = prop_id(fd, k->crtc_id, DRM_MODE_OBJECT_CRTC, "DQE_FD", NULL);
-    if (!k->crtc_active_prop || !k->crtc_mode_prop || !k->conn_crtc_prop ||
-        !k->plane_fb || !k->plane_crtc) {
+    if (!k->crtc_active_prop || !k->crtc_mode_prop || !k->conn_crtc_prop) {
         fprintf(stderr, "kms: missing atomic properties\n");
         r = -ENOTSUP;
         goto fail;
@@ -232,10 +271,11 @@ int kms_open(struct kms *k, const char *path, int want_hz) {
             k->crtc_active = 1;
     }
     fprintf(stderr,
-            "kms: crtc %u (index %d, %s) connector %u plane %u mode %ux%u@%d\n",
+            "kms: crtc %u (index %d, %s) connector %u, %d planes (primary %u), "
+            "mode %ux%u@%d\n",
             k->crtc_id, k->crtc_index, k->crtc_active ? "active" : "inactive",
-            k->conn_id, k->plane_id, k->mode.hdisplay, k->mode.vdisplay,
-            mode_hz(&k->mode));
+            k->conn_id, k->nplanes, k->plane_id, k->mode.hdisplay,
+            k->mode.vdisplay, mode_hz(&k->mode));
     return 0;
 fail:
     if (!r)
@@ -283,15 +323,17 @@ void kms_rm_fb(struct kms *k, uint32_t fb_id) {
     xioctl(k->fd, DRM_IOCTL_MODE_RMFB, &fb_id);
 }
 
+#define MAX_PROPS (KMS_MAX_PLANES * 16 + 8)
+
 struct req {
-    uint32_t objs[4], counts[4];
-    uint32_t props[24];
-    uint64_t vals[24];
+    uint32_t objs[KMS_MAX_PLANES + 4], counts[KMS_MAX_PLANES + 4];
+    uint32_t props[MAX_PROPS];
+    uint64_t vals[MAX_PROPS];
     int nobj, nprop;
 };
 
 static void add(struct req *q, uint32_t obj, uint32_t prop, uint64_t val) {
-    if (!prop)
+    if (!prop || q->nprop == MAX_PROPS)
         return;
     if (!q->nobj || q->objs[q->nobj - 1] != obj) {
         q->objs[q->nobj] = obj;
@@ -320,60 +362,165 @@ static int submit(struct kms *k, struct req *q, uint32_t flags,
     return r == -1 ? -errno : 0;
 }
 
-static void plane_props(struct kms *k, struct req *q, uint32_t fb,
-                        int in_fence) {
-    uint32_t w = k->mode.hdisplay, h = k->mode.vdisplay;
-    add(q, k->plane_id, k->plane_fb, fb);
-    add(q, k->plane_id, k->plane_crtc, k->crtc_id);
-    add(q, k->plane_id, k->plane_src_x, 0);
-    add(q, k->plane_id, k->plane_src_y, 0);
-    add(q, k->plane_id, k->plane_src_w, (uint64_t)w << 16);
-    add(q, k->plane_id, k->plane_src_h, (uint64_t)h << 16);
-    add(q, k->plane_id, k->plane_crtc_x, 0);
-    add(q, k->plane_id, k->plane_crtc_y, 0);
-    add(q, k->plane_id, k->plane_crtc_w, w);
-    add(q, k->plane_id, k->plane_crtc_h, h);
-    if (in_fence >= 0)
-        add(q, k->plane_id, k->plane_in_fence, (uint64_t)(int64_t)in_fence);
+static uint64_t fixed(float v) {
+    return (uint64_t)llroundf(v * 65536.0f);
+}
+
+static void plane_on(struct kms *k, struct req *q, const struct kms_plane *p,
+                     const struct kms_layer *l, int zpos) {
+    add(q, p->id, p->p_fb, l->fb);
+    add(q, p->id, p->p_crtc, k->crtc_id);
+    add(q, p->id, p->p_sx, fixed(l->sx));
+    add(q, p->id, p->p_sy, fixed(l->sy));
+    add(q, p->id, p->p_sw, fixed(l->sw));
+    add(q, p->id, p->p_sh, fixed(l->sh));
+    add(q, p->id, p->p_cx, (uint64_t)(int64_t)l->dx);
+    add(q, p->id, p->p_cy, (uint64_t)(int64_t)l->dy);
+    add(q, p->id, p->p_cw, (uint64_t)l->dw);
+    add(q, p->id, p->p_ch, (uint64_t)l->dh);
+    add(q, p->id, p->p_alpha, l->alpha);
+    add(q, p->id, p->p_zpos, (uint64_t)zpos);
+    add(q, p->id, p->p_blend, l->premultiplied ? p->blend_premult : p->blend_none);
+    if (l->in_fence >= 0)
+        add(q, p->id, p->p_in_fence, (uint64_t)(int64_t)l->in_fence);
     /* exynos-drm resolves HDR_FD as a file descriptor of the committing
      * process on every commit and vmaps it as HDR coefficients. The HWC
      * leaves its own fd number in the plane state (16 on this firmware); in
      * another process that number is an unrelated file or one of our
      * dmabufs, which hdr_prepare_context() then memcpy()s past its buffer:
      * a kernel panic. Always clear it. */
-    add(q, k->plane_id, k->plane_hdr_fd, (uint64_t)(int64_t)-1);
+    add(q, p->id, p->p_hdr_fd, (uint64_t)(int64_t)-1);
 }
 
-int kms_commit(struct kms *k, uint32_t fb, int in_fence, int modeset,
-               uint64_t user_data) {
+static void plane_off(struct req *q, const struct kms_plane *p) {
+    add(q, p->id, p->p_fb, 0);
+    add(q, p->id, p->p_crtc, 0);
+    add(q, p->id, p->p_hdr_fd, (uint64_t)(int64_t)-1);
+}
+
+int kms_commit_layers(struct kms *k, const struct kms_layer *layers, int n,
+                      int flags, uint64_t user_data) {
     struct req q = {0};
-    if (modeset) {
+    if (flags & KMS_MODESET) {
         add(&q, k->crtc_id, k->crtc_active_prop, 1);
         add(&q, k->crtc_id, k->crtc_mode_prop, k->mode_blob);
         add(&q, k->crtc_id, k->crtc_dqe_fd, (uint64_t)(int64_t)-1);
         add(&q, k->conn_id, k->conn_crtc_prop, k->crtc_id);
-        plane_props(k, &q, fb, in_fence);
-        int r = submit(k, &q, DRM_MODE_ATOMIC_ALLOW_MODESET, 0);
-        if (!r)
-            k->crtc_active = 1;
-        return r;
     }
-    plane_props(k, &q, fb, in_fence);
-    return submit(k, &q, DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT,
-                  user_data);
+    int used[KMS_MAX_PLANES] = {0};
+    for (int i = 0; i < n; i++) {
+        int p = layers[i].plane;
+        if (p < 0 || p >= k->nplanes || used[p])
+            return -EINVAL;
+        used[p] = 1;
+        plane_on(k, &q, &k->planes[p], &layers[i], i);
+    }
+    for (int p = 0; p < k->nplanes; p++)
+        if (!used[p])
+            plane_off(&q, &k->planes[p]);
+    uint32_t f = 0;
+    if (flags & KMS_TEST)
+        f |= DRM_MODE_ATOMIC_TEST_ONLY;
+    if (flags & KMS_MODESET)
+        f |= DRM_MODE_ATOMIC_ALLOW_MODESET;
+    else if ((flags & KMS_FLIP) && !(flags & KMS_TEST))
+        f |= DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT;
+    int r = submit(k, &q, f, user_data);
+    if (!r && (flags & KMS_MODESET) && !(flags & KMS_TEST))
+        k->crtc_active = 1;
+    return r;
+}
+
+static struct kms_layer full_screen(const struct kms *k, uint32_t fb,
+                                    int in_fence) {
+    struct kms_layer l = {
+        .fb = fb,
+        .sw = k->mode.hdisplay,
+        .sh = k->mode.vdisplay,
+        .dw = k->mode.hdisplay,
+        .dh = k->mode.vdisplay,
+        .alpha = 0xffff,
+        .in_fence = in_fence,
+        .plane = k->primary,
+    };
+    return l;
+}
+
+void kms_probe_scalers(struct kms *k, uint32_t fb) {
+    k->nscalers = 0;
+    for (int i = 0; i < k->nplanes; i++) {
+        if (i == k->primary)
+            continue;
+        struct kms_layer l[2] = {full_screen(k, fb, -1), full_screen(k, fb, -1)};
+        l[1].plane = i;
+        l[1].dx = 100;
+        l[1].dy = 200;
+        l[1].dw = k->mode.hdisplay * 6 / 10;
+        l[1].dh = k->mode.vdisplay * 6 / 10;
+        k->planes[i].scaler = !kms_commit_layers(k, l, 2, KMS_TEST, 0);
+        k->nscalers += k->planes[i].scaler;
+    }
+    fprintf(stderr, "kms: scaling planes:");
+    for (int i = 0; i < k->nplanes; i++)
+        if (k->planes[i].scaler)
+            fprintf(stderr, " %u", k->planes[i].id);
+    fprintf(stderr, "\n");
+}
+
+int kms_assign(struct kms *k, struct kms_layer *layers, int n) {
+    if (n > k->nplanes)
+        return -1;
+    int taken[KMS_MAX_PLANES] = {0};
+    for (int i = 0; i < n; i++) {
+        struct kms_layer *l = &layers[i];
+        int scaled = fabsf(l->sw - (float)l->dw) > 0.5f ||
+                     fabsf(l->sh - (float)l->dh) > 0.5f;
+        int pick = -1;
+        if (!scaled && i == 0 && !taken[k->primary])
+            pick = k->primary;
+        /* Unscaled layers take non-scaling planes first, keeping the
+         * scalers for the layers that need them. */
+        for (int pass = 0; pass < 2 && pick < 0; pass++)
+            for (int p = 0; p < k->nplanes && pick < 0; p++) {
+                if (taken[p] || p == k->primary)
+                    continue;
+                if (scaled ? !k->planes[p].scaler
+                           : k->planes[p].scaler != (pass == 1))
+                    continue;
+                pick = p;
+            }
+        if (pick < 0 && !scaled && !taken[k->primary])
+            pick = k->primary;
+        if (pick < 0)
+            return -1;
+        taken[pick] = 1;
+        l->plane = pick;
+    }
+    return 0;
+}
+
+int kms_commit(struct kms *k, uint32_t fb, int in_fence, int modeset,
+               uint64_t user_data) {
+    struct kms_layer l = full_screen(k, fb, in_fence);
+    return kms_commit_layers(k, &l, 1, modeset ? KMS_MODESET : KMS_FLIP,
+                             user_data);
 }
 
 int kms_commit_blocking(struct kms *k, uint32_t fb) {
-    struct req q = {0};
-    plane_props(k, &q, fb, -1);
-    return submit(k, &q, 0, 0);
+    struct kms_layer l = full_screen(k, fb, -1);
+    return kms_commit_layers(k, &l, 1, 0, 0);
 }
 
 int kms_set_active(struct kms *k, int active, uint32_t fb) {
     struct req q = {0};
     add(&q, k->crtc_id, k->crtc_active_prop, (uint64_t)active);
-    if (active)
-        plane_props(k, &q, fb, -1);
+    if (active) {
+        struct kms_layer l = full_screen(k, fb, -1);
+        plane_on(k, &q, &k->planes[k->primary], &l, 0);
+        for (int p = 0; p < k->nplanes; p++)
+            if (p != k->primary)
+                plane_off(&q, &k->planes[p]);
+    }
     int r = submit(k, &q, DRM_MODE_ATOMIC_ALLOW_MODESET, 0);
     if (!r)
         k->crtc_active = active;

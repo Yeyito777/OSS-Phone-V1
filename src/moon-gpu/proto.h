@@ -1,4 +1,4 @@
-/* moon-compositor's wire protocol (version 1).
+/* moon-compositor's wire protocol (version 2).
  *
  * One client (Moon) on a SOCK_SEQPACKET Unix socket: every message is one
  * packet, a header followed by its body, little-endian, 4-byte aligned. File
@@ -14,7 +14,7 @@
 
 #include <stdint.h>
 
-#define MG_PROTO_VERSION 1
+#define MG_PROTO_VERSION 2
 #define MG_MIRROR_ID 0xffffffffu
 #define MG_MAX_PACKET (64 * 1024)
 
@@ -50,11 +50,18 @@ struct mg_hello {
     uint32_t version;
 };
 
+enum mg_caps {
+    MG_CAP_GPU = 1,    /* frames the planes cannot show are drawn by the GPU */
+    MG_CAP_PLANES = 2, /* frames that fit go straight to display planes */
+};
+
 struct mg_welcome {
     uint32_t version;
     uint32_t width, height;
     uint32_t refresh_mhz; /* 120000 at 120 Hz */
     uint64_t period_ns;
+    uint32_t caps;
+    uint32_t reserved;
 };
 
 /* Pixel formats of shared-memory surfaces: Moon's canvases, 32 bits per
@@ -64,10 +71,18 @@ enum mg_format {
     MG_ARGB8888 = 2, /* premultiplied */
 };
 
+enum mg_surface_flags {
+    /* The fd is a dmabuf (a cached dma-heap buffer the client writes with
+     * DMA_BUF_IOCTL_SYNC): the compositor samples it in place and may scan
+     * it out on a plane. Otherwise a memfd, copied on each damage. */
+    MG_SURFACE_DMABUF = 1,
+};
+
 struct mg_surface_shm {
     uint32_t id;
     uint32_t width, height, stride;
     uint32_t format;
+    uint32_t flags;
 };
 
 struct mg_damage {
@@ -83,12 +98,15 @@ struct mg_uploaded {
 };
 
 /* Copies `src` (surface or MG_MIRROR_ID, in its pixels) scaled to a new
- * width x height surface `id`. */
+ * width x height surface `id`, with transparent rounded corners of `radius`
+ * (in the copy's pixels) when it is positive: such a copy can show on a
+ * display plane where a frame asks for those corners. */
 struct mg_surface_copy {
     uint32_t id;
     uint32_t source;
     float src_x, src_y, src_w, src_h;
     uint32_t width, height;
+    float radius;
 };
 
 struct mg_id {
@@ -132,11 +150,19 @@ struct mg_frame {
     /* struct mg_node nodes[count]; */
 };
 
+enum mg_path {
+    MG_PATH_PLANES = 1,
+    MG_PATH_GPU = 2,
+    MG_PATH_CPU = 3,
+};
+
 struct mg_presented {
     uint32_t serial;
     uint32_t sequence; /* vblank counter */
     uint64_t time_ns;  /* CLOCK_MONOTONIC vblank time of the flip */
-    uint64_t render_ns; /* submit to GPU done */
+    uint64_t render_ns; /* submit to drawing done (0 for planes) */
+    uint32_t path;      /* mg_path */
+    uint32_t reserved;
 };
 
 struct mg_power {

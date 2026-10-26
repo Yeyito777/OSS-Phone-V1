@@ -38,9 +38,11 @@ uint64_t render_frame(struct renderer *r, const struct texture *base,
                       const struct mg_node *nodes, uint32_t count,
                       texture_lookup lookup, void *ctx);
 
-/* Copies src (pixels of `from`) into a new width x height texture. */
-int render_copy(struct renderer *r, const struct texture *from, float sx,
-                float sy, float sw, float sh, int width, int height,
-                struct texture *out);
+/* Copies src (pixels of `from`) into all of the bound framebuffer (width x
+ * height), with transparent (premultiplied) rounded corners of `radius`
+ * when it is positive. */
+void render_copy(struct renderer *r, const struct texture *from, float sx,
+                 float sy, float sw, float sh, int width, int height,
+                 float radius);
 
 #endif

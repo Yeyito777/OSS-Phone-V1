@@ -209,36 +209,12 @@ uint64_t render_frame(struct renderer *r, const struct texture *base,
     return fragments;
 }
 
-int render_copy(struct renderer *r, const struct texture *from, float sx,
-                float sy, float sw, float sh, int width, int height,
-                struct texture *out) {
-    memset(out, 0, sizeof *out);
-    out->target = GL_TEXTURE_2D;
-    out->width = width;
-    out->height = height;
-    out->opaque = from->opaque;
-    glGenTextures(1, &out->id);
-    glBindTexture(GL_TEXTURE_2D, out->id);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height);
-    GLuint fbo;
-    glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                           out->id, 0);
-    int ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-    if (ok) {
-        glViewport(0, 0, width, height);
-        glDisable(GL_BLEND);
-        int scaled = (int)sw != width || (int)sh != height;
-        draw_image(r, from, sx, sy, sw, sh, 0, 0, (float)width, (float)height,
-                   1, 1, 0, scaled, (float)width, (float)height);
-    }
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glDeleteFramebuffers(1, &fbo);
-    if (!ok) {
-        glDeleteTextures(1, &out->id);
-        out->id = 0;
-        return -1;
-    }
-    return 0;
+void render_copy(struct renderer *r, const struct texture *from, float sx,
+                 float sy, float sw, float sh, int width, int height,
+                 float radius) {
+    glViewport(0, 0, width, height);
+    glDisable(GL_BLEND);
+    int scaled = (int)sw != width || (int)sh != height;
+    draw_image(r, from, sx, sy, sw, sh, 0, 0, (float)width, (float)height, 1, 1,
+               radius, scaled, (float)width, (float)height);
 }

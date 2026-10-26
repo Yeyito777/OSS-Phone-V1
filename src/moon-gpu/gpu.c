@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <linux/dma-heap.h>
 #include <linux/sync_file.h>
+#include <GLES2/gl2ext.h>
 
 #ifndef EGL_LINUX_DMA_BUF_EXT
 #define EGL_LINUX_DMA_BUF_EXT 0x3270
@@ -185,6 +186,38 @@ void gpu_target_fini(struct gpu *g, struct gpu_target *t) {
         close(t->fd);
     memset(t, 0, sizeof *t);
     t->fd = -1;
+}
+
+GLenum gpu_import_texture(struct gpu *g, int fd, uint32_t width, uint32_t height,
+                          uint32_t pitch, uint32_t fourcc, EGLImageKHR *image,
+                          GLuint *texture) {
+    EGLint attr[] = {EGL_WIDTH, (EGLint)width, EGL_HEIGHT, (EGLint)height,
+                     EGL_LINUX_DRM_FOURCC_EXT, (EGLint)fourcc,
+                     EGL_DMA_BUF_PLANE0_FD_EXT, fd,
+                     EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
+                     EGL_DMA_BUF_PLANE0_PITCH_EXT, (EGLint)pitch, EGL_NONE};
+    *image = g->create_image(g->dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
+                             NULL, attr);
+    if (*image == EGL_NO_IMAGE_KHR) {
+        fprintf(stderr, "gpu: dmabuf EGLImage (%ux%u, pitch %u): 0x%x\n", width,
+                height, pitch, eglGetError());
+        return 0;
+    }
+    GLenum targets[2] = {GL_TEXTURE_2D, GL_TEXTURE_EXTERNAL_OES};
+    for (int i = 0; i < 2; i++) {
+        glGenTextures(1, texture);
+        glBindTexture(targets[i], *texture);
+        while (glGetError())
+            ;
+        g->image_target_tex(targets[i], *image);
+        if (!glGetError())
+            return targets[i];
+        glDeleteTextures(1, texture);
+    }
+    g->destroy_image(g->dpy, *image);
+    *image = EGL_NO_IMAGE_KHR;
+    *texture = 0;
+    return 0;
 }
 
 int gpu_fence(struct gpu *g) {

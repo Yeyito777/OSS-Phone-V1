@@ -113,6 +113,10 @@ fi
 if [ -d /data/local/tmp/moon-suspend ]; then
     bind_mount /data/local/tmp/moon-suspend "$A26_ROOT/run/moon-suspend"
 fi
+# GPU mode: moon-compositor (Android side) listens on a socket in here.
+if [ -d /data/local/tmp/moon-gpu ]; then
+    bind_mount /data/local/tmp/moon-gpu "$A26_ROOT/run/moon-gpu"
+fi
 
 # Android commonly has no useful /etc/resolv.conf.  Prefer any actual host
 # nameserver, then legacy net.dns properties, then explicit public fallbacks.

@@ -41,6 +41,13 @@ int gpu_target_init(struct gpu *g, struct gpu_target *t, int fd,
                     uint32_t fourcc);
 void gpu_target_fini(struct gpu *g, struct gpu_target *t);
 
+/* Imports a dmabuf as an EGLImage and a texture bound to it (GL_TEXTURE_2D,
+ * or GL_TEXTURE_EXTERNAL_OES if the driver insists). Returns the target or
+ * 0 on failure. */
+GLenum gpu_import_texture(struct gpu *g, int fd, uint32_t width, uint32_t height,
+                          uint32_t pitch, uint32_t fourcc, EGLImageKHR *image,
+                          GLuint *texture);
+
 /* After the frame's draws: a native fence fd that signals when the GPU is
  * done (flushes), or -1 (then the frame was finished synchronously). */
 int gpu_fence(struct gpu *g);

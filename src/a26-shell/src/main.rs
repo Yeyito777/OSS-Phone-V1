@@ -9,6 +9,7 @@ mod config;
 mod display_power;
 mod freezer;
 mod gfx;
+mod gpu;
 mod input;
 mod interaction;
 mod ipc;
@@ -49,9 +50,11 @@ use ui::{KeypadAction, Renderer, StatusInfo};
 use volume::VolumeSurface;
 use x11rb::connection::{Connection, RequestConnection as _};
 use x11rb::protocol::Event;
+use x11rb::protocol::damage::ConnectionExt as _;
 use x11rb::protocol::dpms::{self, ConnectionExt as _};
 use x11rb::protocol::present::{self as xpresent, ConnectionExt as _};
 use x11rb::protocol::render::{self, ConnectionExt as _};
+use x11rb::protocol::shm::ConnectionExt as _;
 use x11rb::protocol::xfixes::ConnectionExt as _;
 use x11rb::protocol::xinput::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
@@ -236,15 +239,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         conn.dpms_force_level(dpms::DPMSMode::ON)?.check()?;
         conn.dpms_disable()?.check()?;
     }
-    let display_power = DisplayPower::new(dpms_available);
-    eprintln!(
-        "screen-off panel power: {}",
-        if dpms_available {
-            "DPMS"
-        } else {
-            "backlight only"
-        }
-    );
+    let mut display_power = DisplayPower::new(dpms_available);
     let raw_touch_mask = xinput::XIEventMask::RAW_TOUCH_BEGIN
         | xinput::XIEventMask::RAW_TOUCH_UPDATE
         | xinput::XIEventMask::RAW_TOUCH_END;
@@ -350,7 +345,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // MOON_PROFILE=1 logs every presented frame and a summary per animation.
     let mut profile_frames = env::var_os("MOON_PROFILE").is_some();
     let mut last_animation: Option<String> = None;
-    let compositor = Compositor::new(
+    let mut compositor = Compositor::new(
         &conn,
         shell_window,
         root,
@@ -360,14 +355,37 @@ fn main() -> Result<(), Box<dyn Error>> {
         present_event,
         profile_frames,
     )?;
-    eprintln!(
-        "compositor: RENDER, {}",
-        if compositor.present_enabled() {
-            "vblank-paced through Present"
-        } else {
-            "timer-paced (Present unavailable)"
+    // GPU mode: moon-compositor owns the panel and Xorg is headless (see
+    // gpu.rs); the supervisor sets MOON_GPU_SOCKET only when it started.
+    if let Some(socket) = env::var_os("MOON_GPU_SOCKET") {
+        // The X mirror needs MIT-SHM fd passing and DAMAGE.
+        let shm = conn.shm_query_version()?.reply()?;
+        if (shm.major_version, shm.minor_version) < (1, 2) {
+            return Err("GPU mode needs MIT-SHM 1.2 (fd passing)".into());
         }
-    );
+        conn.damage_query_version(1, 1)?.reply()?;
+        let (gpu, link) = gpu::GpuBackend::connect(
+            &conn,
+            root,
+            PathBuf::from(socket),
+            width,
+            height,
+            profile_frames,
+        )?;
+        compositor.attach_gpu(gpu);
+        display_power = DisplayPower::gpu(link);
+        eprintln!("compositor: GPU (moon-compositor), vblank-paced by its page flips");
+    } else {
+        eprintln!(
+            "compositor: RENDER, {}",
+            if compositor.present_enabled() {
+                "vblank-paced through Present"
+            } else {
+                "timer-paced (Present unavailable)"
+            }
+        );
+    }
+    eprintln!("screen-off panel power: {}", display_power.describe());
     let mut renderer = Renderer::new(
         &conn,
         compositor,
@@ -833,6 +851,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         if state.shell_covers_app() {
             raise_shell(&conn, shell_window)?;
         }
+        if renderer.compositor.gpu() {
+            // An app in front: the compositor shows the X mirror by itself.
+            let mirror = state.screen_awake && state.view.is_app() && !state.shell_covers_app();
+            renderer.compositor.dispatch_gpu(&conn, mirror);
+        }
         // Frames: one per vblank while anything moves, otherwise only when
         // something changed. Every frame samples the model at the time it
         // will reach the panel.
@@ -1047,6 +1070,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             &ipc,
             power_key.as_ref(),
             volume_keys.as_ref(),
+            renderer.compositor.gpu_fd(),
             &app_fds,
             notifyd.poll_fd(),
             deadline.saturating_duration_since(now),
@@ -1187,6 +1211,7 @@ fn wait_for_activity(
     ipc: &IpcServer,
     power_key: Option<&PowerKey>,
     volume_keys: Option<&VolumeKeys>,
+    gpu_fd: Option<RawFd>,
     app_fds: &[RawFd],
     notify: Option<(RawFd, bool)>,
     timeout: Duration,
@@ -1206,6 +1231,9 @@ fn wait_for_activity(
     }
     if let Some(device) = volume_keys {
         add(device.raw_fd());
+    }
+    if let Some(fd) = gpu_fd {
+        add(fd);
     }
     for fd in app_fds {
         add(*fd);
