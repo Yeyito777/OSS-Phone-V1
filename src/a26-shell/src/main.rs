@@ -35,6 +35,8 @@ mod text;
 mod ui;
 mod volume;
 mod wallpaper;
+mod wayland;
+mod wl_apps;
 
 use std::env;
 use std::error::Error;
@@ -450,6 +452,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let mut idle_dim_applied = false;
     let mut apps = AppRegistry::from_environment();
+    // Wayland apps (milestone 1, opt-in): MOON_WAYLAND_DIR names the private
+    // runtime directory for the socket. Apps get WAYLAND_DISPLAY with it.
+    let mut wayland = match env::var_os("MOON_WAYLAND_DIR") {
+        Some(dir) => {
+            let dir = PathBuf::from(dir);
+            match std::fs::create_dir_all(&dir)
+                .map_err(Box::<dyn Error>::from)
+                .and_then(|()| wl_apps::WaylandApps::new(&conn, root, width, height, &dir))
+            {
+                Ok(server) => {
+                    apps.set_child_env(server.client_env());
+                    eprintln!(
+                        "wayland: serving apps at {}",
+                        dir.join("wayland-0").display()
+                    );
+                    Some(server)
+                }
+                Err(error) => {
+                    eprintln!("wayland: server unavailable: {error}");
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     if let Some(control) = audio_volume.as_ref()
         && let Err(error) = control.set(state.volume)
     {
@@ -554,6 +581,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut sleep_retries = 0_u32;
     while !state.should_exit {
         while let Some(event) = conn.poll_for_event()? {
+            if let Some(server) = wayland.as_mut()
+                && server.handle_x_event(&event)
+            {
+                continue;
+            }
             if renderer.compositor.handle_event(&event) {
                 continue;
             }
@@ -578,6 +610,55 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &mut status_bar_surface,
                 key_repeat_timing,
             )?;
+        }
+
+        if let Some(server) = wayland.as_mut() {
+            for action in server.dispatch(&conn) {
+                match action {
+                    wl_apps::Action::Manage { window, owner } => manage_window(
+                        &conn,
+                        window,
+                        owner,
+                        true,
+                        shell_window,
+                        (width, height),
+                        &keyboard_geometry,
+                        &mut state,
+                        &mut apps,
+                        &mut status_bar_surface,
+                    )?,
+                    wl_apps::Action::Keyboard { window, show } => {
+                        // Only the app in front opens Moon's keyboard.
+                        let in_front = window
+                            .is_none_or(|window| state.managed_windows.first() == Some(&window));
+                        match show {
+                            Some(purpose) if in_front => {
+                                state.show_keyboard(purpose);
+                            }
+                            Some(_) => {}
+                            None => state.hide_keyboard(),
+                        }
+                    }
+                }
+            }
+            state.wayland_windows = state
+                .managed_windows
+                .iter()
+                .copied()
+                .filter(|window| server.is_proxy(*window))
+                .collect();
+            for input in std::mem::take(&mut state.wayland_keys) {
+                if !server.key_input(input) {
+                    // Never log the key: password input stays ephemeral.
+                    eprintln!("wayland: keyboard input had no focused client");
+                }
+            }
+            // A Moon gesture (the home swipe, the switcher) owns the touch now.
+            if server.touch_active()
+                && (state.gesture.is_some() || !state.view.is_app() || state.shell_covers_app())
+            {
+                server.cancel_touch();
+            }
         }
 
         cancel_stale_pointer(&mut state, &mut raw_touch, Instant::now());
@@ -1226,7 +1307,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Some(brightness_deadline) = brightness.next_deadline() {
             deadline = deadline.min(brightness_deadline.max(now));
         }
-        let app_fds = apps.poll_fds();
+        let mut app_fds = apps.poll_fds();
+        if let Some(server) = wayland.as_mut() {
+            app_fds.extend(server.poll_fds());
+            if let Some(frame) = server.tick(Instant::now(), state.screen_awake) {
+                deadline = deadline.min(frame);
+            }
+        }
         wait_for_activity(
             &WaitSources {
                 conn: &conn,
@@ -1695,68 +1782,18 @@ fn handle_x_event(
                 && event.window != status_bar_window
                 && event.window != banner_window
             {
-                // A MapRequest is handled inside the current app lifecycle. Do
-                // not synchronously query WM_TRANSIENT_FOR on Moon's long-lived
-                // X connection: any runtime reply wait can hit the same wrapped
-                // sequence ambiguity that previously froze keyboard input.
-                // Known windows retain their owner; new primary/popup windows
-                // belong to the app that Moon deliberately launched or resumed.
-                let owner = apps.owner_of(event.window).or_else(|| apps.active());
-                let registration = owner.map(|owner| apps.register_window(owner, event.window));
-                let should_show = registration
-                    .as_ref()
-                    .is_none_or(|registration| registration.should_show);
-                if registration.is_some() {
-                    // Focus events on the managed top-level also report focus
-                    // entering/leaving its descendants. This preserves CEF's
-                    // exact page/textfield focus without a synchronous query.
-                    let _ = conn.change_window_attributes(
-                        event.window,
-                        &ChangeWindowAttributesAux::new().event_mask(EventMask::FOCUS_CHANGE),
-                    )?;
-                }
-                let is_active = registration
-                    .as_ref()
-                    .is_some_and(|registration| apps.active() == Some(registration.owner));
-                let is_primary = registration
-                    .as_ref()
-                    .is_some_and(|registration| registration.primary);
-                if is_active {
-                    let app_height = if is_primary && state.keyboard.is_visible() {
-                        keyboard_geometry.app_height()
-                    } else {
-                        height
-                    };
-                    if state.shell_covers_app() {
-                        // A new window is created at the top of the stack.
-                        // Put the shell back above it before it maps so the
-                        // launch screen never flickers to a half-painted app.
-                        resize_app_window(conn, event.window, width, app_height)?;
-                        raise_shell(conn, shell_window)?;
-                    } else {
-                        fullscreen_window(conn, event.window, width, app_height)?;
-                    }
-                }
-                if should_show {
-                    conn.map_window(event.window)?;
-                    let _ = conn.xfixes_hide_cursor(event.window)?;
-                }
-                state.replace_managed_windows(apps.active_windows());
-                if is_active {
-                    state.last_action = "map_external_window".into();
-                    state.redraw = true;
-                    if state.shell_covers_app() {
-                        if is_primary {
-                            state.note_app_window_mapped();
-                        }
-                    } else if is_primary {
-                        conn.set_input_focus(InputFocus::PARENT, event.window, CURRENT_TIME)?;
-                    }
-                    state.keyboard.request_raise();
-                    status_bar_surface.request_raise();
-                } else {
-                    raise_shell(conn, shell_window)?;
-                }
+                manage_window(
+                    conn,
+                    event.window,
+                    None,
+                    false,
+                    shell_window,
+                    dimensions,
+                    keyboard_geometry,
+                    state,
+                    apps,
+                    status_bar_surface,
+                )?;
             }
         }
         Event::ConfigureRequest(event) => {
@@ -1858,6 +1895,90 @@ fn handle_x_event(
             eprintln!("X keyboard mapping changed; refresh deferred until restart");
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Takes a new app window into Moon's management: the X11 MapRequest path,
+/// and the Wayland proxy of a toplevel's first content (`owner` then names
+/// the app its process belongs to).
+#[allow(clippy::too_many_arguments)]
+fn manage_window(
+    conn: &RustConnection,
+    window: u32,
+    owner: Option<AppId>,
+    wayland_proxy: bool,
+    shell_window: u32,
+    dimensions: (u16, u16),
+    keyboard_geometry: &KeyboardGeometry,
+    state: &mut ShellState,
+    apps: &mut AppRegistry,
+    status_bar_surface: &mut StatusBarSurface,
+) -> Result<(), Box<dyn Error>> {
+    let (width, height) = dimensions;
+    // A MapRequest is handled inside the current app lifecycle. Do
+    // not synchronously query WM_TRANSIENT_FOR on Moon's long-lived
+    // X connection: any runtime reply wait can hit the same wrapped
+    // sequence ambiguity that previously froze keyboard input.
+    // Known windows retain their owner; new primary/popup windows
+    // belong to the app that Moon deliberately launched or resumed.
+    let owner = apps.owner_of(window).or(owner).or_else(|| apps.active());
+    let registration = owner.map(|owner| apps.register_window(owner, window));
+    let should_show = registration
+        .as_ref()
+        .is_none_or(|registration| registration.should_show);
+    if registration.is_some() && !wayland_proxy {
+        // Focus events on the managed top-level also report focus
+        // entering/leaving its descendants. This preserves CEF's
+        // exact page/textfield focus without a synchronous query.
+        // (A Wayland proxy is Moon's own window and already selects
+        // focus, structure and button events.)
+        let _ = conn.change_window_attributes(
+            window,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::FOCUS_CHANGE),
+        )?;
+    }
+    let is_active = registration
+        .as_ref()
+        .is_some_and(|registration| apps.active() == Some(registration.owner));
+    let is_primary = registration
+        .as_ref()
+        .is_some_and(|registration| registration.primary);
+    if is_active {
+        let app_height = if is_primary && state.keyboard.is_visible() {
+            keyboard_geometry.app_height()
+        } else {
+            height
+        };
+        if state.shell_covers_app() {
+            // A new window is created at the top of the stack.
+            // Put the shell back above it before it maps so the
+            // launch screen never flickers to a half-painted app.
+            resize_app_window(conn, window, width, app_height)?;
+            raise_shell(conn, shell_window)?;
+        } else {
+            fullscreen_window(conn, window, width, app_height)?;
+        }
+    }
+    if should_show {
+        conn.map_window(window)?;
+        let _ = conn.xfixes_hide_cursor(window)?;
+    }
+    state.replace_managed_windows(apps.active_windows());
+    if is_active {
+        state.last_action = "map_external_window".into();
+        state.redraw = true;
+        if state.shell_covers_app() {
+            if is_primary {
+                state.note_app_window_mapped();
+            }
+        } else if is_primary {
+            conn.set_input_focus(InputFocus::PARENT, window, CURRENT_TIME)?;
+        }
+        state.keyboard.request_raise();
+        status_bar_surface.request_raise();
+    } else {
+        raise_shell(conn, shell_window)?;
     }
     Ok(())
 }
@@ -2749,6 +2870,16 @@ fn inject_keyboard_input(
     key_injector: &XtestInjector,
     success_action: Option<&'static str>,
 ) {
+    // A Wayland app gets its keys from the Wayland server, after the events.
+    if let Some(primary) = state.managed_windows.first()
+        && state.wayland_windows.contains(primary)
+    {
+        state.wayland_keys.push(input);
+        if let Some(action) = success_action {
+            state.last_action = action.into();
+        }
+        return;
+    }
     let result = state
         .managed_windows
         .first()

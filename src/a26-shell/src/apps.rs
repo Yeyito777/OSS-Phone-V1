@@ -114,6 +114,8 @@ impl Application {
 
 pub struct AppRegistry {
     applications: [Application; AppId::COUNT],
+    /// Extra environment for every app (the Wayland server's socket).
+    child_env: Vec<(String, String)>,
     active: Option<AppId>,
     leases: LeaseManager,
 }
@@ -139,7 +141,12 @@ impl AppRegistry {
             ],
             active: None,
             leases: LeaseManager::default(),
+            child_env: Vec::new(),
         }
+    }
+
+    pub fn set_child_env(&mut self, env: Vec<(String, String)>) {
+        self.child_env = env;
     }
 
     pub fn active(&self) -> Option<AppId> {
@@ -324,6 +331,7 @@ impl AppRegistry {
         let Some(active) = desired else {
             return update;
         };
+        let child_env = self.child_env.clone();
         let application = self.app_mut(active);
         match application.lifecycle {
             AppLifecycle::Background if application.windows.is_empty() => {
@@ -358,6 +366,7 @@ impl AppRegistry {
                         "DISPLAY",
                         env::var("DISPLAY").unwrap_or_else(|_| ":0".into()),
                     )
+                    .envs(child_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
                     .stdin(Stdio::null());
                 if let Err(error) = application.freezer.configure_spawn(&mut command) {
                     eprintln!(
