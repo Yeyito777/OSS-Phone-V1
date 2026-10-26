@@ -70,7 +70,7 @@ pub enum Node {
     /// period of `STRIPE_PHASES` stripes, the first `phases`
     /// stripes come from `high` and the rest from `low`. Stepping `phases`
     /// by one redraws one stripe in each period, spread over the screen, so
-    /// a cross-fade costs an eighth of the screen per step and reads as a
+    /// a cross-fade costs a sixteenth of the screen per step and reads as a
     /// uniform in-between level (an ordered dither).
     Stripes {
         low: SurfaceId,
@@ -87,12 +87,12 @@ pub static STRIPE_ROWS: std::sync::atomic::AtomicI32 = std::sync::atomic::Atomic
 pub fn stripe_rows_height() -> i32 {
     STRIPE_ROWS.load(std::sync::atomic::Ordering::Relaxed)
 }
-pub const STRIPE_PHASES: u8 = 8;
+pub const STRIPE_PHASES: u8 = 16;
 
 /// The step at which each stripe of a period switches (bit reversal, an
-/// ordered dither): with k of 8 steps taken the switched stripes are spread
-/// as evenly as possible, e.g. every other stripe at four.
-const STRIPE_RANK: [u8; 8] = [0, 4, 2, 6, 1, 5, 3, 7];
+/// ordered dither): with k of 16 steps taken the switched stripes are
+/// spread as evenly as possible, e.g. every other stripe at eight.
+const STRIPE_RANK: [u8; 16] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
 
 impl Node {
     /// The surface stripe phase `phase` of a Stripes node shows.
@@ -106,7 +106,7 @@ impl Node {
 
 /// Screen rows of the stripes whose step is in `steps` (bit i = step i),
 /// within `area`; adjacent rows merge.
-fn stripe_rows(steps: u8, area: Damage) -> Vec<Damage> {
+fn stripe_rows(steps: u16, area: Damage) -> Vec<Damage> {
     let mut rows: Vec<Damage> = Vec::new();
     if steps == 0 {
         return rows;
@@ -330,7 +330,7 @@ pub struct Compositor {
     /// Diagnostics (`ctl profile skip MASK`): frame nodes not to draw.
     pub skip_nodes: u64,
     /// MOON_DEBUG_FRAMES=1 logs every frame's node list.
-    debug_frames: bool,
+    pub debug_frames: bool,
     pub stats: FrameStats,
 }
 
@@ -353,13 +353,23 @@ struct PresentState {
     /// refresh targets) that made it in time.
     half_rate_count: u32,
     probe_successes: u8,
+    /// Damage of the last submitted frame, which predicts the next one's.
+    last_damage_area: i64,
 }
+
+/// Damage that reliably fits a 120 Hz refresh on the A26's Xorg (a frame's
+/// cost is mostly copying its damaged pixels, twice).
+const SURE_FIT_AREA: i64 = 450_000;
 
 impl PresentState {
     /// Refreshes the next frame targets. At 60 Hz pacing every sixth frame
-    /// probes a single refresh, to return to 120 Hz once frames fit again.
+    /// probes a single refresh, to return to 120 Hz once frames fit again;
+    /// so does every frame after a small one (an animation's cheap tail).
     fn next_target_delta(&self) -> u64 {
-        if self.divisor == 2 && (self.half_rate_count + 1) % 6 != 0 {
+        if self.divisor == 2
+            && (self.half_rate_count + 1) % 6 != 0
+            && self.last_damage_area > SURE_FIT_AREA
+        {
             2
         } else {
             1
@@ -452,6 +462,7 @@ impl Compositor {
                     late_history: 0,
                     half_rate_count: 0,
                     probe_successes: 0,
+                    last_damage_area: 0,
                 })
             }
             None => None,
@@ -911,7 +922,7 @@ impl Compositor {
                 if let (Node::Stripes { .. }, Node::Stripes { .. }) = (old, new) {
                     // The stripes whose source changed, or whose unchanged
                     // source was redrawn while on screen.
-                    let mut changed = 0_u8;
+                    let mut changed = 0_u16;
                     for phase in 0..STRIPE_PHASES {
                         let (before, after) =
                             (old.stripe_surface(phase), new.stripe_surface(phase));
@@ -1094,6 +1105,7 @@ impl Compositor {
                 if present.divisor == 2 {
                     present.half_rate_count += 1;
                 }
+                present.last_damage_area = damage_area;
                 conn.xfixes_set_region(present.region, &clip)?;
                 conn.present_pixmap(
                     self.window,
@@ -1188,6 +1200,12 @@ impl Compositor {
     /// Appends what a node covers: its content tiles for an unscaled layer,
     /// otherwise its bounds.
     fn node_damage(&self, node: &Node, out: &mut Vec<Damage>) {
+        // An invisible node drew nothing and covers nothing.
+        if let Node::Image { alpha, .. } | Node::Fill { alpha, .. } = *node
+            && alpha <= 0.0
+        {
+            return;
+        }
         let Some(bounds) = self.node_bounds(node) else {
             return;
         };
@@ -1519,7 +1537,7 @@ impl Compositor {
                         self.draw_node(conn, &high_image, target, area, mask)?;
                     } else {
                         // The high stripes, within the frame's clip.
-                        let set = (1_u16 << phases) as u8 - 1;
+                        let set = ((1_u32 << phases) - 1) as u16;
                         let rows: Vec<Rectangle> = self
                             .clip
                             .iter()
@@ -2218,7 +2236,7 @@ mod tests {
             y1: 16,
         };
         let p = stripe_rows_height() * i32::from(STRIPE_PHASES);
-        // Step 0 is stripe 0; step 1 is stripe 4.
+        // Step 0 is stripe 0; step 1 is stripe 8.
         let rows = stripe_rows(0b11, area);
         assert_eq!(rows.len(), 2 * (16 / p) as usize);
         assert_eq!(
@@ -2230,11 +2248,11 @@ mod tests {
                 y1: stripe_rows_height()
             }
         );
-        assert_eq!(rows[1].y0, 4 * stripe_rows_height());
+        assert_eq!(rows[1].y0, 8 * stripe_rows_height());
         // All steps cover every row, merged into one rectangle.
-        assert_eq!(stripe_rows(0xff, area), vec![area]);
+        assert_eq!(stripe_rows(0xffff, area), vec![area]);
         assert!(stripe_rows(0, area).is_empty());
-        // Four steps alternate stripes.
+        // Four steps take every fourth stripe.
         let half = stripe_rows(
             0b1111,
             Damage {

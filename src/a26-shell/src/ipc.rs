@@ -31,6 +31,8 @@ pub enum Command {
     /// Diagnostics: background stripe height and fade steps per frame.
     ProfileStripes(i32),
     ProfileSteps(u32),
+    /// Diagnostics: log every composed frame's nodes.
+    ProfileFrames(bool),
     LaunchSystem,
     LaunchBrowser,
     KeyboardShow(KeyboardPurpose),
@@ -176,6 +178,7 @@ fn parse_command(line: &str) -> Result<Command, String> {
                     .filter(|steps| (1..=8).contains(steps))
                     .ok_or("profile steps requires 1..8")?,
             ),
+            Some("frames") => Command::ProfileFrames(parts.next() == Some("on")),
             Some("skip") => Command::ProfileSkip(
                 parts
                     .next()

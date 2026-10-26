@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use x11rb::connection::Connection;
 
-use crate::backdrop::{DIM_STEP, DimLevels, StripeFade};
+use crate::backdrop::{DimLevels, StripeFade};
 use crate::clock::LocalTime;
 use crate::compositor::{Compositor, Frame, Node, SurfaceId};
 use crate::gfx::{self, Canvas, Image, Path, RectF, Rgb};
@@ -316,15 +316,12 @@ pub struct Renderer {
     pub compositor: Compositor,
     wallpaper: Canvas,
     wall: SurfaceId,
-    /// The wallpaper darkened toward the keypad's dim, a level per DIM_STEP.
+    /// The wallpaper darkened toward the keypad's dim.
     wall_levels: DimLevels,
     /// The home screen darkened toward the switcher's dim.
     home_levels: DimLevels,
     lock_fade: StripeFade,
     home_fade: StripeFade,
-    /// The targets (in levels) of the last frame, for `settling`.
-    lock_target: f32,
-    home_target: f32,
     /// The lock/home split of the previous frame, to start a screen's
     /// background at its level rather than fading into it.
     last_locked: Option<bool>,
@@ -369,10 +366,10 @@ fn home_dim(state: &ShellState, t: Instant) -> f32 {
     DIMMED * unlock_progress(state, t)
 }
 
-/// Wallpaper levels for the keypad's dim (7 x 0.06 = 0.42).
-const LOCK_DIM_LEVELS: u32 = 7;
-/// Home-screen levels for the switcher's dim (9 x 0.06 = 0.54).
-const HOME_DIM_LEVELS: u32 = 9;
+/// Wallpaper levels for the keypad's dim.
+const LOCK_DIMS: [f32; 2] = [DIMMED / 2.0, DIMMED];
+/// Home-screen levels: the keypad's dim (unlock), then the switcher's.
+const HOME_DIMS: [f32; 3] = [DIMMED / 2.0, DIMMED, SWITCHER_DIM];
 const SPINNER_SIZE: i32 = 96;
 const LABEL_W: i32 = 640;
 const LABEL_H: i32 = 96;
@@ -390,7 +387,7 @@ impl Renderer {
         let wallpaper = wallpaper(w, h);
         let wall = compositor.create_layer(conn, width, height, false)?;
         compositor.upload(conn, wall, &wallpaper)?;
-        let mut wall_levels = DimLevels::new(wall, LOCK_DIM_LEVELS as usize);
+        let mut wall_levels = DimLevels::new(wall, &LOCK_DIMS);
         wall_levels.ensure(conn, &mut compositor)?;
         let icons = [AppIcon::new(AppId::System), AppIcon::new(AppId::Browser)];
         let mut icon_layers = [wall; 2];
@@ -451,11 +448,9 @@ impl Renderer {
             wallpaper,
             wall,
             wall_levels,
-            home_levels: DimLevels::new(wall, HOME_DIM_LEVELS as usize),
+            home_levels: DimLevels::new(wall, &HOME_DIMS),
             lock_fade: StripeFade::default(),
             home_fade: StripeFade::default(),
-            lock_target: 0.0,
-            home_target: 0.0,
             last_locked: None,
             backlight_fades: false,
             icons,
@@ -464,7 +459,7 @@ impl Renderer {
             snapshots: [None, None],
             fade_snapshot: None,
         };
-        renderer.home_levels = DimLevels::new(renderer.home.id, HOME_DIM_LEVELS as usize);
+        renderer.home_levels = DimLevels::new(renderer.home.id, &HOME_DIMS);
         Ok(renderer)
     }
 
@@ -804,6 +799,32 @@ impl Renderer {
         }
     }
 
+    /// The keypad's bands and dots at cascade progress `p` (see
+    /// `keypad_stage`), the dots shaken sideways by `shake`.
+    fn keypad_nodes(&self, p: f32, shake: f32, nodes: &mut Vec<Node>) {
+        for (stage, band) in KEYPAD_BANDS.windows(2).enumerate() {
+            let (alpha, rise) = keypad_stage(stage, p);
+            let src = RectF::new(0.0, band[0], SCREEN_W, band[1] - band[0]);
+            nodes.push(Node::Image {
+                surface: self.passcode.id,
+                src,
+                dst: RectF::new(0.0, (band[0] + rise).round(), src.w, src.h),
+                alpha,
+                radius: 0.0,
+                smooth: false,
+            });
+        }
+        let (alpha, rise) = keypad_stage(0, p);
+        nodes.push(Self::full(
+            self.dots.id,
+            SCREEN_W,
+            64.0,
+            shake,
+            DOTS_TOP + rise,
+            alpha,
+        ));
+    }
+
     /// Work done while nothing moves: the home screen's darkened copies.
     pub fn prepare_idle<C: Connection>(&mut self, conn: &C) -> Result<(), Box<dyn Error>> {
         if self.home_levels.stale() {
@@ -814,8 +835,7 @@ impl Renderer {
 
     /// Background bands still stepping toward their target: keep drawing.
     pub fn settling(&self) -> bool {
-        self.lock_fade.settling(self.lock_target, LOCK_DIM_LEVELS)
-            || self.home_fade.settling(self.home_target, HOME_DIM_LEVELS)
+        self.lock_fade.settling() || self.home_fade.settling()
     }
 
     fn frame(&mut self, state: &ShellState, t: Instant) -> Frame {
@@ -851,11 +871,13 @@ impl Renderer {
             self.last_locked = Some(locked);
             if locked {
                 let shown = state.lock_motion.progress(t).clamp(0.0, 1.0);
+                let max = self.wall_levels.max_level();
                 self.lock_fade
-                    .snap(shown * LOCK_DIM_LEVELS as f32, LOCK_DIM_LEVELS);
+                    .snap(self.wall_levels.level_of(shown * DIMMED), max);
             } else {
+                let max = self.home_levels.max_level();
                 self.home_fade
-                    .snap(home_dim(state, t) / DIM_STEP, HOME_DIM_LEVELS);
+                    .snap(self.home_levels.level_of(home_dim(state, t)), max);
             }
         }
         let base = match state.view {
@@ -897,12 +919,13 @@ impl Renderer {
         let shown = p.clamp(0.0, 1.0);
         // The keypad's darker wallpaper dithers through pre-darkened copies
         // (see backdrop.rs): no full-screen blend per frame.
-        self.lock_target = shown * LOCK_DIM_LEVELS as f32;
-        let eighths = self.lock_fade.update(self.lock_target, LOCK_DIM_LEVELS);
-        nodes.push(self.wall_levels.node(eighths));
-        // The clock rises with the finger and fades; the keypad rises into
-        // place behind it.
-        let clock_alpha = (1.0 - p * 1.7).clamp(0.0, 1.0);
+        let target = self.wall_levels.level_of(shown * DIMMED);
+        let steps = self.lock_fade.update(target, self.wall_levels.max_level());
+        nodes.push(self.wall_levels.node(steps));
+        // The clock rises with the finger and fades out first; then the
+        // keypad cascades in a row at a time. Only a row or two change per
+        // frame, which keeps the drag within a 120 Hz refresh.
+        let clock_alpha = (1.0 - p * 2.5).clamp(0.0, 1.0);
         nodes.push(Self::full(
             self.clock.id,
             SCREEN_W,
@@ -910,15 +933,6 @@ impl Renderer {
             0.0,
             -p * 520.0,
             clock_alpha,
-        ));
-        let rise = (1.0 - p) * 200.0;
-        nodes.push(Self::full(
-            self.passcode.id,
-            SCREEN_W,
-            SCREEN_H,
-            0.0,
-            rise,
-            shown,
         ));
         let shake = state
             .pin_error_at
@@ -929,14 +943,7 @@ impl Renderer {
                 (s * std::f32::consts::TAU * 3.5).sin() * 46.0 * (1.0 - s)
             })
             .unwrap_or(0.0);
-        nodes.push(Self::full(
-            self.dots.id,
-            SCREEN_W,
-            64.0,
-            shake,
-            DOTS_TOP + rise,
-            shown,
-        ));
+        self.keypad_nodes(p, shake, nodes);
         nodes.push(Self::full(
             self.lock_status.id,
             SCREEN_W,
@@ -957,27 +964,13 @@ impl Renderer {
     ) -> Option<SurfaceId> {
         // The home screen, darkened (dithered between copies) for unlock,
         // the switcher, and the held home gesture.
-        self.home_target = home_dim(state, t) / DIM_STEP;
-        let eighths = self.home_fade.update(self.home_target, HOME_DIM_LEVELS);
-        nodes.push(self.home_levels.node(eighths));
-        // Unlock: the keypad fades away over the home screen.
+        let target = self.home_levels.level_of(home_dim(state, t));
+        let steps = self.home_fade.update(target, self.home_levels.max_level());
+        nodes.push(self.home_levels.node(steps));
+        // Unlock: the keypad cascades away over the home screen, bottom row
+        // first (the lock swipe's cascade in reverse).
         let unlock = unlock_progress(state, t);
-        nodes.push(Self::full(
-            self.passcode.id,
-            SCREEN_W,
-            SCREEN_H,
-            0.0,
-            0.0,
-            unlock,
-        ));
-        nodes.push(Self::full(
-            self.dots.id,
-            SCREEN_W,
-            64.0,
-            0.0,
-            DOTS_TOP,
-            unlock,
-        ));
+        self.keypad_nodes(unlock, 0.0, nodes);
 
         let pressed = match state.pressed {
             Some(Press::App(app)) => Some(app),
@@ -1404,6 +1397,32 @@ fn draw_padlock(canvas: &mut Canvas, cx: f32, cy: f32) {
     stroke.stroke_polyline(&points, 6.0);
     canvas.fill_path(&stroke, WHITE, 0.92);
     canvas.fill_rrect(body, 8.0, WHITE, 0.92);
+}
+
+/// Horizontal bands of the passcode layer that cascade in one after
+/// another: the title, the three digit rows, and the zero row with the
+/// corner button.
+const KEYPAD_BANDS: [f32; 6] = [
+    0.0,
+    KEYPAD_FIRST_ROW_Y - KEYPAD_ROW_PITCH / 2.0,
+    KEYPAD_FIRST_ROW_Y + KEYPAD_ROW_PITCH / 2.0,
+    KEYPAD_FIRST_ROW_Y + KEYPAD_ROW_PITCH * 1.5,
+    KEYPAD_FIRST_ROW_Y + KEYPAD_ROW_PITCH * 2.5,
+    SCREEN_H,
+];
+
+/// Opacity and downward offset of keypad band `stage` at lock progress
+/// `p`: each band fades and rises in over a fifth of the swipe, starting
+/// as the clock is nearly gone.
+fn keypad_stage(stage: usize, p: f32) -> (f32, f32) {
+    const START: f32 = 0.3;
+    const STAGGER: f32 = 0.125;
+    const SPAN: f32 = 0.2;
+    let local = ((p - START - stage as f32 * STAGGER) / SPAN).clamp(0.0, 1.0);
+    // 8-bit alpha, as composited: a settling tail stops redrawing once the
+    // change is invisible.
+    let eased = (gfx::ease_out(local) * 255.0).round() / 255.0;
+    (eased, (1.0 - eased) * 60.0)
 }
 
 fn keypad_center(digit: u8) -> (f32, f32) {

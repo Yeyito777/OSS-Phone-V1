@@ -589,6 +589,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if let Command::ProfileSteps(steps) = command {
                         backdrop::FADE_STEPS.store(steps, std::sync::atomic::Ordering::Relaxed);
                     }
+                    if let Command::ProfileFrames(enabled) = command {
+                        renderer.compositor.debug_frames = enabled;
+                    }
                     if let Command::ProfileSkip(mask) = command {
                         renderer.compositor.skip_nodes = mask;
                     }
@@ -2255,7 +2258,8 @@ fn apply_command(
         | Command::Profile(_)
         | Command::ProfileSkip(_)
         | Command::ProfileStripes(_)
-        | Command::ProfileSteps(_) => {}
+        | Command::ProfileSteps(_)
+        | Command::ProfileFrames(_) => {}
         Command::Digit(digit) => state.input_digit(digit, config),
         Command::Backspace => state.backspace_pin(),
         Command::Submit => {
