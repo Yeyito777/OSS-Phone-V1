@@ -4,6 +4,14 @@ Revision 2 (2026-10-26): object arguments are named by kind (`notification`,
 `alarm`, `timer`) instead of `id`, which is the request id; duplicate JSON
 keys are rejected.
 
+Revision 3 (2026-10-26): `notify.post` takes an optional `ringing` (incoming
+calls: ringtone and vibration in a loop until the notification goes away,
+§5), the `ringtone` sound, and reserved app ids `phone` and `messages`.
+`ping` returns `revision`. Backward compatible: older posts, state files and
+clients are unaffected; a revision-2 daemon rejects a post with `ringing`
+(`invalid_argument`), so a client that needs it checks `ping`'s
+`revision` ≥ 3 (absent means 2).
+
 `moon-notifyd` is OSS-Phone-V1's central service for **notifications**,
 **alarms** and **timers**. It runs as root inside the Alpine chroot next to
 Moon, owns all persistent state, decides when something fires, plays the alert
@@ -96,19 +104,21 @@ parse them.
   "posted_at": 1793001234,
   "expires_at": null,
   "seen": false,
-  "open": {"app": "system", "target": "wifi"}
+  "open": {"app": "system", "target": "wifi"},
+  "ringing": false
 }
 ```
 
 | Field | Rules |
 | --- | --- |
-| `app` | required; the posting app's id, `[a-z0-9-]{1,32}` (Moon's app ids: `system`, `browser`; `moon` for Moon's own; `moon-notifyd` for the daemon's) |
+| `app` | required; the posting app's id, `[a-z0-9-]{1,32}` (Moon's app ids: `system`, `browser`; `moon` for Moon's own; `moon-notifyd` for the daemon's; reserved: `phone` for the Phone app, `messages` for the Messages app) |
 | `tag` | optional, `[A-Za-z0-9._-]{1,64}`; a post with the same `app`+`tag` **replaces** the old one (same id, `replaced: true`) instead of adding |
 | `title` | required, 1–120 chars after trimming |
 | `body` | optional, ≤ 1000 chars; plain text, `\n` allowed |
 | `urgency` | `low` (no banner, no sound: center only), `normal` (banner + short sound/vibration), `high` (banner that stays until acted on, wakes the screen) |
 | `silent` | `true` suppresses sound and vibration for this one |
 | `expires_at` | optional; the daemon withdraws it then (reason `expired`) |
+| `ringing` | optional (r3), default `false`; `true` rings like an incoming call until the notification is withdrawn, dismissed or activated (§5). The daemon sets it back to `false` when ringing stops without that (timeout, do-not-disturb, re-post) |
 | `seen` | set by Moon when shown in the center (`notify.mark_seen`) |
 | `open` | optional; what tapping it should do. `{"app": APP_ID}` brings that app forward; `target` is an opaque string ≤ 256 chars handed to the app (see `notification_activated`) |
 
@@ -141,7 +151,8 @@ persist across reboots until withdrawn, dismissed or expired.
   time does not exist (spring-forward gap) it fires shifted forward by the
   jump (02:30 → 03:30); an ambiguous time (fall-back) fires on its first
   occurrence.
-- `sound`: `radar` (default), `chimes`, `beacon`, or `none` (vibration only).
+- `sound`: `radar` (default), `chimes`, `beacon`, `ringtone` (r3), or `none`
+  (vibration only).
 - `snooze_minutes`: 1–30, default 9.
 - Up to 32 alarms. Persistent.
 
@@ -169,9 +180,9 @@ reboot, by wall clock).
 
 | `cmd` | Arguments | Result |
 | --- | --- | --- |
-| `ping` | — | `{"version":1}` |
+| `ping` | — | `{"version":1,"revision":3}` |
 | `subscribe` | — | `{}`; then a `snapshot` event and all later events on this connection |
-| `notify.post` | Notification fields: `app`, `title`, optional `tag`, `body`, `urgency` (default `normal`), `silent`, `expires_at`, `open` | `{"id":"n42","replaced":false}` |
+| `notify.post` | Notification fields: `app`, `title`, optional `tag`, `body`, `urgency` (default `normal`), `silent`, `expires_at`, `open`, `ringing` | `{"id":"n42","replaced":false}` |
 | `notify.withdraw` | `notification`, or `app` + `tag` | `{}` (`not_found` if absent). Event reason `withdrawn` |
 | `notify.list` | optional `app` | `{"notifications":[…]}`, newest first |
 
@@ -214,7 +225,9 @@ Settings (persistent):
 `alert_volume` (0–100) is the loudness of alarms, timers and notification
 sounds, independent of Moon's media volume. `do_not_disturb` silences and
 un-vibrates notifications of every urgency and suppresses their screen wake;
-**alarms and timers always ring**.
+**alarms and timers always ring**, and so do `ringing` notifications from the
+`phone` app (calls); `ringing` from any other app is ignored under
+do-not-disturb.
 
 ## 5. Events
 
@@ -243,6 +256,24 @@ or timer becomes a `high` notification from `moon-notifyd`, and an alarm with
 Several things may ring at once; each has its own `alarm_ringing` /
 `timer_ringing` and is stopped separately; sound and vibration continue while
 any is ringing.
+
+Ringing notifications (incoming calls, r3): a post with `ringing: true`
+plays the ringtone (a marimba arpeggio, distinct from every alarm sound) in a
+loop and vibrates the ringing pattern (if `vibrate` is on) at
+`alert_volume`, instead of the notification chime; `silent`, `urgency` and
+`notification_sounds` do not affect it. Its `notification_posted` has
+`wake: true`. It rings until the notification is withdrawn, dismissed or
+activated, or until it is re-posted (same `app`+`tag`) without `ringing`
+(answered: update the notification in place to stop the ringtone). It rings
+for at most **2 minutes**; then the daemon keeps the notification (a missed
+call) and re-posts it with `ringing: false` (`replaced: true`,
+`wake: false`). Ringing is not persisted: after a daemon restart no
+notification rings and every `ringing` is `false`. While a call rings, the
+ringtone replaces the alarm or timer sound (they keep ringing and need
+stopping as usual) and vibration continues. Calls are not in the
+`snapshot`'s `ringing` list (that lists alarms and timers); Moon finds them
+by `notification.ringing`. The Phone app should post calls with
+`app: "phone"`, a `tag` per call, `urgency: "high"` and an `open` target.
 
 Notification sound: `normal` and `high` play a short two-tone chime (and a
 200 ms vibration if `vibrate` is on) unless `silent`, `notification_sounds` is

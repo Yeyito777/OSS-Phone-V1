@@ -60,6 +60,20 @@ const CHIMES: (&[Note], u32) = (
     1800,
 );
 const BEACON: (&[Note], u32) = (&[note(0, 320, 620.0, 1240.0, 0.0)], 1000);
+/// Incoming call: a rising marimba arpeggio, twice, then a pause.
+const RINGTONE: (&[Note], u32) = (
+    &[
+        note(0, 260, 1046.5, 1046.5, 7.0),
+        note(140, 260, 1318.5, 1318.5, 7.0),
+        note(280, 260, 1568.0, 1568.0, 7.0),
+        note(420, 420, 2093.0, 2093.0, 6.0),
+        note(800, 260, 1046.5, 1046.5, 7.0),
+        note(940, 260, 1318.5, 1318.5, 7.0),
+        note(1080, 260, 1568.0, 1568.0, 7.0),
+        note(1220, 420, 2093.0, 2093.0, 6.0),
+    ],
+    2600,
+);
 const CHIME: (&[Note], u32) = (
     &[
         note(0, 220, 1318.5, 1318.5, 9.0),
@@ -82,6 +96,7 @@ impl Tone {
             Pattern::Ring(Sound::Radar) => (RADAR, true),
             Pattern::Ring(Sound::Chimes) => (CHIMES, true),
             Pattern::Ring(Sound::Beacon) => (BEACON, true),
+            Pattern::Ring(Sound::Ringtone) => (RINGTONE, true),
             Pattern::Ring(Sound::None) => return None,
             Pattern::Chime => (CHIME, false),
         };
@@ -156,6 +171,7 @@ mod tests {
             Pattern::Ring(Sound::Radar),
             Pattern::Ring(Sound::Chimes),
             Pattern::Ring(Sound::Beacon),
+            Pattern::Ring(Sound::Ringtone),
             Pattern::Chime,
         ] {
             let mut tone = Tone::new(pattern, 100).unwrap();

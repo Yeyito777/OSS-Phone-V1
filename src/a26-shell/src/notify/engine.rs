@@ -11,6 +11,10 @@ use super::schedule::{format_hm, next_fire};
 
 pub const ALARM_RING_LIMIT: i64 = 10 * 60;
 pub const TIMER_RING_LIMIT: i64 = 5 * 60;
+/// A ringing notification (incoming call) rings at most this long.
+pub const CALL_RING_LIMIT: i64 = 2 * 60;
+/// The only app whose ringing notifications ring under do-not-disturb.
+pub const PHONE_APP: &str = "phone";
 /// Something that came due while the daemon was not running still rings if
 /// it is less late than this; otherwise it becomes a missed notification.
 pub const MISSED_GRACE: i64 = 15 * 60;
@@ -60,6 +64,9 @@ pub struct Engine {
     pub dirty: bool,
     effects: Vec<Effect>,
     last_chime: i64,
+    /// Ringing notifications (id, since): in memory only, so a call never
+    /// rings again after a restart.
+    call_rings: Vec<(String, i64)>,
 }
 
 impl Engine {
@@ -73,7 +80,11 @@ impl Engine {
             dirty: true,
             effects: Vec::new(),
             last_chime: i64::MIN / 2,
+            call_rings: Vec::new(),
         };
+        for n in &mut engine.state.notifications {
+            n.ringing = false;
+        }
         let mut events = Vec::new();
         let was_ringing: Vec<(Kind, String)> = engine
             .state
@@ -170,10 +181,15 @@ impl Engine {
                 }
         });
         let expiries = self.state.notifications.iter().filter_map(|n| n.expires_at);
+        let call_ends = self
+            .call_rings
+            .iter()
+            .map(|(_, since)| since + CALL_RING_LIMIT);
         self.next_wake()
             .into_iter()
             .chain(ring_ends)
             .chain(expiries)
+            .chain(call_ends)
             .min()
     }
 
@@ -195,8 +211,12 @@ impl Engine {
         alarms.chain(timers).min()
     }
 
-    /// Sound of the oldest ringing item that has one.
+    /// Sound of the oldest ringing item that has one; an incoming call
+    /// takes precedence over alarms and timers.
     pub fn ring_sound(&self) -> Option<Sound> {
+        if !self.call_rings.is_empty() {
+            return Some(Sound::Ringtone);
+        }
         self.ringing.iter().find_map(|ring| {
             let sound = match ring.kind {
                 Kind::Alarm => self.alarm(&ring.id).map(|a| a.sound),
@@ -208,10 +228,11 @@ impl Engine {
 
     pub fn ring_vibrates(&self) -> bool {
         self.state.settings.vibrate
-            && self.ringing.iter().any(|ring| match ring.kind {
-                Kind::Alarm => self.alarm(&ring.id).is_some_and(|a| a.vibrate),
-                Kind::Timer => true,
-            })
+            && (!self.call_rings.is_empty()
+                || self.ringing.iter().any(|ring| match ring.kind {
+                    Kind::Alarm => self.alarm(&ring.id).is_some_and(|a| a.vibrate),
+                    Kind::Timer => true,
+                }))
     }
 
     // ---- time ----------------------------------------------------------
@@ -266,6 +287,15 @@ impl Engine {
                 }
             }
         }
+        let rung_out: Vec<String> = self
+            .call_rings
+            .iter()
+            .filter(|(_, since)| now - since >= CALL_RING_LIMIT)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in rung_out {
+            events.extend(self.stop_call_ring(&id));
+        }
         let expired: Vec<String> = self
             .state
             .notifications
@@ -311,7 +341,7 @@ impl Engine {
         match cmd {
             "ping" => {
                 parse::<Empty>(args)?;
-                Ok(json!({"version": 1}))
+                Ok(json!({"version": 1, "revision": 3}))
             }
             "notify.post" => self.post(parse(args)?, now, ev),
             "notify.withdraw" => {
@@ -589,6 +619,7 @@ impl Engine {
                 self.state.new_id('n')
             }
         };
+        self.call_rings.retain(|(ring, _)| *ring != id);
         let n = Notification {
             id: id.clone(),
             app: a.app,
@@ -601,6 +632,7 @@ impl Engine {
             expires_at: a.expires_at,
             seen: false,
             open: a.open,
+            ringing: a.ringing.unwrap_or(false),
         };
         ev.extend(self.add_notification(n, replaced, now));
         Ok(json!({"id": id, "replaced": replaced}))
@@ -643,9 +675,15 @@ impl Engine {
         Ok(())
     }
 
-    fn add_notification(&mut self, n: Notification, replaced: bool, now: i64) -> Vec<Value> {
+    fn add_notification(&mut self, mut n: Notification, replaced: bool, now: i64) -> Vec<Value> {
         let settings = self.state.settings.clone();
-        let audible = n.urgency != Urgency::Low && !n.silent && !settings.do_not_disturb;
+        // Ringing (an incoming call) loops the ringtone instead of a chime.
+        // Do-not-disturb silences it, except for the Phone app.
+        if n.ringing && settings.do_not_disturb && n.app != PHONE_APP {
+            n.ringing = false;
+        }
+        let audible =
+            !n.ringing && n.urgency != Urgency::Low && !n.silent && !settings.do_not_disturb;
         if audible && now - self.last_chime >= CHIME_SPACING {
             self.last_chime = now;
             if settings.notification_sounds {
@@ -655,7 +693,10 @@ impl Engine {
                 self.effects.push(Effect::Buzz(200));
             }
         }
-        let wake = n.urgency == Urgency::High && !settings.do_not_disturb;
+        let wake = n.ringing || (n.urgency == Urgency::High && !settings.do_not_disturb);
+        if n.ringing {
+            self.call_rings.push((n.id.clone(), now));
+        }
         let event = json!({"event": "notification_posted", "notification": n, "replaced": replaced, "wake": wake});
         self.state.notifications.push(n);
         self.dirty = true;
@@ -669,7 +710,22 @@ impl Engine {
         Ok(self.remove_notification(id, reason))
     }
 
+    /// The call rang for CALL_RING_LIMIT: stop ringing, keep the
+    /// notification (re-posted in place with `ringing: false`).
+    fn stop_call_ring(&mut self, id: &str) -> Vec<Value> {
+        self.call_rings.retain(|(ring, _)| ring != id);
+        let Some(n) = self.state.notifications.iter_mut().find(|n| n.id == id) else {
+            return Vec::new();
+        };
+        n.ringing = false;
+        self.dirty = true;
+        vec![
+            json!({"event": "notification_posted", "notification": n.clone(), "replaced": true, "wake": false}),
+        ]
+    }
+
     fn remove_notification(&mut self, id: &str, reason: &str) -> Vec<Value> {
+        self.call_rings.retain(|(ring, _)| ring != id);
         let before = self.state.notifications.len();
         self.state.notifications.retain(|n| n.id != id);
         if self.state.notifications.len() == before {
@@ -855,6 +911,7 @@ impl Engine {
             expires_at: None,
             seen: false,
             open: None,
+            ringing: false,
         };
         self.add_notification(n, replaced, now)
     }
@@ -1040,6 +1097,7 @@ struct Post {
     silent: Option<bool>,
     expires_at: Option<i64>,
     open: Option<Open>,
+    ringing: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -1204,6 +1262,104 @@ mod tests {
                 ["notification_removed", "notification_activated"]
             );
             assert_eq!(ev[1]["open"]["target"], "wifi");
+        });
+    }
+
+    #[test]
+    fn ringing_call_loops_until_removed_and_beats_alarms() {
+        with_tz(TZ, || {
+            let mut e = fresh();
+            let (r, ev) = run(
+                &mut e,
+                "notify.post",
+                json!({"app":"phone","title":"Alice","tag":"call","urgency":"high","ringing":true}),
+                T0,
+            );
+            assert_eq!(ev[0]["notification"]["ringing"], true);
+            assert_eq!(ev[0]["wake"], true);
+            assert!(e.take_effects().is_empty(), "ringtone, not a chime");
+            assert_eq!(e.ring_sound(), Some(Sound::Ringtone));
+            assert!(e.ring_vibrates());
+            assert_eq!(e.next_due(), Some(T0 + CALL_RING_LIMIT));
+            // Answered: the same tag re-posted without ringing stops it.
+            run(
+                &mut e,
+                "notify.post",
+                json!({"app":"phone","title":"Alice","tag":"call","body":"0:01"}),
+                T0 + 5,
+            );
+            assert_eq!(e.ring_sound(), None);
+            // A new call while an alarm rings: the ringtone wins.
+            let (alarm, _) = run(&mut e, "alarm.create", json!({"hour":10,"minute":0}), T0);
+            let due = alarm["next_fire_at"].as_i64().unwrap();
+            e.tick(due);
+            assert_eq!(e.ring_sound(), Some(Sound::Radar));
+            let (call, _) = run(
+                &mut e,
+                "notify.post",
+                json!({"app":"phone","title":"Bob","ringing":true}),
+                due + 1,
+            );
+            assert_eq!(e.ring_sound(), Some(Sound::Ringtone));
+            let id = call["id"].as_str().unwrap().to_owned();
+            let snapshot = e.snapshot(due + 2);
+            // Calls are not in the alarm/timer `ringing` list (older Moons
+            // reject unknown kinds); the notification carries `ringing`.
+            assert_eq!(snapshot["ringing"].as_array().unwrap().len(), 1);
+            assert!(
+                snapshot["notifications"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|n| n["ringing"] == true)
+            );
+            run(
+                &mut e,
+                "notify.dismiss",
+                json!({"notification": id}),
+                due + 3,
+            );
+            assert_eq!(e.ring_sound(), Some(Sound::Radar));
+            let _ = r;
+        });
+    }
+
+    #[test]
+    fn ringing_stops_after_the_limit_and_respects_dnd() {
+        with_tz(TZ, || {
+            let mut e = fresh();
+            run(
+                &mut e,
+                "notify.post",
+                json!({"app":"phone","title":"Alice","ringing":true}),
+                T0,
+            );
+            let ev = e.tick(T0 + CALL_RING_LIMIT);
+            assert_eq!(ev[0]["notification"]["ringing"], false);
+            assert_eq!(ev[0]["replaced"], true);
+            assert_eq!(e.ring_sound(), None);
+            assert_eq!(e.state.notifications.len(), 1, "the missed call stays");
+            run(&mut e, "settings.set", json!({"do_not_disturb": true}), T0);
+            let (_, ev) = run(
+                &mut e,
+                "notify.post",
+                json!({"app":"messages","title":"x","ringing":true}),
+                T0,
+            );
+            assert_eq!(ev[0]["notification"]["ringing"], false);
+            assert_eq!(e.ring_sound(), None);
+            let (_, ev) = run(
+                &mut e,
+                "notify.post",
+                json!({"app":"phone","title":"y","ringing":true}),
+                T0,
+            );
+            assert_eq!(ev[0]["notification"]["ringing"], true);
+            assert_eq!(e.ring_sound(), Some(Sound::Ringtone));
+            // A restart never rings an old call again.
+            let (e2, _) = Engine::start(e.state.clone(), T0 + 10);
+            assert_eq!(e2.ring_sound(), None);
+            assert!(e2.state.notifications.iter().all(|n| !n.ringing));
         });
     }
 

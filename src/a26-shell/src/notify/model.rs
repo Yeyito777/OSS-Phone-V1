@@ -23,6 +23,8 @@ pub enum Sound {
     Radar,
     Chimes,
     Beacon,
+    /// The incoming-call ringtone (also selectable for alarms).
+    Ringtone,
     None,
 }
 
@@ -47,6 +49,10 @@ pub struct Notification {
     pub expires_at: Option<i64>,
     pub seen: bool,
     pub open: Option<Open>,
+    /// Rings (ringtone + vibration) until removed or for at most
+    /// CALL_RING_LIMIT (protocol r3). False once ringing has stopped.
+    #[serde(default)]
+    pub ringing: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
