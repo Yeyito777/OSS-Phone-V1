@@ -29,7 +29,8 @@ pub(crate) struct Seat {
     touches: Vec<WlTouch>,
     keyboards: Vec<WlKeyboard>,
     keymap: Option<(OwnedFd, u32)>,
-    touch_points: HashMap<i32, WlSurface>,
+    /// Each touch's surface and that surface's scale (Moon sends pixels).
+    touch_points: HashMap<i32, (WlSurface, f64)>,
     pub(crate) focus: Option<WlSurface>,
 }
 
@@ -53,7 +54,7 @@ impl Seat {
 
     pub(crate) fn forget_surface(&mut self, key: SurfaceKey) {
         let _ = key;
-        self.touch_points.retain(|_, surface| surface.is_alive());
+        self.touch_points.retain(|_, (surface, _)| surface.is_alive());
         if self.focus.as_ref().is_some_and(|focus| !focus.is_alive()) {
             self.focus = None;
         }
@@ -235,33 +236,36 @@ pub(crate) fn set_keyboard_focus(
 }
 
 pub(crate) fn touch_down(state: &mut WlState, key: SurfaceKey, id: i32, x: f64, y: f64, time: u32) {
-    let Some(surface) = state.surface_by_key(key).map(|data| data.resource.clone()) else {
+    let Some((surface, scale)) = state
+        .surface_by_key(key)
+        .map(|data| (data.resource.clone(), f64::from(data.scale.max(1))))
+    else {
         return;
     };
     let serial = state.next_serial();
     for touch in &state.seat.touches {
         if touch.id().same_client_as(&surface.id()) {
-            touch.down(serial, time, &surface, id, x, y);
+            touch.down(serial, time, &surface, id, x / scale, y / scale);
             touch.frame();
         }
     }
-    state.seat.touch_points.insert(id, surface);
+    state.seat.touch_points.insert(id, (surface, scale));
 }
 
 pub(crate) fn touch_motion(state: &mut WlState, id: i32, x: f64, y: f64, time: u32) {
-    let Some(surface) = state.seat.touch_points.get(&id) else {
+    let Some((surface, scale)) = state.seat.touch_points.get(&id) else {
         return;
     };
     for touch in &state.seat.touches {
         if touch.id().same_client_as(&surface.id()) {
-            touch.motion(time, id, x, y);
+            touch.motion(time, id, x / scale, y / scale);
             touch.frame();
         }
     }
 }
 
 pub(crate) fn touch_up(state: &mut WlState, id: i32, time: u32) {
-    let Some(surface) = state.seat.touch_points.remove(&id) else {
+    let Some((surface, _)) = state.seat.touch_points.remove(&id) else {
         return;
     };
     let serial = state.next_serial();
@@ -276,7 +280,12 @@ pub(crate) fn touch_up(state: &mut WlState, id: i32, time: u32) {
 /// A gesture of Moon's took the touch over (the home swipe): the client
 /// forgets every touch point, as the protocol's cancel says.
 pub(crate) fn touch_cancel(state: &mut WlState) {
-    let surfaces: Vec<WlSurface> = state.seat.touch_points.drain().map(|(_, s)| s).collect();
+    let surfaces: Vec<WlSurface> = state
+        .seat
+        .touch_points
+        .drain()
+        .map(|(_, (surface, _))| surface)
+        .collect();
     for touch in &state.seat.touches {
         if surfaces
             .iter()
@@ -395,6 +404,7 @@ impl GlobalDispatch<WlOutput, ()> for WlState {
         data_init: &mut DataInit<'_, Self>,
     ) {
         let output = data_init.init(resource, ());
+        state.outputs.push(output.clone());
         output.geometry(
             0,
             0,
@@ -412,7 +422,7 @@ impl GlobalDispatch<WlOutput, ()> for WlState {
             state.refresh_mhz,
         );
         if output.version() >= 2 {
-            output.scale(1);
+            output.scale(state.scale);
         }
         if output.version() >= 4 {
             output.name("DSI-1".into());
@@ -434,6 +444,15 @@ impl Dispatch<WlOutput, ()> for WlState {
         _handle: &DisplayHandle,
         _data_init: &mut DataInit<'_, Self>,
     ) {
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: wayland_server::backend::ClientId,
+        resource: &WlOutput,
+        _data: &(),
+    ) {
+        state.outputs.retain(|output| output != resource);
     }
 }
 

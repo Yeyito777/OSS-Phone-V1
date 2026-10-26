@@ -50,8 +50,12 @@ struct App {
     text_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
     surface: Option<wl_surface::WlSurface>,
+    /// Buffer pixels; the toplevel's size in surface units times `scale`.
     width: i32,
     height: i32,
+    logical: (i32, i32),
+    /// The compositor's preferred buffer scale (wl_surface v6).
+    scale: i32,
     configured: bool,
     memory: Option<memmap::Map>,
     pool: Option<wl_shm_pool::WlShmPool>,
@@ -136,6 +140,8 @@ fn main() {
         surface: None,
         width: 0,
         height: 0,
+        logical: (0, 0),
+        scale: 1,
         configured: false,
         memory: None,
         pool: None,
@@ -180,6 +186,15 @@ fn main() {
 }
 
 impl App {
+    /// Buffer size from the configured size and the scale.
+    fn resize(&mut self) {
+        if self.logical.0 > 0 {
+            self.width = self.logical.0 * self.scale;
+            self.height = self.logical.1 * self.scale;
+            self.dirty = true;
+        }
+    }
+
     fn field_rect(&self, index: usize) -> (i32, i32, i32, i32) {
         (60, 80 + index as i32 * 190, self.width - 120, 140)
     }
@@ -254,6 +269,7 @@ impl App {
         }
         self.memory = Some(canvas);
         let surface = self.surface.as_ref().expect("surface");
+        surface.set_buffer_scale(self.scale);
         surface.attach(Some(&self.buffers[index].buffer), 0, 0);
         surface.damage_buffer(0, 0, self.width, self.height);
         surface.frame(qh, ());
@@ -440,7 +456,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
         } = event
         {
             match interface.as_str() {
-                "wl_compositor" => app.compositor = Some(registry.bind(name, version.min(4), qh, ())),
+                "wl_compositor" => app.compositor = Some(registry.bind(name, version.min(6), qh, ())),
                 "wl_shm" => app.shm = Some(registry.bind(name, 1, qh, ())),
                 "xdg_wm_base" => app.wm = Some(registry.bind(name, version.min(6), qh, ())),
                 "wl_seat" => {
@@ -484,12 +500,11 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for App {
                     .collect();
                 eprintln!("demo: configure {width}x{height} states {states:?}");
                 if width > 0 && height > 0 {
-                    app.width = width;
-                    app.height = height;
-                } else if app.width == 0 {
-                    app.width = 1080;
-                    app.height = 2216;
+                    app.logical = (width, height);
+                } else if app.logical.0 == 0 {
+                    app.logical = (1080, 2216);
                 }
+                app.resize();
             }
             xdg_toplevel::Event::Close => app.running = false,
             _ => {}
@@ -553,14 +568,15 @@ impl Dispatch<wl_touch::WlTouch, ()> for App {
         match event {
             wl_touch::Event::Down { id, x, y, .. } => {
                 eprintln!("demo: touch down {id} at {x:.0},{y:.0}");
+                let (x, y) = (x * f64::from(app.scale), y * f64::from(app.scale));
                 app.touches.push((id, x, y));
                 app.touch_at(x, y);
                 app.dirty = true;
             }
             wl_touch::Event::Motion { id, x, y, .. } => {
                 if let Some(touch) = app.touches.iter_mut().find(|touch| touch.0 == id) {
-                    touch.1 = x;
-                    touch.2 = y;
+                    touch.1 = x * f64::from(app.scale);
+                    touch.2 = y * f64::from(app.scale);
                 }
                 app.dirty = true;
             }
@@ -640,7 +656,15 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for App {
 }
 
 delegate_noop!(App: ignore wl_compositor::WlCompositor);
-delegate_noop!(App: ignore wl_surface::WlSurface);
+impl Dispatch<wl_surface::WlSurface, ()> for App {
+    fn event(app: &mut Self, _: &wl_surface::WlSurface, event: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let wl_surface::Event::PreferredBufferScale { factor } = event {
+            eprintln!("demo: preferred buffer scale {factor}");
+            app.scale = factor.max(1);
+            app.resize();
+        }
+    }
+}
 delegate_noop!(App: ignore wl_shm::WlShm);
 delegate_noop!(App: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(App: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);

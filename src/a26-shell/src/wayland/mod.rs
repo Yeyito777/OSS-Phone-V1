@@ -62,6 +62,16 @@ impl Rect {
         }
     }
 
+    /// Surface units to buffer pixels.
+    pub fn scaled(self, scale: i32) -> Self {
+        Self::new(
+            self.x.saturating_mul(scale),
+            self.y.saturating_mul(scale),
+            self.width.saturating_mul(scale),
+            self.height.saturating_mul(scale),
+        )
+    }
+
     pub fn clip(self, width: i32, height: i32) -> Option<Self> {
         let x0 = self.x.max(0);
         let y0 = self.y.max(0);
@@ -159,6 +169,9 @@ pub struct WlState {
     /// The size a toplevel is first configured at (Moon's app area).
     pub(crate) toplevel_size: (i32, i32),
     pub(crate) refresh_mhz: i32,
+    /// The panel's integer scale: logical units are this many pixels.
+    pub(crate) scale: i32,
+    pub(crate) outputs: Vec<wayland_server::protocol::wl_output::WlOutput>,
     pub(crate) serial: u32,
 }
 
@@ -166,6 +179,34 @@ impl WlState {
     pub(crate) fn next_serial(&mut self) -> u32 {
         self.serial = self.serial.wrapping_add(1).max(1);
         self.serial
+    }
+
+    /// A popup or subsurface position, in pixels of its parent's buffer.
+    pub(crate) fn placement_px(&self, placement: Placement) -> Placement {
+        let parent_scale = |parent: SurfaceKey| {
+            self.surface_by_key(parent)
+                .map(|data| data.scale)
+                .unwrap_or(self.scale)
+        };
+        match placement {
+            Placement::Popup { parent, x, y } => {
+                let scale = parent_scale(parent);
+                Placement::Popup {
+                    parent,
+                    x: x * scale,
+                    y: y * scale,
+                }
+            }
+            Placement::Subsurface { parent, x, y } => {
+                let scale = parent_scale(parent);
+                Placement::Subsurface {
+                    parent,
+                    x: x * scale,
+                    y: y * scale,
+                }
+            }
+            toplevel => toplevel,
+        }
     }
 
     pub(crate) fn surface_key(&self, surface: &WlSurface) -> Option<SurfaceKey> {
@@ -216,6 +257,7 @@ impl WaylandServer {
         output_size: (u16, u16),
         toplevel_size: (u16, u16),
         refresh_mhz: i32,
+        scale: i32,
     ) -> io::Result<Self> {
         let display: Display<WlState> =
             Display::new().map_err(|error| io::Error::other(format!("{error}")))?;
@@ -244,6 +286,8 @@ impl WaylandServer {
                 output_size: (i32::from(output_size.0), i32::from(output_size.1)),
                 toplevel_size: (i32::from(toplevel_size.0), i32::from(toplevel_size.1)),
                 refresh_mhz,
+                scale: scale.max(1),
+                outputs: Vec::new(),
                 serial: 0,
             },
             socket_path,

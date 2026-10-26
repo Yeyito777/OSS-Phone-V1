@@ -114,12 +114,20 @@ impl WaylandApps {
         runtime_dir: &Path,
     ) -> Result<Self, Box<dyn Error>> {
         let app_height = height.saturating_sub(crate::status_bar::HEIGHT).max(1);
+        // Apps draw at the panel's density: 3 pixels per unit by default
+        // (the A26 is 386 dpi; Moon's own UI uses 2.77 px per iPhone point).
+        let scale = std::env::var("MOON_WAYLAND_SCALE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .filter(|scale| (1..=4).contains(scale))
+            .unwrap_or(3);
         let server = WaylandServer::bind(
             runtime_dir,
             "wayland-0",
             (width, height),
             (width, app_height),
             120_000,
+            scale,
         )?;
         let gc = conn.generate_id()?;
         conn.create_gc(gc, root, &CreateGCAux::new().graphics_exposures(0))?;

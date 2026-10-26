@@ -192,7 +192,7 @@ impl Harness {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let server =
-            WaylandServer::bind(&dir, "wayland-0", (1080, 2340), (1080, 2216), 120_000).unwrap();
+            WaylandServer::bind(&dir, "wayland-0", (1080, 2340), (1080, 2216), 120_000, 1).unwrap();
         let stream = std::os::unix::net::UnixStream::connect(dir.join("wayland-0")).unwrap();
         let connection = Connection::from_socket(stream).unwrap();
         let queue = connection.new_event_queue();

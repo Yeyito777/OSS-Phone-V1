@@ -337,6 +337,7 @@ impl Dispatch<XdgPopup, SurfaceKey> for WlState {
                     if let Some(data) = state.surface_by_key_mut(*key) {
                         data.placement = Some(placement);
                     }
+                    let placement = state.placement_px(placement);
                     state.outbox.push(Event::SurfaceMoved {
                         surface: *key,
                         placement,
@@ -416,7 +417,13 @@ pub(crate) fn configure(
     if suspended && toplevel.xdg_toplevel.version() >= 6 {
         push(xdg_toplevel::State::Suspended);
     }
-    toplevel.xdg_toplevel.configure(width, height, states);
+    // Moon places windows in pixels; clients are told surface units.
+    let scale = state.scale;
+    toplevel.xdg_toplevel.configure(
+        (width + scale - 1) / scale,
+        (height + scale - 1) / scale,
+        states,
+    );
     let xdg_surface = toplevel.xdg_surface.clone();
     let serial = state.next_serial();
     if let Some(info) = state.xdg.get_mut(&key) {

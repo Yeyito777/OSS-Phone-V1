@@ -25,8 +25,13 @@ pub(crate) struct SurfaceData {
     pub key: SurfaceKey,
     pub resource: WlSurface,
     pending_buffer: Option<Option<WlBuffer>>,
-    pending_damage: Vec<Rect>,
+    /// Damage, and whether it is in buffer pixels (damage_buffer) rather
+    /// than surface coordinates.
+    pending_damage: Vec<(Rect, bool)>,
     pending_callbacks: Vec<WlCallback>,
+    pending_scale: Option<i32>,
+    /// Buffer pixels per surface unit (wl_surface.set_buffer_scale).
+    pub scale: i32,
     /// Committed frame callbacks, waiting until Moon shows the content.
     pub frame_callbacks: Vec<WlCallback>,
     pub buffer: Option<(WlBuffer, Arc<ShmBuffer>)>,
@@ -40,7 +45,7 @@ pub(crate) struct SurfaceData {
 }
 
 pub(crate) fn create_globals(handle: &DisplayHandle) {
-    handle.create_global::<WlState, WlCompositor, ()>(5, ());
+    handle.create_global::<WlState, WlCompositor, ()>(6, ());
     handle.create_global::<WlState, WlSubcompositor, ()>(1, ());
 }
 
@@ -73,6 +78,9 @@ impl Dispatch<WlCompositor, ()> for WlState {
                 state.next_key = state.next_key.wrapping_add(1).max(1);
                 let key = SurfaceKey(state.next_key);
                 state.keys.insert(key, surface.id());
+                if surface.version() >= 6 {
+                    surface.preferred_buffer_scale(state.scale);
+                }
                 state.surfaces.insert(
                     surface.id(),
                     SurfaceData {
@@ -81,6 +89,8 @@ impl Dispatch<WlCompositor, ()> for WlState {
                         pending_buffer: None,
                         pending_damage: Vec::new(),
                         pending_callbacks: Vec::new(),
+                        pending_scale: None,
+                        scale: 1,
                         frame_callbacks: Vec::new(),
                         buffer: None,
                         placement: None,
@@ -148,16 +158,27 @@ impl Dispatch<WlSurface, ()> for WlState {
                 y,
                 width,
                 height,
+            } => {
+                if let Some(data) = state.surfaces.get_mut(&id) {
+                    data.pending_damage
+                        .push((Rect::new(x, y, width, height), false));
+                }
             }
-            | wl_surface::Request::DamageBuffer {
+            wl_surface::Request::DamageBuffer {
                 x,
                 y,
                 width,
                 height,
             } => {
-                // Scale 1, no transform: surface and buffer damage agree.
                 if let Some(data) = state.surfaces.get_mut(&id) {
-                    data.pending_damage.push(Rect::new(x, y, width, height));
+                    data.pending_damage.push((Rect::new(x, y, width, height), true));
+                }
+            }
+            wl_surface::Request::SetBufferScale { scale } => {
+                if scale < 1 {
+                    resource.post_error(wl_surface::Error::InvalidScale, "scale must be positive");
+                } else if let Some(data) = state.surfaces.get_mut(&id) {
+                    data.pending_scale = Some(scale);
                 }
             }
             wl_surface::Request::Frame { callback } => {
@@ -168,8 +189,8 @@ impl Dispatch<WlSurface, ()> for WlState {
             }
             wl_surface::Request::Commit => commit(state, resource),
             wl_surface::Request::Destroy => {}
-            // Opaque/input regions, transform, scale and offset: accepted;
-            // Moon shows every app at scale 1, untransformed.
+            // Opaque/input regions, transform and offset: accepted; Moon
+            // shows every buffer untransformed.
             _ => {}
         }
     }
@@ -245,10 +266,18 @@ pub(crate) fn assign_role(state: &mut WlState, key: SurfaceKey, placement: Place
     if let Some(data) = state.surface_by_key_mut(key) {
         data.placement = Some(placement);
     }
+    // The surface is on the panel's output: clients pick their scale from it.
+    if let Some(surface) = state.surface_by_key(key).map(|data| data.resource.clone()) {
+        for output in &state.outputs {
+            if output.id().same_client_as(&surface.id()) {
+                surface.enter(output);
+            }
+        }
+    }
     if !matches!(placement, Placement::Toplevel(_)) {
         state.outbox.push(Event::SurfaceCreated {
             surface: key,
-            placement,
+            placement: state.placement_px(placement),
         });
     }
 }
@@ -265,6 +294,10 @@ fn commit(state: &mut WlState, resource: &WlSurface) {
     data.frame_callbacks.extend(callbacks);
     let damage = std::mem::take(&mut data.pending_damage);
     let attached = data.pending_buffer.take();
+    if let Some(scale) = data.pending_scale.take() {
+        data.scale = scale;
+    }
+    let scale = data.scale;
     let mut event = None;
     if data.placement.is_some() && data.can_show {
         match attached {
@@ -277,6 +310,13 @@ fn commit(state: &mut WlState, resource: &WlSurface) {
                     } else {
                         damage
                             .iter()
+                            .map(|(rect, in_buffer)| {
+                                if *in_buffer {
+                                    *rect
+                                } else {
+                                    rect.scaled(scale)
+                                }
+                            })
                             .filter_map(|rect| rect.clip(width, height))
                             .collect()
                     };
@@ -291,7 +331,11 @@ fn commit(state: &mut WlState, resource: &WlSurface) {
                         buffer: shm.clone(),
                         resource: buffer,
                         damage: rects,
-                        geometry: state.xdg.get(&key).and_then(|info| info.geometry),
+                        geometry: state
+                            .xdg
+                            .get(&key)
+                            .and_then(|info| info.geometry)
+                            .map(|rect| rect.scaled(scale)),
                     });
                 }
                 None => {
@@ -329,6 +373,7 @@ fn commit(state: &mut WlState, resource: &WlSurface) {
         if let Some(Placement::Subsurface { parent, .. }) = child_data.placement {
             let placement = Placement::Subsurface { parent, x, y };
             child_data.placement = Some(placement);
+            let placement = state.placement_px(placement);
             state.outbox.push(Event::SurfaceMoved {
                 surface: child,
                 placement,
