@@ -5,7 +5,8 @@
 #   scripts/wayland/phone.sh install [TARBALL]  push the rootfs to /data/local/a26-wayland
 #   scripts/wayland/phone.sh scripts            push only the scripts and bench binaries
 #   scripts/wayland/phone.sh handoff            stop Moon/Xorg, freeze the supervisor
-#   scripts/wayland/phone.sh run CMD...         run CMD in the Wayland rootfs
+#   scripts/wayland/phone.sh check              handed-off state (no Xorg/SF/HWC/zygote, moon-session alive)
+#   scripts/wayland/phone.sh run CMD...         run CMD in the Wayland rootfs (after check)
 #   scripts/wayland/phone.sh restore            adb reboot and wait until Moon is ready
 #   scripts/wayland/phone.sh status             Moon/Xorg/CRTC state
 #
@@ -49,6 +50,12 @@ install)
         scp -q "$WHALE_OUT/a26-wayland-rootfs.tar.gz" "$CACHE/"
         tarball="$CACHE/a26-wayland-rootfs.tar.gz"
     fi
+    # Never rm -rf a tree with live bind mounts (/dev, /proc, /sys) inside it.
+    if su_sh "grep -q \" $WL_ROOT/\" /proc/mounts"; then
+        echo "refusing: something is still mounted under $WL_ROOT" >&2
+        su_sh "grep \" $WL_ROOT/\" /proc/mounts" >&2
+        exit 1
+    fi
     adb push "$tarball" /data/local/tmp/a26-wayland-rootfs.tar.gz
     su_sh "rm -rf $WL_ROOT.new && mkdir -p $WL_ROOT.new && /data/local/a26-linux/busybox.static tar -xzf /data/local/tmp/a26-wayland-rootfs.tar.gz -C $WL_ROOT.new && rm -rf $WL_ROOT && mv $WL_ROOT.new $WL_ROOT && rm -f /data/local/tmp/a26-wayland-rootfs.tar.gz && du -sh $WL_ROOT"
     push_scripts
@@ -58,6 +65,7 @@ handoff)
     su_sh "sh $DEV/a26-wayland-handoff.sh"
     su_sh "tail -n 30 $DEV/handoff.log"
     ;;
+check) su_sh "sh $DEV/a26-wayland-check.sh" ;;
 run)
     shift
     su_sh "sh $DEV/a26-wayland-run.sh $*"
@@ -77,7 +85,7 @@ status)
     su_sh "echo mode=\$(getprop moon.boot.mode) ready=\$(getprop moon.session.ready) xorg=\$(pidof Xorg) moon=\$(pidof a26-shell) uptime=\$(cut -d\" \" -f1 /proc/uptime)"
     ;;
 *)
-    sed -n '2,13p' "$0"
+    sed -n '2,14p' "$0"
     exit 2
     ;;
 esac
