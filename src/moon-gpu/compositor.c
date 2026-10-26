@@ -395,7 +395,10 @@ static int adopt_dmabuf(struct comp *c, struct surface *s, int fd, int width,
         s->tex.height = height;
         s->tex.opaque = opaque;
     }
-    if (kms_add_fb_offset(&c->k, fd, (uint32_t)width, (uint32_t)height,
+    /* As wide as its rows, shown `width` wide from the left: on the panel a
+     * DPP walked a framebuffer narrower than its pitch sheared (see
+     * outputs_init). */
+    if (kms_add_fb_offset(&c->k, fd, (uint32_t)stride / 4, (uint32_t)height,
                           (uint32_t)stride, s->offset, fourcc, &s->fb))
         s->fb = 0; /* drawable, just not on a plane */
     return 0;
