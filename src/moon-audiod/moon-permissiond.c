@@ -7,8 +7,17 @@
  * 10 s for the service, and AudioFlinger::createTrack does that lookup on
  * every new playback track, so audioserver's 5 s TimeCheck aborts it. This
  * daemon answers those calls the way Android does for its own service UIDs,
- * so audioserver can create tracks with no framework. It must stop before the
- * framework starts, so system_server registers the real service.
+ * so audioserver can create tracks with no framework.
+ *
+ * It also stands in for AudioService ("audio", android.media.IAudioService),
+ * whose native IAudioManager calls are playback-activity reports. Without it,
+ * AudioFlinger's mixer looks the service up on every mix cycle of a track whose
+ * mute state it could not report, logging "getOrCreateAudioManager(): binding
+ * to audio service failed" every ~20 ms. The stand-in accepts the one-way
+ * reports and hands out player/recorder ids for the two synchronous calls.
+ *
+ * Both services must stop before the framework starts, so system_server
+ * registers the real ones.
  *
  *   moon-permissiond [PID_FILE]
  */
@@ -117,6 +126,47 @@ static binder_status_t on_transact(AIBinder *binder, transaction_code_t code,
     return rc;
 }
 
+/* frameworks/native include/audiomanager/IAudioManager.h */
+enum {
+    TRACK_PLAYER = FIRST_CALL_TRANSACTION,
+    PLAYER_ATTRIBUTES,
+    PLAYER_EVENT,
+    RELEASE_PLAYER,
+    TRACK_RECORDER,
+    RECORDER_EVENT,
+    RELEASE_RECORDER,
+    PLAYER_SESSION_ID,
+    PORT_EVENT,
+};
+
+static binder_status_t on_transact_audio(AIBinder *binder, transaction_code_t code,
+                                         const AParcel *in, AParcel *out) {
+    (void)binder;
+    (void)in;
+    static int32_t next_id = 1;
+    switch (code) {
+    case TRACK_PLAYER:
+    case TRACK_RECORDER: {
+        AStatus *ok = AStatus_newOk();
+        binder_status_t rc = AParcel_writeStatusHeader(out, ok);
+        AStatus_delete(ok);
+        if (rc == STATUS_OK) rc = AParcel_writeInt32(out, __atomic_fetch_add(&next_id, 1, __ATOMIC_RELAXED));
+        return rc;
+    }
+    case PLAYER_ATTRIBUTES:
+    case PLAYER_EVENT:
+    case RELEASE_PLAYER:
+    case RECORDER_EVENT:
+    case RELEASE_RECORDER:
+    case PLAYER_SESSION_ID:
+    case PORT_EVENT:
+        /* One-way activity reports: accepted, nothing to track. */
+        return STATUS_OK;
+    default:
+        return STATUS_UNKNOWN_TRANSACTION;
+    }
+}
+
 static void *on_create(void *args) { return args; }
 static void on_destroy(void *data) { (void)data; }
 
@@ -147,6 +197,12 @@ int main(int argc, char **argv) {
         fprintf(stderr, "moon-permissiond: addService(permission) failed: %d\n", ex);
         return 1;
     }
+    /* Best effort: audio still works without it, only noisier. */
+    AIBinder_Class *audio_class = AIBinder_Class_define("android.media.IAudioService",
+                                                        on_create, on_destroy, on_transact_audio);
+    AIBinder *audio = AIBinder_new(audio_class, NULL);
+    ex = add_service(audio, "audio");
+    if (ex != EX_NONE) fprintf(stderr, "moon-permissiond: addService(audio) failed: %d\n", ex);
     if (argc >= 2) {
         FILE *f = fopen(argv[1], "w");
         if (f) {
