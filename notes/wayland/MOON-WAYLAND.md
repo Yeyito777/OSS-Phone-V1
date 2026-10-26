@@ -64,13 +64,13 @@ backward compatible.
 
 | Global | Version | Notes |
 |---|---|---|
-| `wl_compositor`, `wl_surface`, `wl_region`, `wl_callback` | 5 | Double-buffered attach, damage and frame; scale 1, no transform |
+| `wl_compositor`, `wl_surface`, `wl_region`, `wl_callback` | 6 | Double-buffered attach, damage and frame; buffer scale; `preferred_buffer_scale` and `enter(output)` so clients draw at the panel's density; no transform |
 | `wl_subcompositor` | 1 | Subsurface position applies on the parent's commit; content applies at the subsurface's own commit (desync) |
 | `wl_shm` | 1 | ARGB/XRGB8888. A pool larger than its file is refused, and pools are sealed against shrinking where the client allows it (SIGBUS) |
-| `xdg_wm_base` | 6 | Toplevels are configured full-screen in the app area. `activated` while focused, `suspended` while in the background or screen-off. Simple popup positioning, no constraint adjustment |
+| `xdg_wm_base` | 6 | Toplevels are configured full-screen in the app area. `activated` while focused, `suspended` while in the background or screen-off. Simple popup positioning, no constraint adjustment. Each surface is shown cropped to its window geometry (client-side shadow margins would be opaque black in an X window) |
 | `zxdg_decoration_manager_v1` | 1 | Always "server side": nobody draws decorations |
 | `wl_seat` | 7 | Touch and keyboard. The keymap is a fixed US XKB keymap; repeat rate 0, because Moon repeats keys itself |
-| `wl_output` | 4 | 1080x2340 at 120 Hz, scale 1 |
+| `wl_output` | 4 | 1080x2340 at 120 Hz, integer scale 3 by default (`MOON_WAYLAND_SCALE`, 1-4); the server converts surface units to pixels, so Moon only deals in pixels |
 | `wl_data_device_manager` | 3 | Stub: no clipboard yet |
 | `zwp_text_input_manager_v3` | 1 | Enable/disable and the content purpose drive Moon's keyboard |
 
@@ -89,7 +89,7 @@ pointer, clipboard and primary selection, xdg-activation.
 | Focus | `wl_keyboard.enter/leave`, `text_input.enter/leave` | the proxy's FocusIn/FocusOut (Moon's `set_input_focus`) |
 | Touch | `wl_touch` down/motion/up, cancel | X core pointer events on the proxy (Xorg's evdev touchscreen, implicit grab); a Moon gesture (home swipe, switcher) cancels |
 | Keyboard | text-input-v3 `commit_string` / `delete_surrounding_text`, or `wl_keyboard` keys | `inject_keyboard_input` queues keys for a Wayland window instead of XTEST; text-input enable shows Moon's keyboard with the purpose, disable hides it |
-| Content | `wl_surface.commit` + `wl_shm` buffer | `ShmAttachFd` of the pool (once per pool size), `ShmPutImage` of the damage, release on ShmCompletion |
+| Content | `wl_surface.commit` + `wl_shm` buffer | `ShmAttachFd` of the pool (once per pool size), `ShmPutImage` of the damage. The buffer on screen is held until the next one has been copied, and exposed areas (a popup closing) are repainted from it |
 | Frame pacing | `wl_callback.done` | on a 120 Hz grid, only for visible surfaces whose last content has been copied |
 | Snapshots, switcher, GPU mirror | none | free: the proxy is an X window like any app's |
 
@@ -141,8 +141,22 @@ the stand-in compositor), with `src/moon-wl-demo` in the System slot
 - `wayland::tests` drives the server with a real `wayland-client`:
   configure, commit, release, touch, text-input and keyboard.
 
-Not verified yet: the phone (`scripts/wayland/moon-phone.sh`), the real
-toolkits (foot, GTK), popups and subsurfaces from a real client.
+- Stock toolkits from an Alpine container (`scripts/wayland/dev-client.sh`):
+  - **foot** opens Moon's keyboard through text-input-v3 by itself, and
+    `ls` plus return typed on it runs;
+  - **GTK 4** (`gtk4-widget-factory`): the focused entry opens the
+    keyboard, a dropdown popup opens, picks an item and closes cleanly;
+    at scale 3 it draws at phone density.
+- **The System app** (`a26-system`, branch `wayland`) is a native Wayland
+  client when `WAYLAND_DISPLAY` is set and the X11 app otherwise. Pages,
+  navigation and taps work; its text fields ask for the keyboard through
+  text-input-v3 instead of Moon's control socket.
+
+Only apps listed in `MOON_WAYLAND_APPS` (default: `system`) get
+`WAYLAND_DISPLAY`. Chromium picks Wayland by itself when it sees the
+variable, so the browser stays on X11 until it has been tested.
+
+Not verified yet: the phone (`scripts/wayland/moon-phone.sh`).
 
 ## Requests for moon-compositor (M2)
 
