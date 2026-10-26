@@ -33,6 +33,8 @@ class Surface:
         self.w, self.h, self.stride, self.fmt, self.mem = w, h, stride, fmt, mem
         self.pixels = pixels  # HxWx3 uint8 RGB (copies), else read from mem
         self.uploads = 0
+        self.radius = 0.0  # baked corners (copies)
+        self.opaque = fmt != 2
 
     def rgb(self):
         if self.pixels is not None:
@@ -63,6 +65,7 @@ class Mock:
         self.flip_due = None
         self.sequence = 0
         self.stats = {"frames": 0, "mirror_damage": 0, "uploads": 0, "copies": 0}
+        self.paths = {}
         self.log = open(args.log, "a") if args.log else sys.stderr
         self.client = None
         self.powered = True
@@ -111,7 +114,10 @@ class Mock:
                 rgb = src.rgb()[int(sy) : int(sy + sh), int(sx) : int(sx + sw)]
                 ys = (np.arange(h) * rgb.shape[0] // h).clip(0, rgb.shape[0] - 1)
                 xs = (np.arange(w) * rgb.shape[1] // w).clip(0, rgb.shape[1] - 1)
-                self.surfaces[sid] = Surface(w, h, pixels=rgb[ys][:, xs].copy())
+                copy = Surface(w, h, pixels=rgb[ys][:, xs].copy())
+                copy.radius = radius
+                copy.opaque = radius <= 0.5 and src.opaque
+                self.surfaces[sid] = copy
                 self.stats["copies"] += 1
                 self.say(f"copy {sid} from {source:#x} {w}x{h} radius {radius:.0f} mean {rgb.mean():.1f}")
         elif kind == 5:  # FREE
@@ -123,6 +129,9 @@ class Mock:
             serial, flags, base, count = struct.unpack_from("<IIII", body)
             nodes = [struct.unpack_from("<II4f4f3fIII", body, 16 + 64 * i) for i in range(count)]
             self.pending = (serial, flags, base, nodes)
+            why = self.plane_plan(flags, base, nodes)
+            key = "planes" if why is None else why
+            self.paths[key] = self.paths.get(key, 0) + 1
         elif kind == 8:  # POWER
             (on,) = struct.unpack_from("<I", body)
             self.powered = bool(on)
@@ -130,6 +139,42 @@ class Mock:
             self.send(68, struct.pack("<I", on))
         else:
             self.say("unknown message", kind)
+
+    def plane_plan(self, flags, base, nodes, scalers=3, planes=8):
+        """moon-compositor's plan_planes(), to see which frames would skip
+        drawing: None if the frame fits the display planes, else why not."""
+        n = scaled = 0
+        if flags & 1:
+            s = self.lookup(base)
+            if s is None or not s.opaque:
+                return "base"
+            n += 1
+        for kind, sid, sx, sy, sw, sh, dx, dy, dw, dh, alpha, dim, radius, nflags, color, _ in nodes:
+            if alpha <= 0.002 or dw <= 0 or dh <= 0:
+                continue
+            if kind == 2:
+                if n == 0 and (color & 0xFFFFFF) == 0:
+                    continue
+                return "fill"
+            s = self.lookup(sid)
+            if s is None or n == planes:
+                return "count"
+            kx, ky = dw / sw, dh / sh
+            if abs(radius - s.radius * kx) > 1.5:
+                return "radius"
+            x0, y0, x1, y1 = max(round(dx), 0), max(round(dy), 0), min(round(dx + dw), W), min(round(dy + dh), H)
+            if x1 <= x0 or y1 <= y0:
+                continue
+            if abs(kx - 1) > 0.002 or abs(ky - 1) > 0.002:
+                scaled += 1
+                if kx < 0.5 or ky < 0.5 or kx > 8 or ky > 8 or scaled > scalers:
+                    return "scale"
+            if x1 - x0 < 64 or y1 - y0 < 16:
+                return "small"
+            if dim < 0.998 and (n != 0 or not s.opaque):
+                return "dim"
+            n += 1
+        return None
 
     def tick(self):
         now = time.monotonic()
@@ -185,7 +230,7 @@ class Mock:
         serial, flags, base, nodes = self.frame or (0, 0, 0, [])
         self.say(f"shot {path}: frame {serial} base {base if flags & 1 else '-'} nodes "
                  + ", ".join(f"{'img' if n[0] == 1 else 'fill'}:{n[1]:#x}" for n in nodes)
-                 + f" stats {self.stats}")
+                 + f" stats {self.stats} paths {self.paths}")
         for kind, sid, *_rest in nodes:
             surface = self.lookup(sid)
             if kind == 1 and surface is not None:

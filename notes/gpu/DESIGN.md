@@ -334,7 +334,21 @@ Verified off-device (whale, Xvfb, the stand-in compositor): Moon connects,
 uploads its layers, and the lock and home screens and the unlock animation
 arrive frame by frame, paced by presentation events; an app (xev) in front
 is shown through the X mirror; the switcher shows the app's snapshot, at
-rest through its card copy. The CPU tier's renderer was checked on whale
+rest through its card copy. The stand-in also applies the compositor's
+plane rules to every frame Moon sends; for injected gestures (the same
+paths as `scripts/gpu/gestures.sh`) it predicts which frames skip drawing:
+
+| Animation | Frames on planes | Why the others need drawing |
+| --- | --- | --- |
+| Unlock (keypad cascades out, home fades in) | 36 of 36 | |
+| Switcher scroll | 85 of 85 | |
+| Lock screen drag to the keypad | 53 of 53 | |
+| Slow swipe up and hold into the switcher | 52 of 172 | the card's corner radius changes with its scale |
+| Swipe up out of an app | 21 of 82 | the same |
+| Launch and resume zooms | 0 of 61 each | the zooming card is a rounded fill (launch) or a snapshot with a changing radius |
+
+So the GPU draws the zooms and the gesture's middle; everything at a
+steady scale goes to the planes. The CPU tier's renderer was checked on whale
 (rounded, scaled, translucent and dimmed nodes; 4.9 ms for a heavy frame on
 four x86 threads). On the phone: pending.
 
