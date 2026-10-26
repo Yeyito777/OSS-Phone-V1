@@ -1,5 +1,15 @@
 # Panic-canary recovery runbook (attended, morning)
 
+> ⛔ **STAGE 0 FAILED 2026-10-26 AND THE CANARY IS ON HOLD.** A reset during a
+> recovery boot re-enters recovery: the recovery selection lives in PMU
+> alive-domain registers that a hard reset and a kernel panic do NOT clear
+> (only a clean "Reboot system now" or a full power-off does). So the
+> panic canary would loop. See `RECOVERY-PERSISTENCE-ROOTCAUSE.md`. Do not
+> run Stage 0/1 until a recovery-slot image clears the PMU reboot state as
+> its first action (the `oss-rebootmode-clear` kernel piece). The escape
+> below is updated for the real persistence.
+
+
 Purpose: prove that a boot which **panics** (PID-1 death, the exact stage-2
 v2/v3 failure) started in the **recovery** partition returns to the working
 **BOOT on its own**, with no hands. If it does, the recovery partition is a
@@ -152,15 +162,21 @@ bootloader re-latches recovery):
 5. **Clean up** from the booted system: `--check-bcb` → all zero;
    `sha256(recovery)` == `9ab6cefe…`; `rm /data/local/tmp/reboot-recovery`.
 
-### How likely is a plain forced restart (step 1) to reach BOOT?
-Good, and this is the normal case. Recovery here is selected by the one-shot PMU
-reason, which the recovery boot consumes; a manual Power+VolDown reset writes a
-*manual* reason, so the bootloader boots BOOT. The only way step 1 fails is if a
-sticky **BCB** `boot-recovery` is present — which the canary path never writes
-(it enters via `reboot(2)`, not init), and which we assert is zero before entry.
-The Download-mode MISC flash (step 3) is the deterministic backstop if it is
-ever set. MISC and RECOVERY are both in the PIT, so this is a one-session fix,
-not a wait-for-the-battery-to-die situation like the July 2026 incident.
+### Escape from a stuck recovery selection (updated 2026-10-26)
+A plain forced restart does **not** help: the PMU recovery selection survives a
+hard reset (that is exactly what Stage 0 showed). The deterministic escape,
+BOOT never touched:
+1. Enter **Download mode** — VolUp+VolDown with USB at the warning screen. This
+   is a bootloader key combo, independent of the PMU reboot-cmd, so it always
+   works. The armed watcher flashes **stock recovery** (`9ab6cefe`) + MISC-clear
+   to the recovery slot.
+2. Restart (Power+VolDown). The PMU still says recovery, so the bootloader boots
+   the slot — now **stock recovery**.
+3. In stock recovery: Volume keys to **"Reboot system now"**, then Power. Its
+   clean reboot rewrites the PMU to NORMAL and the phone boots **BOOT**.
+A full power-off also clears it (the alive domain loses power), but step 1-3 is
+faster and does not risk the battery.
+
 
 ## Invariants asserted every run
 - misc BCB (first 4 KiB) == all zero, **before entry and first after return**.
