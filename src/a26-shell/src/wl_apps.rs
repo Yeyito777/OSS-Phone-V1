@@ -71,6 +71,13 @@ struct Proxy {
     focused: bool,
     /// The last content was copied and the client waits for its frame.
     frame_pending: bool,
+    /// Popups and subsurfaces: where the client put them.
+    placement: Option<Placement>,
+    /// The part of the buffer shown (xdg window geometry), buffer pixels.
+    crop: Option<wayland::Rect>,
+    /// The buffer on screen. Held (not released) until the next one has
+    /// been copied, so exposed areas can be repainted from it.
+    current: Option<(WlBuffer, Arc<ShmBuffer>)>,
 }
 
 pub struct WaylandApps {
@@ -83,7 +90,9 @@ pub struct WaylandApps {
     proxies: HashMap<SurfaceKey, Proxy>,
     windows: HashMap<u32, SurfaceKey>,
     /// Buffers whose ShmPutImage has not completed yet, per window.
-    in_flight: HashMap<u32, VecDeque<WlBuffer>>,
+    in_flight: HashMap<u32, VecDeque<(WlBuffer, Arc<ShmBuffer>)>>,
+    /// Exposed window areas to repaint from the current buffer.
+    exposed: Vec<(u32, wayland::Rect)>,
     next_frame: Instant,
     /// The window a touch went down on (X keeps delivering to it).
     touch_window: Option<u32>,
@@ -92,6 +101,8 @@ pub struct WaylandApps {
     /// Parent of each popup or subsurface.
     parents: HashMap<SurfaceKey, SurfaceKey>,
     actions: Vec<Action>,
+    /// MOON_WAYLAND_DEBUG=1 logs every protocol event but commits.
+    debug: bool,
 }
 
 impl WaylandApps {
@@ -122,11 +133,13 @@ impl WaylandApps {
             proxies: HashMap::new(),
             windows: HashMap::new(),
             in_flight: HashMap::new(),
+            exposed: Vec::new(),
             next_frame: Instant::now(),
             touch_window: None,
             sizes: HashMap::new(),
             parents: HashMap::new(),
             actions: Vec::new(),
+            debug: std::env::var_os("MOON_WAYLAND_DEBUG").is_some(),
         })
     }
 
@@ -153,9 +166,15 @@ impl WaylandApps {
     pub fn dispatch<C: Connection>(&mut self, conn: &C) -> Vec<Action> {
         self.server.dispatch();
         for event in self.server.take_events() {
+            if self.debug && !matches!(event, wayland::Event::Commit { .. }) {
+                eprintln!("wayland event: {event:?}");
+            }
             if let Err(error) = self.apply(conn, event) {
                 eprintln!("wayland: proxy request failed: {error}");
             }
+        }
+        if let Err(error) = self.repaint_exposed(conn) {
+            eprintln!("wayland: repaint failed: {error}");
         }
         // Pools nobody uses any more (only our segment holds them).
         let unused: Vec<u64> = self
@@ -232,12 +251,16 @@ impl WaylandApps {
                 buffer,
                 resource,
                 damage,
-            } => self.commit(conn, surface, &buffer, resource, &damage)?,
+                geometry,
+            } => self.commit(conn, surface, buffer, resource, &damage, geometry)?,
             wayland::Event::Unmapped { surface } => {
                 if let Some(proxy) = self.proxies.get_mut(&surface) {
                     proxy.has_content = false;
                     if proxy.toplevel.is_none() {
                         conn.unmap_window(proxy.window)?;
+                    }
+                    if let Some((buffer, _)) = proxy.current.take() {
+                        self.server.release(&buffer);
                     }
                 }
             }
@@ -249,8 +272,13 @@ impl WaylandApps {
                 if let Some(proxy) = self.proxies.remove(&surface) {
                     self.windows.remove(&proxy.window);
                     self.sizes.remove(&proxy.window);
-                    // Buffers still in flight are the client's to free.
-                    self.in_flight.remove(&proxy.window);
+                    // Every buffer we held goes back to the client.
+                    for (buffer, _) in self.in_flight.remove(&proxy.window).unwrap_or_default() {
+                        self.server.release(&buffer);
+                    }
+                    if let Some((buffer, _)) = proxy.current {
+                        self.server.release(&buffer);
+                    }
                     if self.touch_window == Some(proxy.window) {
                         self.touch_window = None;
                     }
@@ -295,6 +323,9 @@ impl WaylandApps {
                 has_content: false,
                 focused: false,
                 frame_pending: false,
+                placement: None,
+                crop: None,
+                current: None,
             },
         );
     }
@@ -313,18 +344,19 @@ impl WaylandApps {
         surface: SurfaceKey,
         placement: Placement,
     ) -> Result<(), Box<dyn Error>> {
-        let (parent, x, y) = match placement {
-            Placement::Popup { parent, x, y } | Placement::Subsurface { parent, x, y } => {
-                (parent, x, y)
-            }
+        let parent = match placement {
+            Placement::Popup { parent, .. } | Placement::Subsurface { parent, .. } => parent,
             Placement::Toplevel(_) => return Ok(()),
         };
         let Some(parent_window) = self.proxies.get(&parent).map(|proxy| proxy.window) else {
             return Ok(());
         };
-        if let Some(proxy) = self.proxies.get(&surface) {
+        if let Some(proxy) = self.proxies.get_mut(&surface) {
+            proxy.placement = Some(placement);
+            let window = proxy.window;
+            let (x, y) = self.child_position(surface);
             conn.configure_window(
-                proxy.window,
+                window,
                 &ConfigureWindowAux::new()
                     .x(x)
                     .y(y)
@@ -337,8 +369,8 @@ impl WaylandApps {
             COPY_DEPTH_FROM_PARENT,
             window,
             parent_window,
-            clamp16(x),
-            clamp16(y),
+            0,
+            0,
             1,
             1,
             0,
@@ -351,37 +383,100 @@ impl WaylandApps {
         let owner = self.proxies.get(&parent).and_then(|proxy| proxy.owner);
         self.add_proxy(surface, window, None, owner);
         self.parents.insert(surface, parent);
+        if let Some(proxy) = self.proxies.get_mut(&surface) {
+            proxy.placement = Some(placement);
+        }
         Ok(())
     }
 
+    /// A child window's position inside its parent's window. The parent's
+    /// window shows its buffer from its crop origin; a popup is placed
+    /// relative to the parent's window geometry (that same origin), a
+    /// subsurface relative to the parent's buffer.
+    fn child_position(&self, surface: SurfaceKey) -> (i32, i32) {
+        let Some(proxy) = self.proxies.get(&surface) else {
+            return (0, 0);
+        };
+        match proxy.placement {
+            Some(Placement::Popup { x, y, .. }) => (x, y),
+            Some(Placement::Subsurface { parent, x, y }) => {
+                let origin = self
+                    .proxies
+                    .get(&parent)
+                    .and_then(|parent| parent.crop)
+                    .map(|crop| (crop.x, crop.y))
+                    .unwrap_or((0, 0));
+                (x - origin.0, y - origin.1)
+            }
+            _ => (0, 0),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn commit<C: Connection>(
         &mut self,
         conn: &C,
         surface: SurfaceKey,
-        buffer: &ShmBuffer,
+        buffer: Arc<ShmBuffer>,
         resource: WlBuffer,
         damage: &[wayland::Rect],
+        geometry: Option<wayland::Rect>,
     ) -> Result<(), Box<dyn Error>> {
-        let Some((window, is_child, has_content)) = self
-            .proxies
-            .get(&surface)
-            .map(|proxy| (proxy.window, proxy.toplevel.is_none(), proxy.has_content))
+        let Some((window, is_child, has_content, old_crop)) =
+            self.proxies.get(&surface).map(|proxy| {
+                (
+                    proxy.window,
+                    proxy.toplevel.is_none(),
+                    proxy.has_content,
+                    proxy.crop,
+                )
+            })
         else {
             self.server.release(&resource);
             return Ok(());
         };
         let seg = self.segment(conn, &buffer.pool)?;
-        if is_child && !has_content {
-            // A child shows at its buffer's size.
+        let crop = geometry.and_then(|rect| rect.clip(buffer.width, buffer.height));
+        let shown = crop.unwrap_or(wayland::Rect::new(0, 0, buffer.width, buffer.height));
+        let crop_changed = has_content && crop != old_crop;
+        if let Some(proxy) = self.proxies.get_mut(&surface) {
+            proxy.crop = crop;
+        }
+        if is_child && (!has_content || crop_changed) {
+            // A child shows at its window geometry's (or buffer's) size.
+            let (x, y) = self.child_position(surface);
             conn.configure_window(
                 window,
                 &ConfigureWindowAux::new()
-                    .width(buffer.width.clamp(1, 8192) as u32)
-                    .height(buffer.height.clamp(1, 8192) as u32),
+                    .x(x)
+                    .y(y)
+                    .width(shown.width.clamp(1, 8192) as u32)
+                    .height(shown.height.clamp(1, 8192) as u32),
             )?;
-            conn.map_window(window)?;
+            if !has_content {
+                conn.map_window(window)?;
+            }
         }
-        let rects = damage;
+        if crop_changed {
+            // Subsurfaces are placed relative to this buffer's origin.
+            let children: Vec<SurfaceKey> = self
+                .parents
+                .iter()
+                .filter(|(_, parent)| **parent == surface)
+                .map(|(child, _)| *child)
+                .collect();
+            for child in children {
+                if let Some(child_window) = self.proxies.get(&child).map(|proxy| proxy.window) {
+                    let (x, y) = self.child_position(child);
+                    conn.configure_window(child_window, &ConfigureWindowAux::new().x(x).y(y))?;
+                }
+            }
+        }
+        let whole = [shown];
+        let rects: Vec<wayland::Rect> = (if crop_changed { &whole[..] } else { damage })
+            .iter()
+            .filter_map(|rect| intersect(*rect, shown))
+            .collect();
         let last = rects.len().saturating_sub(1);
         for (index, rect) in rects.iter().enumerate() {
             conn.shm_put_image(
@@ -393,8 +488,8 @@ impl WaylandApps {
                 rect.y as u16,
                 rect.width as u16,
                 rect.height as u16,
-                clamp16(rect.x),
-                clamp16(rect.y),
+                clamp16(rect.x - shown.x),
+                clamp16(rect.y - shown.y),
                 24,
                 ImageFormat::Z_PIXMAP.into(),
                 index == last,
@@ -403,13 +498,13 @@ impl WaylandApps {
             )?;
         }
         if rects.is_empty() {
-            // Nothing to copy: the buffer is free again at once.
-            self.server.release(&resource);
+            // Nothing to copy: it is the buffer on screen at once.
+            self.make_current(surface, resource, buffer);
         } else {
             self.in_flight
                 .entry(window)
                 .or_default()
-                .push_back(resource);
+                .push_back((resource, buffer));
         }
         let proxy = self.proxies.get_mut(&surface).expect("looked up above");
         let first = !proxy.has_content;
@@ -420,6 +515,62 @@ impl WaylandApps {
                 window,
                 owner: proxy.owner,
             });
+        }
+        Ok(())
+    }
+
+    /// A copied buffer is the one on screen; the one it replaces goes back.
+    fn make_current(&mut self, surface: SurfaceKey, buffer: WlBuffer, shm: Arc<ShmBuffer>) {
+        let Some(proxy) = self.proxies.get_mut(&surface) else {
+            self.server.release(&buffer);
+            return;
+        };
+        if let Some((old, _)) = proxy.current.replace((buffer.clone(), shm))
+            && old != buffer
+        {
+            self.server.release(&old);
+        }
+    }
+
+    /// Repaints exposed areas of proxies from their buffers on screen.
+    fn repaint_exposed<C: Connection>(&mut self, conn: &C) -> Result<(), Box<dyn Error>> {
+        for (window, rect) in std::mem::take(&mut self.exposed) {
+            let Some((shm, crop)) = self
+                .windows
+                .get(&window)
+                .and_then(|key| self.proxies.get(key))
+                .and_then(|proxy| Some((proxy.current.as_ref()?.1.clone(), proxy.crop)))
+            else {
+                continue;
+            };
+            let origin = crop.map(|crop| (crop.x, crop.y)).unwrap_or((0, 0));
+            let source = wayland::Rect::new(
+                rect.x + origin.0,
+                rect.y + origin.1,
+                rect.width,
+                rect.height,
+            );
+            let Some(source) = source.clip(shm.width, shm.height) else {
+                continue;
+            };
+            let seg = self.segment(conn, &shm.pool)?;
+            conn.shm_put_image(
+                window,
+                self.gc,
+                (shm.stride / 4).clamp(1, 65535) as u16,
+                shm.height.clamp(1, 65535) as u16,
+                source.x as u16,
+                source.y as u16,
+                source.width as u16,
+                source.height as u16,
+                clamp16(source.x - origin.0),
+                clamp16(source.y - origin.1),
+                24,
+                ImageFormat::Z_PIXMAP.into(),
+                false,
+                seg,
+                shm.offset as u32,
+            )?;
         }
         Ok(())
     }
@@ -463,18 +614,33 @@ impl WaylandApps {
                 let Some(queue) = self.in_flight.get_mut(&event.drawable) else {
                     return false;
                 };
-                if let Some(buffer) = queue.pop_front() {
-                    self.server.release(&buffer);
-                }
-                if let Some(key) = self.windows.get(&event.drawable)
-                    && let Some(proxy) = self.proxies.get_mut(key)
-                {
-                    proxy.frame_pending = true;
+                let copied = queue.pop_front();
+                if let Some(key) = self.windows.get(&event.drawable).copied() {
+                    if let Some((buffer, shm)) = copied {
+                        self.make_current(key, buffer, shm);
+                    }
+                    if let Some(proxy) = self.proxies.get_mut(&key) {
+                        proxy.frame_pending = true;
+                    }
                 }
                 true
             }
             Event::ConfigureNotify(event) => {
                 self.reconfigure(event.window, Some((event.width, event.height)));
+                false
+            }
+            Event::Expose(event) if self.is_proxy(event.window) => {
+                // A child window went away or moved: repaint from the buffer
+                // on screen at the next dispatch.
+                self.exposed.push((
+                    event.window,
+                    wayland::Rect::new(
+                        i32::from(event.x),
+                        i32::from(event.y),
+                        i32::from(event.width),
+                        i32::from(event.height),
+                    ),
+                ));
                 false
             }
             Event::MapNotify(event) => {
@@ -521,23 +687,14 @@ impl WaylandApps {
             }
             Event::ButtonPress(event) if self.is_proxy(event.event) => {
                 let key = self.windows[&event.event];
+                let (x, y) = self.surface_point(event.event, event.event_x, event.event_y);
                 self.touch_window = Some(event.event);
-                self.server.touch_down(
-                    key,
-                    0,
-                    f64::from(event.event_x),
-                    f64::from(event.event_y),
-                    event.time,
-                );
+                self.server.touch_down(key, 0, x, y, event.time);
                 false
             }
             Event::MotionNotify(event) if self.touch_window == Some(event.event) => {
-                self.server.touch_motion(
-                    0,
-                    f64::from(event.event_x),
-                    f64::from(event.event_y),
-                    event.time,
-                );
+                let (x, y) = self.surface_point(event.event, event.event_x, event.event_y);
+                self.server.touch_motion(0, x, y, event.time);
                 false
             }
             Event::ButtonRelease(event) if self.touch_window == Some(event.event) => {
@@ -547,6 +704,22 @@ impl WaylandApps {
             }
             _ => false,
         }
+    }
+
+    /// Window pixels to surface coordinates (the window shows the buffer
+    /// from its crop origin).
+    fn surface_point(&self, window: u32, x: i16, y: i16) -> (f64, f64) {
+        let origin = self
+            .windows
+            .get(&window)
+            .and_then(|key| self.proxies.get(key))
+            .and_then(|proxy| proxy.crop)
+            .map(|crop| (crop.x, crop.y))
+            .unwrap_or((0, 0));
+        (
+            f64::from(i32::from(x) + origin.0),
+            f64::from(i32::from(y) + origin.1),
+        )
     }
 
     fn toplevel_of_window(&self, window: u32) -> Option<ToplevelId> {
@@ -665,11 +838,20 @@ impl WaylandApps {
 }
 
 fn proxy_events() -> EventMask {
-    EventMask::STRUCTURE_NOTIFY
+    EventMask::EXPOSURE
+        | EventMask::STRUCTURE_NOTIFY
         | EventMask::FOCUS_CHANGE
         | EventMask::BUTTON_PRESS
         | EventMask::BUTTON_RELEASE
         | EventMask::BUTTON_MOTION
+}
+
+fn intersect(a: wayland::Rect, b: wayland::Rect) -> Option<wayland::Rect> {
+    let x0 = a.x.max(b.x);
+    let y0 = a.y.max(b.y);
+    let x1 = (a.x + a.width).min(b.x + b.width);
+    let y1 = (a.y + a.height).min(b.y + b.height);
+    (x1 > x0 && y1 > y0).then(|| wayland::Rect::new(x0, y0, x1 - x0, y1 - y0))
 }
 
 fn clamp16(value: i32) -> i16 {

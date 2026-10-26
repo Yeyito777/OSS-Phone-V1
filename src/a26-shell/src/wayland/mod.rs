@@ -113,6 +113,8 @@ pub enum Event {
         buffer: Arc<ShmBuffer>,
         resource: WlBuffer,
         damage: Vec<Rect>,
+        /// The xdg window geometry: the part of the buffer to show.
+        geometry: Option<Rect>,
     },
     /// The surface has no content any more (a null buffer): hide it.
     Unmapped {

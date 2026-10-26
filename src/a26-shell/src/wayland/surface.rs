@@ -291,6 +291,7 @@ fn commit(state: &mut WlState, resource: &WlSurface) {
                         buffer: shm.clone(),
                         resource: buffer,
                         damage: rects,
+                        geometry: state.xdg.get(&key).and_then(|info| info.geometry),
                     });
                 }
                 None => {

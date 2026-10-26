@@ -38,7 +38,9 @@ pub(crate) struct XdgInfo {
     pub initial_sent: bool,
     pub last_serial: u32,
     pub popup: Option<(XdgSurface, XdgPopup)>,
-    pub geometry: Option<(i32, i32)>,
+    /// xdg window geometry: the part of the surface that is the window
+    /// (without client-side shadows).
+    pub geometry: Option<super::Rect>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -245,9 +247,17 @@ impl Dispatch<XdgSurface, SurfaceKey> for WlState {
                     data.can_show = true;
                 }
             }
-            xdg_surface::Request::SetWindowGeometry { width, height, .. } => {
-                if let Some(info) = state.xdg.get_mut(&key) {
-                    info.geometry = Some((width, height));
+            xdg_surface::Request::SetWindowGeometry {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                if let Some(info) = state.xdg.get_mut(&key)
+                    && width > 0
+                    && height > 0
+                {
+                    info.geometry = Some(super::Rect::new(x, y, width, height));
                 }
             }
             xdg_surface::Request::Destroy => {
