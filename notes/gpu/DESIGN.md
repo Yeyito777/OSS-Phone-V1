@@ -230,24 +230,41 @@ Xorg, and nothing in the compositor has to change.
 - **A hung compositor** (alive, no flips) is not detected yet: Moon keeps
   running (its frame watchdog moves on after 250 ms) but the screen
   freezes. Moon could report it to the session script; not built.
+- **The panel and the DPP row stride (2026-10-26).** Since a boot into
+  stock recovery, GPU mode showed the lock screen sheared on the panel
+  ("blue and white streaks"), across warm reboots and DPMS off/on, while
+  the frame itself was right (SIGUSR1) and the software path (Xorg
+  modesetting: a full modeset, a framebuffer with pitch 4320) was clean.
+  The compositor now does a full modeset at start (CRTC off, then on with
+  the mode; VRR, colour mode and render intent reset) and its CPU tier
+  uses rows exactly as wide as the screen (pitch 4320): the user confirmed
+  that clean. The Mali refuses a 4320-byte pitch (EGLImage `EGL_BAD_ALLOC`),
+  so with that the GPU tier is unavailable and the CPU tier runs.
+  The writeback probes (`SIGURG`: a test layer whose every pixel holds its
+  own index, read back through the writeback connector) show what the DPPs
+  do on the writeback DECON: they ignore the framebuffer's pitch and walk
+  rows of (width + 8) x 4 bytes (4352 for 1080, 4384 for 1088, 4128 for
+  1024, whatever the pitch), and a layer shown at screen row y from source
+  row s starts (y - s) x 32 bytes late (27520 for the notification list at
+  y=860: the plane misread below). Every DPP does this there, the primary
+  (54) included, yet on the panel a 4320 pitch is fetched right: the
+  writeback DECON's stride rules are not the panel's, which is why a
+  writeback said "clean" while the panel was not. A writeback is no proof
+  of the panel's picture; the panel needs eyes (the CRTC's CRC debugfs is
+  no help: it stays the same across different images).
+  Candidate for the GPU tier (branch only, not yet seen on the panel):
+  render into 4352-byte rows and declare the framebuffer 1088 wide, shown
+  1080 wide from the left, so a DPP that walks the framebuffer width or the
+  pitch walks 4352 either way.
 - **Display planes are off on the phone (2026-10-26).** With the lock
-  screen's notification list (a 1080x1280 ARGB layer at y=860, pitch 4352,
-  offset 0) on a plane, the panel showed garbage and kept doing so across
-  reboots while the GPU tier's own frame (SIGUSR1) was right. The DECON's
-  writeback connector (connector 115 on CRTC 121, `SIGWINCH` below) shows
-  why: every DPP tried (82, 89, 75, 61) fetches that buffer 27520 bytes
-  (6880 pixels) past its start, the same in a fresh compositor process and
-  with the text changing, while the CPU view of the same dmabuf is right.
-  The wallpaper, clock and status bar layers are read correctly, the same
-  frame without the notification is byte-exact through the planes, and the
-  GPU tier's composed frame through a DPP is byte-exact (each writeback
-  leaves the last 74880 bytes black, a writeback quirk seen on every path).
-  `underrun_cnt` and `err_event` (debugfs `crtc-0`) stay 0. Cause not found;
-  until it is, `GPU_PLANES=0` in the config (`scripts/gpu/install.sh
-  --no-planes`, `--planes` clears it) starts the compositor with
-  `--no-planes`. Debugging: `SIGHUP` toggles planes, `SIGWINCH` writes what
-  the planes path would show (or, planes off, the panel's frame through a
-  spare DPP) to `wb.ppm` beside the socket.
+  screen's notification list (a 1080x1280 ARGB layer at y=860, pitch 4352)
+  on a plane, the planes fetched it 27520 bytes late (above). Until the
+  plane rules are understood on the panel itself, `GPU_PLANES=0` in the
+  config (`scripts/gpu/install.sh --no-planes`, `--planes` clears it)
+  starts the compositor with `--no-planes`. Debugging: `SIGHUP` toggles
+  planes, `SIGWINCH` writes what the planes path would show (or, planes
+  off, the panel's frame through a spare DPP) to `wb.ppm` beside the
+  socket, `SIGURG` runs the probes.
 - **Kernel hazards.** Every commit sets `HDR_FD=-1` on every plane it
   touches and a modeset `DQE_FD=-1` (see the panic below). The mode is never
   changed and the CRTC never disabled other than through `ACTIVE`.

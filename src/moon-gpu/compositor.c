@@ -1171,7 +1171,7 @@ static void write_wb(struct comp *c, const char *path) {
  * The writeback buffer has `wb_pitch`. Logs the byte shift of the first,
  * middle and last rows (0 = right) and returns the first, or LONG_MIN. */
 static long plane_probe(struct comp *c, int fb_w, int pitch, int src_w, int src_y,
-                        int dst_y, int h, int scaler) {
+                        int dst_y, int h, int scaler, int force) {
     int w = c->width, wb_pitch = (w * 4 + 63) & ~63;
     size_t len = (size_t)pitch * (size_t)(src_y + h);
     int fd = gpu_dmabuf_alloc("system", len);
@@ -1204,6 +1204,8 @@ static long plane_probe(struct comp *c, int fb_w, int pitch, int src_w, int src_
         if (!((c->busy_planes >> p) & 1) && p != c->k.primary &&
             c->k.planes[p].scaler == scaler)
             plane = p;
+    if (force >= 0)
+        plane = force;
     if (plane < 0)
         goto done;
     struct kms_layer l = {.fb = fb, .sy = (float)src_y, .sw = (float)src_w,
@@ -1247,8 +1249,136 @@ done:
     return base;
 }
 
+/* Shows one test image on the panel's primary plane from a buffer laid out
+ * as given and logs the CRC the display computes of what it sends: the same
+ * image from two layouts gives the same CRC only if both are fetched right.
+ * The panel's own path (DPP, DECON, not the writeback DECON) is measured. */
+static void panel_probe(struct comp *c, int fb_w, int pitch, uint32_t fourcc,
+                        char *crc, size_t crclen) {
+    int w = c->width, h = c->height;
+    size_t len = (size_t)pitch * h;
+    snprintf(crc, crclen, "none");
+    int fd = gpu_dmabuf_alloc("system", len);
+    uint32_t fb = 0;
+    uint32_t *px = fd >= 0 ? mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
+                           : MAP_FAILED;
+    if (px == MAP_FAILED)
+        goto done;
+    dmabuf_sync(fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < pitch / 4; x++) {
+            uint32_t v = x < w ? ((uint32_t)x * 2654435761u ^ (uint32_t)y * 40503u) & 0xffffff
+                               : 0x00ff00; /* padding: shows if fetched */
+            if (fourcc == DRM_FORMAT_ABGR8888 || fourcc == DRM_FORMAT_XBGR8888)
+                v = (v & 0xff00) | (v >> 16 & 0xff) | (v & 0xff) << 16;
+            px[(size_t)y * (pitch / 4) + x] = 0xff000000u | v;
+        }
+    dmabuf_sync(fd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE);
+    if (kms_add_fb(&c->k, fd, (uint32_t)fb_w, (uint32_t)h, (uint32_t)pitch, fourcc, &fb))
+        goto done;
+    const char *dir = "/sys/kernel/debug/dri/0/crtc-0/crc";
+    char path[96];
+    snprintf(path, sizeof path, "%s/control", dir);
+    int cfd = open(path, O_WRONLY | O_CLOEXEC);
+    if (cfd >= 0) {
+        if (write(cfd, "auto", 4) < 0)
+            ;
+        close(cfd);
+    }
+    snprintf(path, sizeof path, "%s/data", dir);
+    int r = kms_commit_blocking(&c->k, fb);
+    int dfd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    for (int i = 0; i < 4 && !r; i++)
+        r = kms_commit_blocking(&c->k, fb);
+    usleep(50000);
+    if (r) {
+        snprintf(crc, crclen, "commit: %s", strerror(-r));
+    } else if (dfd >= 0) {
+        char buf[4096];
+        ssize_t n = read(dfd, buf, sizeof buf - 1);
+        if (n > 0) {
+            buf[n] = 0;
+            /* The last complete line. */
+            while (n > 0 && buf[n - 1] == '\n')
+                buf[--n] = 0;
+            char *last = strrchr(buf, '\n');
+            snprintf(crc, crclen, "%s", last ? last + 1 : buf);
+        } else {
+            snprintf(crc, crclen, "no data (%s)", n < 0 ? strerror(errno) : "eof");
+        }
+    } else {
+        snprintf(crc, crclen, "no crc: %s", strerror(errno));
+    }
+    if (dfd >= 0)
+        close(dfd);
+done:
+    LOG("panel probe: fb %dx%d pitch %d %.4s: crc %s", fb_w, h, pitch,
+        (const char *)&fourcc, crc);
+    if (fb) {
+        /* Back to the compositor's own buffer before this one goes. */
+        kms_commit_blocking(&c->k, c->out[(c->next_buf + NBUF - 1) % NBUF].fb);
+        kms_rm_fb(&c->k, fb);
+    }
+    if (px != MAP_FAILED)
+        munmap(px, len);
+    if (fd >= 0)
+        close(fd);
+}
+
+static void probe_panel(struct comp *c) {
+    wait_flip(c);
+    char a[128], b[128];
+    int w = c->width, p64 = (w * 4 + 63) & ~63;
+    static const uint32_t fmts[] = {DRM_FORMAT_XRGB8888, DRM_FORMAT_ABGR8888};
+    for (int f = 0; f < 2; f++) {
+        panel_probe(c, w, w * 4, fmts[f], a, sizeof a);       /* reference */
+        panel_probe(c, w, p64, fmts[f], b, sizeof b);         /* GPU tier's */
+        panel_probe(c, p64 / 4, p64, fmts[f], b, sizeof b);   /* fb as wide as pitch */
+        panel_probe(c, w - 8, p64, fmts[f], b, sizeof b);     /* (w+8)*4 = pitch */
+        panel_probe(c, w, w * 4, fmts[f], b, sizeof b);       /* reference again */
+    }
+    c->dirty = c->cur_valid;
+}
+
 /* The plane probes (SIGURG): which layouts the DPPs fetch correctly. */
+/* The panel's primary plane, through the writeback: the panel shows the
+ * current output on another plane meanwhile. */
+static void probe_primary(struct comp *c) {
+    wait_flip(c);
+    int alt = -1;
+    for (int p = 0; p < c->k.nplanes && alt < 0; p++)
+        if (p != c->k.primary && !c->k.planes[p].scaler)
+            alt = p;
+    struct kms_layer l = {.fb = c->out[(c->next_buf + NBUF - 1) % NBUF].fb,
+                          .sw = (float)c->width, .sh = (float)c->height,
+                          .dw = c->width, .dh = c->height, .alpha = 0xffff,
+                          .in_fence = -1, .plane = alt};
+    int r = kms_commit_layers(&c->k, &l, 1, 0, 0);
+    if (r) {
+        LOG("probe: moving the panel to plane %u: %s", c->k.planes[alt].id, strerror(-r));
+        return;
+    }
+    unsigned busy = c->busy_planes;
+    c->busy_planes = 1u << alt;
+    int pr = c->k.primary, w = c->width, p64 = (w * 4 + 63) & ~63;
+    static const int t[][5] = {
+        {1080, 4352, 1080, 0, 0}, {1080, 4352, 1080, 0, 860},
+        {1080, 4320, 1080, 0, 0}, {1080, 4320, 1080, 0, 860},
+        {1088, 4352, 1080, 0, 0}, {1088, 4352, 1080, 0, 860},
+        {1088, 4352, 1088, 0, 0},
+    };
+    for (size_t i = 0; i < sizeof t / sizeof t[0]; i++)
+        plane_probe(c, t[i][0], t[i][1], t[i][2], t[i][3], t[i][4], 64, 0, pr);
+    plane_probe(c, w, p64, w, 0, 0, c->height, 0, pr);
+    plane_probe(c, p64 / 4, p64, w, 0, 0, c->height, 0, pr);
+    plane_probe(c, w, w * 4, w, 0, 0, c->height, 0, pr);
+    c->busy_planes = busy;
+    c->dirty = 1;
+    c->cur_valid = c->cur_valid; /* the next submit returns to the primary */
+}
+
 static void probe_planes(struct comp *c) {
+    probe_primary(c);
     wait_flip(c);
     static const int t[][5] = {
         /* fb_w, pitch, src_w, src_y, dst_y */
@@ -1264,15 +1394,18 @@ static void probe_planes(struct comp *c) {
         {1080, 4352, 540, 0, 860},
     };
     for (size_t i = 0; i < sizeof t / sizeof t[0]; i++)
-        plane_probe(c, t[i][0], t[i][1], t[i][2], t[i][3], t[i][4], 64, 0);
+        plane_probe(c, t[i][0], t[i][1], t[i][2], t[i][3], t[i][4], 64, 0, -1);
 }
 
 /* ---- setup ---- */
 
 static int outputs_init(struct comp *c) {
-    /* Rows exactly as wide as the screen, like Xorg's framebuffer: the
-     * panel showed a 64-byte-aligned pitch sheared (notes/gpu/DESIGN.md). */
-    c->pitch = c->width * 4;
+    /* The panel showed a 64-byte-aligned pitch sheared on a framebuffer as
+     * wide as the screen (notes/gpu/DESIGN.md), and the Mali renders only
+     * into such rows: its framebuffer is as wide as the pitch instead, shown
+     * from the left. The CPU tier's rows are as wide as the screen, like
+     * Xorg's framebuffer. */
+    c->pitch = c->tier == TIER_GPU ? (c->width * 4 + 63) & ~63 : c->width * 4;
     for (int i = 0; i < NBUF; i++) {
         struct output *o = &c->out[i];
         /* GPU: written by the GPU, read by the display. CPU: written by
@@ -1296,7 +1429,7 @@ static int outputs_init(struct comp *c) {
                 return -1;
             }
         }
-        if (kms_add_fb(&c->k, o->fd, (uint32_t)c->width, (uint32_t)c->height,
+        if (kms_add_fb(&c->k, o->fd, (uint32_t)c->pitch / 4, (uint32_t)c->height,
                        (uint32_t)c->pitch, fourcc, &o->fb))
             return -1;
     }
