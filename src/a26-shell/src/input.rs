@@ -174,6 +174,9 @@ impl TouchscreenPower {
 pub struct Backlight {
     brightness_path: PathBuf,
     saved_brightness: u16,
+    /// The last value a fade wrote, so `off` does not mistake a ramp's
+    /// dimmed level for the user's brightness.
+    last_written: std::cell::Cell<Option<u16>>,
 }
 
 impl Backlight {
@@ -197,13 +200,14 @@ impl Backlight {
         Ok(Self {
             brightness_path,
             saved_brightness,
+            last_written: std::cell::Cell::new(None),
         })
     }
 
     pub fn off(&mut self) -> io::Result<()> {
         if let Ok(current) = fs::read_to_string(&self.brightness_path) {
             if let Ok(value) = current.trim().parse::<u16>() {
-                if value > 0 {
+                if value > 0 && self.last_written.get() != Some(value) {
                     self.saved_brightness = value;
                 }
             }
@@ -212,16 +216,43 @@ impl Backlight {
     }
 
     pub fn on(&self) -> io::Result<()> {
+        self.last_written.set(None);
         fs::write(
             &self.brightness_path,
             format!("{}\n", self.saved_brightness),
         )
     }
+
+    /// Sets a fraction (0..=1) of the saved brightness, on a perceptual
+    /// curve, for fades. Writes only when the value changes.
+    pub fn set_fraction(&self, fraction: f32) -> io::Result<()> {
+        let value = fade_level(self.saved_brightness, fraction);
+        if self.last_written.get() == Some(value) {
+            return Ok(());
+        }
+        self.last_written.set(Some(value));
+        fs::write(&self.brightness_path, format!("{value}\n"))
+    }
+}
+
+/// Brightness for a fade fraction: perceived brightness is roughly the
+/// square of the drive level, so the ramp is quadratic.
+fn fade_level(saved: u16, fraction: f32) -> u16 {
+    let f = fraction.clamp(0.0, 1.0);
+    (f32::from(saved) * f * f).round() as u16
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fade_levels_span_dark_to_saved_brightness() {
+        assert_eq!(fade_level(128, 0.0), 0);
+        assert_eq!(fade_level(128, 1.0), 128);
+        assert_eq!(fade_level(128, 0.5), 32);
+        assert_eq!(fade_level(128, 2.0), 128);
+    }
 
     fn event(kind: u16, code: u16, value: i32) -> Vec<u8> {
         let mut bytes = vec![0; size_of::<libc::timeval>()];

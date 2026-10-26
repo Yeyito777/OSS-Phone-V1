@@ -479,6 +479,29 @@ impl AppRegistry {
         self.leases.any_active(now)
     }
 
+    /// Apps with a live process, least recently used first (the order of
+    /// the app switcher's cards).
+    pub fn running_by_recency(&self) -> Vec<AppId> {
+        let mut running: Vec<(AppId, Instant)> = [AppId::System, AppId::Browser]
+            .into_iter()
+            .filter(|id| self.app(*id).lifecycle != AppLifecycle::Stopped)
+            .map(|id| (id, self.app(id).last_used))
+            .collect();
+        running.sort_by_key(|(_, last_used)| *last_used);
+        running.into_iter().map(|(id, _)| id).collect()
+    }
+
+    /// Closes a background app from the app switcher: its whole freezer
+    /// cgroup (every Chromium helper included) is killed, like an eviction.
+    pub fn terminate(&mut self, id: AppId) -> bool {
+        if self.active == Some(id) || self.app(id).lifecycle == AppLifecycle::Stopped {
+            return false;
+        }
+        self.leases.clear_app(id);
+        self.app_mut(id).stop();
+        true
+    }
+
     pub fn evict_lru_background(&mut self, now: Instant) -> Option<AppId> {
         self.leases.expire(now);
         let mut candidate: Option<(AppId, Instant)> = None;
@@ -626,5 +649,34 @@ mod tests {
             .release_lease(AppId::System, LeaseKind::Transfer, now)
             .unwrap();
         assert_eq!(registry.evict_lru_background(now), Some(AppId::System));
+    }
+
+    #[test]
+    fn switcher_close_kills_only_background_apps_and_orders_by_recency() {
+        let mut registry = registry();
+        let now = Instant::now();
+        for id in [AppId::System, AppId::Browser] {
+            registry.app_mut(id).lifecycle = AppLifecycle::Background;
+            registry.app_mut(id).child =
+                Some(Command::new("sh").args(["-c", "sleep 30"]).spawn().unwrap());
+        }
+        registry.app_mut(AppId::System).last_used = now - Duration::from_secs(5);
+        registry.app_mut(AppId::Browser).last_used = now - Duration::from_secs(50);
+        assert_eq!(
+            registry.running_by_recency(),
+            vec![AppId::Browser, AppId::System]
+        );
+        registry.active = Some(AppId::System);
+        assert!(!registry.terminate(AppId::System));
+        assert!(registry.terminate(AppId::Browser));
+        assert_eq!(
+            registry.app(AppId::Browser).lifecycle,
+            AppLifecycle::Stopped
+        );
+        assert!(registry.app(AppId::Browser).child.is_none());
+        assert!(!registry.terminate(AppId::Browser));
+        assert_eq!(registry.running_by_recency(), vec![AppId::System]);
+        registry.active = None;
+        registry.app_mut(AppId::System).stop();
     }
 }

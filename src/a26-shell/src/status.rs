@@ -12,17 +12,25 @@ pub struct DeviceStatus {
     pub wifi_connected: bool,
 }
 
+/// Reads a status file; `MOON_STATUS_ROOT` prefixes the sysfs paths so the
+/// shell can be previewed with simulated battery and Wi-Fi state.
+fn read_status(path: &str) -> std::io::Result<String> {
+    match std::env::var_os("MOON_STATUS_ROOT") {
+        Some(root) => fs::read_to_string(std::path::Path::new(&root).join(&path[1..])),
+        None => fs::read_to_string(path),
+    }
+}
+
 impl DeviceStatus {
     pub fn read() -> Self {
-        let battery_percent = fs::read_to_string(BATTERY_CAPACITY)
+        let battery_percent = read_status(BATTERY_CAPACITY)
             .ok()
             .and_then(|value| value.trim().parse::<u8>().ok())
             .map(|value| value.min(100));
         let battery_charging =
-            fs::read_to_string(BATTERY_STATUS).is_ok_and(|value| value.trim() == "Charging");
-        let wifi_connected = fs::read_to_string(WIFI_OPERSTATE)
-            .is_ok_and(|value| value.trim() == "up")
-            && fs::read_to_string(WIFI_CARRIER).is_ok_and(|value| value.trim() == "1");
+            read_status(BATTERY_STATUS).is_ok_and(|value| value.trim() == "Charging");
+        let wifi_connected = read_status(WIFI_OPERSTATE).is_ok_and(|value| value.trim() == "up")
+            && read_status(WIFI_CARRIER).is_ok_and(|value| value.trim() == "1");
         Self {
             battery_percent,
             battery_charging,

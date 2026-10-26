@@ -24,6 +24,15 @@ pub enum Command {
     PointerEnd(i16, i16),
     Lock,
     Home,
+    Switcher,
+    Profile(bool),
+    /// Diagnostics: skip drawing the frame nodes in this bitmask.
+    ProfileSkip(u64),
+    /// Diagnostics: the pixels a frame may redraw (kpx), which bounds how
+    /// fast a background fades.
+    ProfileBudget(u32),
+    /// Diagnostics: log every composed frame's nodes.
+    ProfileFrames(bool),
     LaunchSystem,
     LaunchBrowser,
     KeyboardShow(KeyboardPurpose),
@@ -150,7 +159,27 @@ fn parse_command(line: &str) -> Result<Command, String> {
         "submit" => Command::Submit,
         "lock" => Command::Lock,
         "home" => Command::Home,
+        "switcher" => Command::Switcher,
         "swipe-up" => Command::SwipeUp,
+        "profile" => match parts.next() {
+            Some("on") => Command::Profile(true),
+            Some("off") => Command::Profile(false),
+            Some("budget") => Command::ProfileBudget(
+                parts
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|kpx| (100..=3000).contains(kpx))
+                    .ok_or("profile budget requires 100..3000 (kpx)")?,
+            ),
+            Some("frames") => Command::ProfileFrames(parts.next() == Some("on")),
+            Some("skip") => Command::ProfileSkip(
+                parts
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or("profile skip requires a node bitmask")?,
+            ),
+            _ => return Err("profile requires on or off".into()),
+        },
         "power" => Command::Power,
         "quit" => Command::Quit,
         "digit" => {
@@ -265,6 +294,20 @@ fn parse_command(line: &str) -> Result<Command, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_switcher_and_profile_commands() {
+        assert!(matches!(parse_command("switcher"), Ok(Command::Switcher)));
+        assert!(matches!(
+            parse_command("profile on"),
+            Ok(Command::Profile(true))
+        ));
+        assert!(matches!(
+            parse_command("profile off"),
+            Ok(Command::Profile(false))
+        ));
+        assert!(parse_command("profile").is_err());
+    }
 
     #[test]
     fn parses_keyboard_commands_without_a_second_protocol() {

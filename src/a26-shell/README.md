@@ -2,12 +2,29 @@
 
 `a26-shell` is the first native phone shell/window manager for the Galaxy A26
 research target. Its core UI is toolkit-free: X11 protocol work uses pure-Rust
-`x11rb`, and drawing uses X11 rectangles and an embedded bitmap font. Apps are
+`x11rb`. Static artwork is drawn by a small client-side software rasterizer
+(`gfx.rs`, `text.rs`) with the embedded Inter typeface (SIL OFL 1.1,
+`assets/fonts/OFL.txt`) and uploaded once into server pixmaps; the shell's
+frames are then composed inside Xorg with RENDER and presented at vblank with
+Present (`compositor.rs`, see "Rendering and frame pacing" below). Apps are
 separate managed processes maintained in their own repositories.
 
 Current features:
 
-- fullscreen numeric lock screen;
+- lock screen with a large clock and date, revealed passcode keypad (tap, swipe
+  up, or type), press highlights, a wrong-passcode shake, and a live lockout
+  countdown;
+- home screen with calendar and battery widgets and a dock;
+- iOS-style icon-to-fullscreen launch and fullscreen-to-icon close zooms;
+- a finger-following home gesture: the app's snapshot tracks the finger and
+  settles by velocity on a spring (home, back into the app, or, after a
+  pause, the app switcher);
+- an app switcher with cards: browse sideways, tap to open, throw a card up
+  to close the app (its whole freezer cgroup is killed);
+- a lock screen that follows the finger from the clock to the keypad, and an
+  unlock cross-fade;
+- a power-key fade to black before screen-off and a fade-in on wake;
+- bottom-edge horizontal swipe to switch between apps;
 - salted, hashed six-digit PIN configuration (no plaintext PIN in source);
 - touch-first launcher containing separate **System** and **Browser** apps;
 - app-provided System artwork with a one-pixel launcher frame;
@@ -15,7 +32,7 @@ Current features:
 - external ARM64 vimbrowser launch and fullscreen lifecycle management;
 - hidden X11 cursor on touch-only shell and app surfaces;
 - a system-owned top safe-area bar that keeps apps below the camera cutout and
-  shows Wi-Fi/battery on the left with Moon identity on the right;
+  shows the time on the left and Wi-Fi/battery on the right;
 - bottom-edge swipe-up app backgrounding with process and window preservation;
 - system-owned global on-screen keyboard for managed apps, with text, URL,
   search, password, and number purposes;
@@ -69,9 +86,11 @@ never candidates. The root-only `memory-pressure simulate` control runs the same
 single-victim policy for deterministic device testing without allocating memory.
 
 Moon's event loop blocks in `poll(2)` over X11, its root-only control socket,
-power/volume input devices, and app pidfds. Timer wakeups are scheduled only for
-keyboard repeat, gesture recovery, launch animation, status/heartbeat checks,
-lease expiry, and UI deadlines. If an older kernel cannot create a pidfd, only
+power/volume input devices, and app pidfds. While something moves, the loop is
+woken by each frame's Present completion (one frame per vblank); at rest no
+frame is drawn. Timer wakeups are scheduled only for keyboard repeat, gesture
+recovery, the switcher hold, status/heartbeat checks, lease expiry, and UI
+deadlines. If an older kernel cannot create a pidfd, only
 that process uses a bounded 250 ms status fallback. There is no idle 8 ms spin.
 
 Screen-off is a device-local transaction. Moon first enters the lock view,
@@ -82,8 +101,16 @@ frame while dark before restoring touch and brightness. Any preparation or
 hardware error rolls back to an awake locked state and is exposed as a fixed
 error code in `state.suspend`, never as a half-completed transition.
 
-By default that transaction is the whole screen-off: Moon, Xorg and apps stay
-resident and the power key wakes the panel instantly. Deep suspend below is
+By default that transaction ends by powering the panel and display pipeline
+down through Xorg's DPMS extension (`display_power.rs`): the panel sleeps and
+loses its regulators and DECON/DSIM runtime-suspend, which cuts the screen-off
+drain from about 200 mA to about 35 mA. Wake forces DPMS on first (about
+100 ms), so the lock frame rendered while dark is what the panel shows, then
+restores touch and brightness. Moon, Xorg and apps stay resident. DPMS only
+toggles the CRTC's active state; a full modeset (`xrandr --off`, a mode
+change) cannot be undone in place on this firmware and is never used. If
+Xorg offers no DPMS (the A26 config must not set `Option "DPMS" "false"`;
+`install-autostart.sh` fixes it), screen-off falls back to backlight-only. Deep suspend below is
 opt-in with `"deep_suspend": true` in `config.json`, because its wake path is a
 warm reboot.
 
@@ -240,11 +267,106 @@ never present in public state.
 
 Managed apps begin at physical Y=124 rather than drawing underneath the A26's
 camera cutout. Moon owns that 124-pixel strip as a separate override-redirect,
-double-buffered X11 surface: Wi-Fi and battery remain in the left safe region,
-`MOON` remains in the right safe region, and the center cutout region stays
-visually quiet. App height is reduced exactly once. When the global keyboard is
+double-buffered X11 surface: black, so the notch disappears into it, with the
+time in the left safe region, Wi-Fi and battery in the right one, and the
+center cutout region visually quiet. The lock and home screens draw the same
+status content directly over the wallpaper. App height is reduced exactly once. When the global keyboard is
 visible, the app occupies Y=124 through the keyboard's physical top edge, so the
 browser's bottom navigation continues to meet the keyboard with no gap.
+
+## Clock and appearance settings
+
+The clock uses the chroot's local time (`TZ` or `/etc/localtime`). The
+reference Alpine rootfs has no tzdata, which means UTC, so `config.json`
+accepts an optional `"timezone"` (a POSIX rule such as
+`"EST5EDT,M3.2.0,M11.1.0"`, or a zone name once tzdata is installed) and
+`"clock_24h": true`. `generate-config.py` writes them from
+`A26_SHELL_TIMEZONE` and `A26_SHELL_CLOCK_24H=1`. Apps inherit the same `TZ`.
+
+## Rendering and frame pacing
+
+The A26's Xorg runs the modesetting driver without 2D acceleration (no
+glamor: `AccelMethod none`, a shadow framebuffer, no page flips). Composing
+full frames on the client and pushing them through the socket cost 13-27 ms
+per frame, so Moon moved composition into the server:
+
+- **Layers.** Static content (wallpaper, home screen, lock-screen clock,
+  keypad, passcode dots, volume capsule, icons, switcher labels) is drawn on
+  the CPU and uploaded into server pixmaps only when it changes, and then
+  only the changed 64-pixel chunks. Transparent layers record which row bands
+  hold content, so a mostly empty full-screen layer composites only those.
+- **Snapshots.** When an app leaves the foreground (home gesture, switching,
+  the switcher) Moon copies the screen into a per-app pixmap with a root
+  `CopyArea` (server-side, one-way). Cards in gestures and the switcher are
+  these snapshots, scaled with RENDER transforms.
+- **Frames.** Each frame is a base layer plus a short node list (scaled
+  images, fills, rounded corners), sampled at the time the frame will reach
+  the panel. Only the rectangle that differs from the previous frame is
+  redrawn. Scaled snapshots stay on pixman's fast bilinear paths: pictures
+  use RepeatPad, opaque images use SRC over their exact bounds, and fades of
+  scaled images re-cover them with what lies beneath instead of using an
+  alpha mask (5x slower in pixman). Rounded corners are repaired by drawing
+  what lies beneath through small pre-rendered A8 corner masks.
+- **Damage.** Damage is a set of rectangles, not a bounding box: unscaled
+  layers contribute their content tiles at the old and new positions, and the
+  set is snapped to a 32-pixel grid and coalesced so the server's clip region
+  stays a few clean boxes. Nothing is drawn beneath the topmost opaque card.
+  Layers with many tiles composite one rectangle per connected group of
+  content (one per keypad key), not one request per tile.
+- **Server-side caches.** The keypad's darkened wallpaper and the switcher's
+  darkened home screen are rendered once into pixmaps (two levels each)
+  instead of blending a full-screen dim every frame; switcher cards draw a
+  copy of the snapshot pre-scaled to the card size. Large moving cards use
+  nearest sampling (above 72% of the screen width) and bilinear below.
+- **Pacing.** Frames go to one buffer handed to `PresentPixmap` with the
+  damage region, targeting the vblank after the last completed one; the next
+  frame starts when Present reports completion (so the buffer always holds
+  the previous frame), and animation time is the predicted scanout time. When
+  an animation's frames miss three of the last eight refreshes it is paced
+  at a steady 60 Hz instead of alternating 8/16 ms; every sixth frame probes
+  a single refresh and two on-time probes return it to 120 Hz. If Present is
+  unavailable or stops completing (for example while DPMS has the CRTC off),
+  a watchdog falls back to drawing straight into the window on a 120 Hz
+  timer. `MOON_NO_PRESENT=1` forces that fallback.
+
+All of it remains one-way at runtime; the RENDER formats and Present version
+are queried once before the event loop.
+
+Measuring on the device:
+
+- `ctl.sh profile on` logs every presented frame to the Moon log (refreshes
+  since the previous completion, submit-to-scanout time, damage area, and
+  "after idle" for frames that did not follow a completion); `ctl.sh state`
+  carries the last animation's summary in `animation`. Only back-to-back
+  frames count as missed refreshes.
+- `a26-touchpath X0 Y0 X1 Y1 MS [HOLD_MS]` (in the chroot) injects a touch
+  path over the control socket at 120 Hz, so gestures can be measured
+  without a finger; `a26-renderbench` times each RENDER operation Moon uses.
+- `ctl.sh profile skip MASK` stops drawing the frame nodes in a bitmask, to
+  find which one costs a refresh.
+
+Measured on the A26 (OSS kernel, 120 Hz panel, injected 120 Hz touches),
+back-to-back frame interval mean / p95 / max in ms, range over three runs:
+
+| Animation | Before (client-side frames) | Now |
+|---|---|---|
+| Swipe up out of an app | 11.0 / 16.6 / 24.9 (mixed 60–120) | 8.30 / 8.43 / 8.46 (0 missed) to 9.95 / 16.6 / 16.8 |
+| Launch from the dock | 12.9 / 16.9 / 16.9 | 8.30 / 8.54 / 8.58 to 8.60 / 8.59 / 16.6 |
+| App switcher scroll | 16.6 / 16.8 / 16.9 (60 Hz) | 8.41 / 8.55 / 16.6 to 10.1 / 16.6 / 16.9 |
+| Throwing a switcher card | 16.6 (60 Hz) | 8.30 / 8.31 / 8.66, 0 missed |
+| Slow swipe up and hold into the switcher | 16.8 (60 Hz) | 9.7–12.7 mean: 120 Hz with steady 60 Hz stretches |
+| Lock screen drag to the keypad | 16.6 (60 Hz) | 14.5–15.0 mean: about half of the frames paced at 60 Hz |
+
+The cross-fade of the full-screen lock layers is the one transition that
+still exceeds a 120 Hz refresh on this unaccelerated server.
+
+## Off-device preview
+
+`scripts/a26-shell/preview.sh start` builds Moon for the host and runs it on a
+1080x2340 Xvfb display with PIN `123456` and simulated battery/Wi-Fi
+(`MOON_STATUS_ROOT`). Drive it with `preview.sh ctl ...` and capture it with
+`preview.sh shot out.png`. `MOON_PROFILE=1` (or `ctl profile on`) logs every
+presented frame.
 
 Development lifecycle from the project root:
 

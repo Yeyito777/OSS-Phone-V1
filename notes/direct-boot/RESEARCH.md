@@ -94,8 +94,8 @@ server-pushed device_config flags).
   (loaded by init, netdev present); it requires `framework-suspended=1`, which
   the takeover writes. Not yet verified on a boot where the framework never
   enabled Wi-Fi.
-* **Time:** RTC only; no NITZ/NTP without the framework (unchanged from today
-  once the framework is stopped).
+* **Time:** RTC only; no NITZ without the framework. Since 2026-10-25 the
+  post-ready stage syncs with ntpd over Wi-Fi and writes the RTC (below).
 * **Deep suspend:** resumes through a warm reboot; with direct boot that
   reboot lands in Moon in ~30 s and skips the volume window.
 * **Watchdog:** kernel/init pet the hardware watchdog; system_server's
@@ -132,3 +132,100 @@ boot completion; no crashes. Fallbacks: runtime `disable`, `stop moon-session`
 started the framework (system_server in 29–46 s, keyguard focused, USB back to
 `mtp,adb`); `skip-once` booted Android; `DIRECT_BOOT=0` restored the legacy
 takeover.
+
+## Follow-up on the phone (2026-10-25, same BOOT image)
+
+All /data-side; Android's partitions are untouched.
+
+**Boot time.** Kernel uptime at `moon.session.ready`, three `adb reboot`s each
+(`scripts/direct-boot/measure-boot.sh`):
+
+| | run 1 | run 2 | run 3 | adb reboot → ready |
+| --- | --- | --- | --- | --- |
+| before | 35.33 s | 35.76 s | 33.90 s | 57–59 s |
+| after | 21.13 s | 21.34 s | 21.30 s | 43–44 s |
+
+Before: display window 12.8 → 18.4 s, graphics handoff 18.5 → 24.2 s (5 s of
+fixed sleeps), Xorg answering 25.6 s (1 s polls), then the Xorg session ran
+the Wi-Fi start (≈ 8 s, mostly a26-wifi-stop forking `cat` for every /proc
+entry) before reporting ready, audio ≈ 1 s, Moon. After: the handoff polls
+init (≈ 0.7 s + 0.3 s for DRM release), Xorg answers at ≈ 20.5 s, audio has
+already started alongside Xorg, Moon is ready ≈ 0.4 s later; Wi-Fi starts in
+the post-ready stage (now 0.8 s with a26-system's faster stop script). The
+3 s volume-key window after the boot animation appears is unchanged.
+
+**Moon-mode service set.** `moon-mode-stop.list` stops 36 services (37 listed; `mediadrm` is not defined on this firmware) 5 s and
+60 s after ready (init `stop`, so they stay down; the restore path starts the
+same list again). Screen off, 60 s windows, minutes after boot:
+
+| | init services running | processes | MemAvailable | CPU busy | battery (slate mode) |
+| --- | --- | --- | --- | --- | --- |
+| before | 105 | 617 | 6.446 GB | 1.67 % | −218 mA |
+| after | 68 | 582 | 6.571 GB | 1.54 % | −210 mA |
+
+`vaultkeeper`/`vaultkeeper_aidl` must stay: without them `cass` (vendor,
+radio group) exits and init restarts it every 15 s. No critical-service
+crashes, tombstones or watchdog events; audio (ABOX RDMA0 RUNNING), charging
+and sensors unaffected. The idle CPU left is mostly TEEGRIS worker threads
+(≈ 18 k context switches/min). That comes from a pre-existing loop: cass
+calls VaultKeeper every few seconds, and VaultKeeper fails to reach PA
+(`PA_TZ_LIB ... driver open`) whether or not `proca` runs. The trim does not
+change it, and it is left alone as part of the RIL family.
+
+**Update, same day: real screen-off through DPMS.** The failure above was a
+*modeset*, which this driver rejects outside Samsung's seamless path. DPMS is a
+different commit: it only toggles the CRTC's `active` state. Xorg's A26 config
+had `Option "DPMS" "false"`, hiding the extension; with it enabled, DPMS Off
+runs `mcd_drm_panel_disable` (panel sleep-in) → `decon_disable` →
+`dsim_atomic_disable` → `panel_power_off` (regulators `LCD_DDI_VCI` and
+`vdd_ldo23` off), and DECON/DSIM runtime-suspend. DPMS On reverses it
+(`panel_power_on`, sleep-out, init 103 ms, `panel_display_on_seq done`) and
+DECON resumes at 120 Hz. Moon now uses it for screen-off (`display_power.rs`,
+stock kernel, no reboot): 20/20 off/on cycles through the power-key path,
+panel back 60–110 ms after the request, a 10-minute off soak with DECON at 0
+interrupts throughout, and screen-off drain **≈ 35 mA** (180 s on battery)
+instead of ≈ 193–218 mA; the locked screen at brightness 128 draws ≈ 77 mA.
+Deep suspend (opt-in) keeps its own `xrandr --off` handoff and does not use
+DPMS.
+
+**Battery, screen off (before DPMS).** Measured on battery by suspending the charger input
+(`batt_slate_mode=1`, auto-reset by a phone-side timer): ≈ 193–218 mA.
+Moon's screen-off only zeroes the backlight, so DECON/DSIM/DPP keep scanning
+out at 120 Hz (≈ 190 IRQ/s each, plus `fast_switch_pos` and ACPM IPC). A test
+modeset to the panel's 60 Hz mode failed (`Configure crtc 0 failed`) and
+left the CRTC stopped: the drain fell to ≈ 6 mA, so the display pipeline is
+≈ 185 mA of it. The CRTC could not be re-enabled in place (as for deep
+suspend); a reboot restored the display. Never modeset Xorg's CRTC at
+runtime on this firmware. A real screen-off needs DRM power-down that can be
+re-enabled (kernel work) or the opt-in deep suspend, whose warm-reboot wake
+is now ≈ 21 s. The Wi-Fi backend scanned every ~16 s even while connected;
+after the a26-system fix: wlan IRQs 81 → 3/min, forks 166 → 68/min.
+
+**Wi-Fi on UofT (WPA2-Enterprise).** a26-system branch `enterprise-wifi`
+adds PEAP/MSCHAPv2 storing only the NT password hash
+(`password=hash:`), with the server validated against the system CA bundle
+and `domain_suffix_match="radius.wireless.utoronto.ca"`. Provisioned once
+over adb stdin (`a26-wifi-ctl connect-enterprise`); it autoconnects at every
+boot. Verified: EAP-PEAP SUCCESS, DHCP lease in policy table 1023, UofT DNS,
+HTTP 204 and HTTPS; a wrong server domain is refused, then the backend falls
+back to the saved network. No file on the phone contains the password.
+Network time: first sync corrected a −185 s RTC drift; later boots sync about
+8 s after Wi-Fi starts.
+
+**Fallbacks**, with temporary hooks in the installed supervisor only (flag
+files `test-never-ready` / `test-fail-early`, removed afterwards; the
+installed supervisor is byte-identical to git again):
+
+| Test | Result |
+| --- | --- |
+| Moon up but never ready | `ready-deadline` fallback 259 s after the policy ran; Android booted (system_server, boot_completed, USB `mtp,adb`); counter 1 |
+| supervisor exits before ready | `supervisor-exited-before-ready`; Android in 80 s; counter 2 |
+| next boot without hook | attempt 3/3 succeeded, counter reset to 0 |
+| three failures in a row | counter 1, 2, 3; the 4th boot logged `failure limit reached (3/3)` and booted Android without trying Moon (54 s) |
+| `autostart.sh enable` | counter cleared, next boot Moon |
+| runtime `disable` after the trim | restore ended post-ready and restarted all 36 stopped services before the framework |
+
+**In-OS flashing.** `flash-boot-inplace.sh` wrote the installed image over
+itself: 131072 sectors to sda14, O_DIRECT read-back sha256 identical
+(`3bf29162…e9f6`), the phone booted into Moon. RESCUE.md documents it as the
+default flash path.

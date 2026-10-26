@@ -33,13 +33,13 @@ xpid=$!
 echo "$xpid" >/run/a26-xorg.pid
 
 ready=0
-for _ in $(seq 1 45); do
+for _ in $(seq 1 225); do
     if DISPLAY=:0 xrandr --current >"$STATUS.tmp" 2>&1; then
         ready=1
         break
     fi
     kill -0 "$xpid" 2>/dev/null || break
-    sleep 1
+    sleep 0.2
 done
 
 if [ "$ready" != 1 ]; then
@@ -50,10 +50,9 @@ if [ "$ready" != 1 ]; then
     exit 20
 fi
 
-if [ -x /opt/a26-system/libexec/a26-wifi-start ]; then
-    /opt/a26-system/libexec/a26-wifi-start ||
-        echo 'native Wi-Fi start failed; continuing without Wi-Fi' >&2
-fi
+echo "Xorg answered up=$(cut -d' ' -f1 /proc/uptime)" >&2
+# Native Wi-Fi is not needed for the lock screen: Moon's supervisor starts it
+# after Moon is up (moon-post-ready.sh). It is still stopped with this session.
 
 # The only client used for the initial bare-server presentation.  It exits
 # immediately; no display manager, compositor, or window manager is launched.

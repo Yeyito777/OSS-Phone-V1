@@ -69,8 +69,6 @@ for required in \
     "$ROOT/a26-enter-chroot.sh" \
     "$ROOT/opt/a26-shell/bin/a26-shell" \
     "$ROOT/opt/a26-shell/bin/a26-shellctl" \
-    "$ROOT/opt/a26-audio/moon-audiod" \
-    "$ROOT/opt/a26-audio/moon-permissiond" \
     "$ROOT/usr/local/sbin/a26-xorg-persistent-session" \
     "$PERSIST/moon-boot-supervisor.sh" \
     "$PERSIST/moon-audio-start.sh" \

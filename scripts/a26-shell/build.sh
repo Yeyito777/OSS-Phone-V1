@@ -98,6 +98,8 @@ mkdir -p "$IMAGE/bin" "$IMAGE/source"
 install -m0755 "$SOURCE/target/$TARGET/release/a26-shell" "$IMAGE/bin/a26-shell"
 install -m0755 "$SOURCE/target/$TARGET/release/a26-shellctl" "$IMAGE/bin/a26-shellctl"
 install -m0755 "$SOURCE/target/$TARGET/release/a26-shellshot" "$IMAGE/bin/a26-shellshot"
+install -m0755 "$SOURCE/target/$TARGET/release/a26-renderbench" "$IMAGE/bin/a26-renderbench"
+install -m0755 "$SOURCE/target/$TARGET/release/a26-touchpath" "$IMAGE/bin/a26-touchpath"
 tar --exclude=target -czf "$IMAGE/source/a26-shell-0.1.0.tar.gz" \
     -C "$PROJECT_ROOT/src" a26-shell
 
@@ -110,6 +112,6 @@ display=:0
 resolution=1080x2340
 EOF
 
-(cd "$IMAGE" && sha256sum MANIFEST.txt bin/a26-shell bin/a26-shellctl bin/a26-shellshot \
+(cd "$IMAGE" && sha256sum MANIFEST.txt bin/a26-shell bin/a26-shellctl bin/a26-shellshot bin/a26-renderbench bin/a26-touchpath \
     source/a26-shell-0.1.0.tar.gz > SHA256SUMS)
 (cd "$IMAGE" && sha256sum -c SHA256SUMS)

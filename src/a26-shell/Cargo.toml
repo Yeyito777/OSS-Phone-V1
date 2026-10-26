@@ -12,7 +12,8 @@ serde_json = "1.0"
 sha2 = "0.10"
 subtle = "2.6"
 libc = "0.2"
-x11rb = { version = "0.14", features = ["xinput", "randr", "dpms", "xtest"] }
+x11rb = { version = "0.14", features = ["xinput", "randr", "dpms", "dri3", "present", "render", "shape", "xtest"] }
+fontdue = { version = "0.9", default-features = false, features = ["std", "simd"] }
 
 [profile.release]
 lto = "thin"

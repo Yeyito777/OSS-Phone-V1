@@ -1,0 +1,43 @@
+# OSS Phone kernel: changes on top of the stock A266MUBU1AYB8 config.
+#
+# Rule: an option may only appear here if no header under include/ or
+# arch/arm64/include tests it (check-fragment.sh), and the built result keeps
+# every exported symbol and CRC the 306 prebuilt vendor modules use
+# (check-kmi.py, compare-builds.sh). Everything else in the KMI is frozen.
+
+# Samsung DEFEX: direct hooks in exec/open/read_write/syscall entry that kill
+# or deny "unauthorised" root processes. Our Linux userspace runs as root from
+# a chroot; stock Magisk only byte-patches one DEFEX check. No exports, no
+# header references.
+# CONFIG_SECURITY_DEFEX is not set
+
+# 1 MiB printk ring buffer instead of 256 KiB: Samsung's boot is chatty and
+# the stock buffer wraps before the direct-boot handoff, losing early logs.
+CONFIG_LOG_BUF_SHIFT=20
+
+# KFENCE stays built in, but off by default: with CONFIG_KFENCE_STATIC_KEYS the
+# 500 ms sampling timer flips a static key (cross-CPU text patching) twice a
+# second, waking every core while idle. Re-enable at runtime with
+# kfence.sample_interval=500 on the command line when hunting memory bugs.
+CONFIG_KFENCE_SAMPLE_INTERVAL=0
+
+# Containers for stage 2 (notes/stage2/DESIGN.md): our init as PID 1 with
+# Android's init in its own PID namespace, and a kernel-managed /dev.
+#
+# PID_NS is tested in include/linux/pid_namespace.h (get_pid_ns/put_pid_ns
+# become real refcounts). No struct changes; no prebuilt module calls those
+# inlines or any pid-namespace API; the only related imports are find_vpid
+# (ems, xperf), get_pid_task (ems) and pid_task (mali_kbase), which are
+# out-of-line kernel functions and so follow the new semantics. KDP_NS only
+# guards mount namespaces, which Android already creates. Verified on the
+# built result: identical CRCs for every symbol the vendor modules import.
+# kmi-reviewed: PID_NS
+CONFIG_PID_NS=y
+#
+# DEVTMPFS is tested in include/linux/device.h only for the devtmpfs_*()
+# prototypes that drivers/base (built in) calls. Not auto-mounted
+# (DEVTMPFS_MOUNT stays off), so Android's first-stage /dev is unchanged
+# unless our init mounts it.
+# kmi-reviewed: DEVTMPFS
+CONFIG_DEVTMPFS=y
+# CONFIG_DEVTMPFS_MOUNT is not set

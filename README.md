@@ -6,10 +6,17 @@ audio, and power policy are handed to a Linux userspace: an Alpine rootfs
 running native Xorg and **Moon**, a touch-first phone shell and window manager
 written in Rust (`a26-shell`).
 
-![Moon launcher](notes/a26-shell/launcher-redesign.png)
+<p>
+  <img src="notes/ui-polish/after-lock.png" width="24%" alt="Moon lock screen">
+  <img src="notes/ui-polish/after-home.png" width="24%" alt="Moon home screen">
+  <img src="notes/ui-polish/after-system.png" width="24%" alt="System app">
+  <img src="notes/ui-polish/after-keyboard.png" width="24%" alt="Moon keyboard">
+</p>
 
 Moon runs directly on the phone's native Xorg session. It currently
-provides a numeric lock screen, a minimal app launcher, external X11 app
+provides a lock screen with clock and passcode keypad, a home screen with
+widgets and a dock, icon-zoom app transitions, an iPhone-style system keyboard,
+external X11 app
 lifecycle management, one-finger app-closing gestures, physical power/volume
 key policy, and a root-only Unix-socket control interface over ADB.
 
@@ -21,7 +28,8 @@ key policy, and a root-only Unix-socket control interface over ADB.
 
 ## Highlights
 
-- Rust 2024, toolkit-free UI using pure-Rust `x11rb`
+- Rust 2024, toolkit-free UI using pure-Rust `x11rb` and a small anti-aliased
+  software renderer with the Inter typeface (SIL OFL 1.1)
 - XInput 2.2 raw-touch handling for the A26 touchscreen
 - Salted PIN configuration with constant-time verification
 - Power-button lock and panel-backlight control
@@ -120,7 +128,8 @@ scripts/a26-shell/autostart.sh status
 
 With the direct-boot BOOT image (`scripts/direct-boot/`), Android's init still
 brings the hardware up but the Java framework never starts: Moon is on screen
-about half a minute after power-on, and pressing a volume key while the boot
+about 21 s after the kernel starts (Wi-Fi, network time and trimming unused
+Android services follow in the background), and pressing a volume key while the boot
 animation shows starts normal Android instead. Without that image, the Magisk
 `service.d` entry waits for Android to finish booting, suspends the framework,
 then performs the same proven DRM handoff. Either way the supervisor verifies

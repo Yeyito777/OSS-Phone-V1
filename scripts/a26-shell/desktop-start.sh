@@ -12,6 +12,8 @@ if [[ -z "$(adb -s "$SERIAL" shell '/data/local/tmp/su -c "pidof Xorg 2>/dev/nul
 fi
 
 "$PROJECT_ROOT/scripts/a26-shell/start.sh"
+"$PROJECT_ROOT/scripts/a26-shell/wifi-start.sh" ||
+    echo 'native Wi-Fi start failed; continuing without Wi-Fi' >&2
 adb -s "$SERIAL" shell '/data/local/tmp/su -c "setprop sys.rescue_boot_count 0; setprop sys.rescue_boot_start 0"'
 
 echo "A26 native desktop is ready (Xorg + a26-shell)."

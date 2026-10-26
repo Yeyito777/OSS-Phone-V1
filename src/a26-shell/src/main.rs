@@ -1,17 +1,25 @@
 mod apps;
 mod audio;
+mod backdrop;
+mod clock;
+mod compositor;
 mod config;
-mod font;
+mod display_power;
 mod freezer;
+mod gfx;
 mod input;
+mod interaction;
 mod ipc;
 mod keyboard;
 mod lease;
 mod memory;
 mod model;
+mod motion;
+mod present;
 mod status;
 mod status_bar;
 mod suspend;
+mod text;
 mod ui;
 mod volume;
 
@@ -25,23 +33,28 @@ use std::time::{Duration, Instant};
 
 use apps::{AppRegistry, RegistryUpdate, WindowVisibility};
 use audio::AudioVolume;
+use compositor::{Compositor, Formats};
 use config::Config;
+use display_power::DisplayPower;
 use input::{Backlight, PowerKey, TouchscreenPower, VolumeKey, VolumeKeys};
 use ipc::{Command, IpcServer};
 use keyboard::{KeyboardEffect, KeyboardGeometry, KeyboardSurface, XtestInjector};
-use model::{AppId, PointerGesture, ShellState, View};
+use model::{AppId, LockFace, PointerGesture, Press, ShellState, View};
 use status_bar::StatusBarSurface;
 use suspend::{PersistedSuspendState, PlatformSuspend, SuspendAction, SuspendCoordinator};
-use ui::{KeypadAction, Renderer};
+use ui::{KeypadAction, Renderer, StatusInfo};
 use volume::VolumeSurface;
-use x11rb::connection::Connection;
+use x11rb::connection::{Connection, RequestConnection as _};
 use x11rb::protocol::Event;
+use x11rb::protocol::dpms::{self, ConnectionExt as _};
+use x11rb::protocol::present::{self as xpresent, ConnectionExt as _};
+use x11rb::protocol::render::{self, ConnectionExt as _};
 use x11rb::protocol::xfixes::ConnectionExt as _;
 use x11rb::protocol::xinput::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
     AtomEnum, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, Blanking, ChangeWindowAttributesAux,
-    ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask, Exposures,
-    InputFocus, MOTION_NOTIFY_EVENT, NotifyDetail, PropMode, StackMode, WindowClass,
+    ConfigureWindowAux, ConnectionExt as _, CreateWindowAux, EventMask, Exposures, InputFocus,
+    MOTION_NOTIFY_EVENT, NotifyDetail, PropMode, StackMode, WindowClass,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
@@ -53,7 +66,8 @@ const MEDIA_ACTIVITY_INTERVAL: Duration = Duration::from_millis(250);
 const MEDIA_ACTIVITY_MAX_AGE: Duration = Duration::from_secs(2);
 const MEMORY_STATUS_INTERVAL: Duration = Duration::from_secs(5);
 const FALLBACK_PROCESS_STATUS_INTERVAL: Duration = Duration::from_millis(250);
-const LAUNCH_ANIMATION_INTERVAL: Duration = Duration::from_millis(180);
+/// A touch that travels further than this is a drag, not a press.
+const PRESS_SLOP: i32 = 35;
 const MAX_REPEAT_CATCH_UP: usize = 8;
 const STALE_POINTER_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -82,10 +96,89 @@ struct RawTouchTracker {
     keyboard_contacts: Vec<(u32, PointerGesture)>,
 }
 
+/// Raises the scheduler's utilization floor for Moon's (only) thread, which
+/// draws every frame. Without Android's framework nothing boosts the
+/// foreground UI, so the scheduler kept Moon on slow cores at low clocks: zoom
+/// frames took 15-50 ms on the A26, and with a 60 % floor they hold about
+/// 13 ms. The floor applies only while Moon is runnable, so an idle Moon costs
+/// nothing. RESET_ON_FORK keeps launched apps and any later thread at the
+/// default. Best effort: an older kernel just leaves Moon unboosted.
+fn boost_ui_thread() {
+    #[repr(C)]
+    struct SchedAttr {
+        size: u32,
+        sched_policy: u32,
+        sched_flags: u64,
+        sched_nice: i32,
+        sched_priority: u32,
+        sched_runtime: u64,
+        sched_deadline: u64,
+        sched_period: u64,
+        sched_util_min: u32,
+        sched_util_max: u32,
+    }
+    const SCHED_FLAG_RESET_ON_FORK: u64 = 0x01;
+    const SCHED_FLAG_UTIL_CLAMP_MIN: u64 = 0x20;
+    // 60 % of SCHED_CAPACITY_SCALE (1024).
+    const UI_UTIL_MIN: u32 = 614;
+
+    // SAFETY: getpriority takes scalar arguments only.
+    let nice = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+    let attr = SchedAttr {
+        size: std::mem::size_of::<SchedAttr>() as u32,
+        sched_policy: libc::SCHED_OTHER as u32,
+        sched_flags: SCHED_FLAG_RESET_ON_FORK | SCHED_FLAG_UTIL_CLAMP_MIN,
+        sched_nice: nice.clamp(-20, 19),
+        sched_priority: 0,
+        sched_runtime: 0,
+        sched_deadline: 0,
+        sched_period: 0,
+        sched_util_min: UI_UTIL_MIN,
+        sched_util_max: 0,
+    };
+    // SAFETY: attr is a complete, initialized sched_attr (VER1, 56 bytes) that
+    // outlives the call; pid 0 is the calling thread.
+    let result = unsafe { libc::syscall(libc::SYS_sched_setattr, 0, &attr as *const SchedAttr, 0) };
+    if result != 0 {
+        eprintln!(
+            "UI thread boost unavailable: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+}
+
+/// Resolves the RENDER picture formats for the compositor (startup only).
+fn render_formats(conn: &RustConnection) -> Result<Formats, Box<dyn Error>> {
+    let formats = conn.render_query_pict_formats()?.reply()?;
+    let find = |depth: u8, alpha: bool| {
+        formats
+            .formats
+            .iter()
+            .find(|format| {
+                format.depth == depth
+                    && format.type_ == render::PictType::DIRECT
+                    && (format.direct.alpha_mask != 0) == alpha
+                    && (depth == 8 || format.direct.red_shift == 16)
+            })
+            .map(|format| format.id)
+    };
+    Ok(Formats {
+        rgb: find(24, false).ok_or("RENDER has no x8r8g8b8 format")?,
+        argb: find(32, true).ok_or("RENDER has no a8r8g8b8 format")?,
+        a8: find(8, true).ok_or("RENDER has no a8 format")?,
+    })
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let config_path = parse_config_path()?;
+    boost_ui_thread();
     let config = Config::load(&config_path)?;
     let key_repeat_timing = KeyRepeatTiming::from_config(&config);
+    if let Some(zone) = &config.timezone {
+        // SAFETY: Moon is still single-threaded here; nothing reads the
+        // environment concurrently. Apps inherit the same local time.
+        unsafe { env::set_var("TZ", zone) };
+    }
     let (conn, screen_number) = RustConnection::connect(None)?;
     let screen = &conn.setup().roots[screen_number];
     let root = screen.root;
@@ -124,6 +217,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     // only reliable wake because they happened to be X events).
     conn.set_screen_saver(0, 0, Blanking::DEFAULT, Exposures::DEFAULT)?
         .check()?;
+    // Screen-off powers the panel down through DPMS when Xorg offers it (the
+    // A26 config must not set Option "DPMS" "false"). Zero Xorg's own DPMS
+    // timers, wake a panel a previous Moon left off, then disable DPMS until
+    // a screen-off transaction asks for it. Deep suspend keeps its own
+    // display handoff, so it does not use this path.
+    let dpms_available = !config.deep_suspend
+        && conn
+            .extension_information(dpms::X11_EXTENSION_NAME)?
+            .is_some()
+        && conn.dpms_capable()?.reply()?.capable;
+    if dpms_available {
+        conn.dpms_set_timeouts(0, 0, 0)?.check()?;
+        conn.dpms_enable()?.check()?;
+        conn.dpms_force_level(dpms::DPMSMode::ON)?.check()?;
+        conn.dpms_disable()?.check()?;
+    }
+    let display_power = DisplayPower::new(dpms_available);
+    eprintln!(
+        "screen-off panel power: {}",
+        if dpms_available {
+            "DPMS"
+        } else {
+            "backlight only"
+        }
+    );
     let raw_touch_mask = xinput::XIEventMask::RAW_TOUCH_BEGIN
         | xinput::XIEventMask::RAW_TOUCH_UPDATE
         | xinput::XIEventMask::RAW_TOUCH_END;
@@ -138,7 +256,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let shell_window = conn.generate_id()?;
     let window_aux = CreateWindowAux::new()
-        .background_pixel(0x0b1020)
+        // No background: exposed areas keep their old pixels until Moon copies
+        // its frame back, instead of flashing a solid fill for a frame.
+        .background_pixmap(x11rb::NONE)
         .override_redirect(1)
         .event_mask(
             EventMask::EXPOSURE
@@ -176,24 +296,30 @@ fn main() -> Result<(), Box<dyn Error>> {
         b"moon-shell",
     )?;
 
-    let shell_back_buffer = conn.generate_id()?;
-    conn.create_pixmap(
-        screen.root_depth,
-        shell_back_buffer,
-        shell_window,
-        width,
-        height,
-    )?;
-    let gc = conn.generate_id()?;
-    conn.create_gc(gc, shell_window, &CreateGCAux::new().graphics_exposures(0))?;
+    // Resolve the SHAPE extension now: an extension's first use otherwise
+    // costs a QueryExtension reply wait, which the event loop must never do.
+    let shape_available = x11rb::connection::RequestConnection::extension_information(
+        &conn,
+        x11rb::protocol::shape::X11_EXTENSION_NAME,
+    )?
+    .is_some();
     let keyboard_geometry = KeyboardGeometry::new(width, height);
-    let mut keyboard_surface =
-        KeyboardSurface::create(&conn, root, screen.root_depth, keyboard_geometry)?;
-    let mut volume_surface = VolumeSurface::create(&conn, root, screen.root_depth)?;
+    let mut keyboard_surface = KeyboardSurface::create(
+        &conn,
+        root,
+        screen.root_depth,
+        keyboard_geometry,
+        shape_available,
+    )?;
+    let mut volume_surface =
+        VolumeSurface::create(&conn, root, screen.root_depth, shape_available)?;
     let mut status_bar_surface = StatusBarSurface::create(&conn, root, screen.root_depth, width)?;
     conn.map_window(shell_window)?;
     conn.xfixes_hide_cursor(shell_window)?.check()?;
     conn.xfixes_hide_cursor(keyboard_surface.window)?.check()?;
+    if let Some(popup) = keyboard_surface.popup_window() {
+        conn.xfixes_hide_cursor(popup)?.check()?;
+    }
     conn.xfixes_hide_cursor(volume_surface.window)?.check()?;
     conn.xfixes_hide_cursor(status_bar_surface.window)?
         .check()?;
@@ -201,15 +327,49 @@ fn main() -> Result<(), Box<dyn Error>> {
     conn.set_input_focus(InputFocus::PARENT, shell_window, CURRENT_TIME)?;
     conn.flush()?;
 
-    let renderer = Renderer {
-        window: shell_window,
-        back_buffer: shell_back_buffer,
-        gc,
+    // The shell is composed server-side with RENDER and presented at vblank
+    // through Present (see compositor.rs). Both are resolved here, before
+    // the event loop, because a capability query is a reply wait.
+    let formats = render_formats(&conn)?;
+    let present_event = if env::var_os("MOON_NO_PRESENT").is_none()
+        && conn
+            .extension_information(xpresent::X11_EXTENSION_NAME)?
+            .is_some()
+        && conn.present_query_version(1, 2)?.reply().is_ok()
+    {
+        Some(conn.generate_id()?)
+    } else {
+        None
+    };
+    // MOON_PROFILE=1 logs every presented frame and a summary per animation.
+    let mut profile_frames = env::var_os("MOON_PROFILE").is_some();
+    let mut last_animation: Option<String> = None;
+    let compositor = Compositor::new(
+        &conn,
+        shell_window,
+        root,
         width,
         height,
-        system_icon: ui::load_system_icon(),
-        browser_icon: ui::load_browser_icon(),
-    };
+        formats,
+        present_event,
+        profile_frames,
+    )?;
+    eprintln!(
+        "compositor: RENDER, {}",
+        if compositor.present_enabled() {
+            "vblank-paced through Present"
+        } else {
+            "timer-paced (Present unavailable)"
+        }
+    );
+    let mut renderer = Renderer::new(
+        &conn,
+        compositor,
+        width,
+        height,
+        config.clock_24h,
+        config.pin_length,
+    )?;
     let ipc = IpcServer::bind(&config.socket_path)?;
     let audio_volume = match AudioVolume::open("/run/moon-audio/volume") {
         Ok(control) => Some(control),
@@ -244,7 +404,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut next_device_status = Instant::now() + DEVICE_STATUS_INTERVAL;
     let mut next_media_activity = Instant::now();
     let mut next_memory_status = Instant::now() + MEMORY_STATUS_INTERVAL;
-    let mut next_launch_animation = Instant::now();
+    let mut next_clock_tick = clock::next_minute_boundary(Instant::now());
+    let mut frame_idle_until = Instant::now();
+    let mut was_animating = false;
     let mut power_key = match PowerKey::open("/dev/input/event1") {
         Ok(device) => {
             eprintln!("physical power key ready at /dev/input/event1");
@@ -279,6 +441,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             None
         }
     };
+    // Power and wake fades ramp the panel backlight: smooth, and no frame
+    // has to be drawn. MOON_OVERLAY_FADES=1 (or no backlight) draws them.
+    let backlight_fades = backlight.is_some() && env::var_os("MOON_OVERLAY_FADES").is_none();
+    state.backlight_fades = backlight_fades;
+    renderer.backlight_fades = backlight_fades;
+    let mut backlight_ramping = false;
     let (platform_suspend, persisted_suspend) = match PlatformSuspend::open() {
         Ok((_, persisted)) if !config.deep_suspend => {
             eprintln!("deep suspend disabled by config; screen-off keeps Moon resident");
@@ -297,8 +465,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         SuspendCoordinator::new(true, platform_suspend.is_some(), persisted_suspend);
     let mut raw_touch = RawTouchTracker::default();
     let mut app_viewport: Option<(u32, u16)> = None;
-    let mut shell_inset = false;
-    renderer.render(&conn, &state)?;
+    renderer.render(&conn, &state, Instant::now())?;
     if let Some(device) = touchscreen.as_ref()
         && let Err(error) = device.on()
     {
@@ -319,12 +486,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     while !state.should_exit {
         while let Some(event) = conn.poll_for_event()? {
+            if renderer.compositor.handle_event(&event) {
+                continue;
+            }
             handle_x_event(
                 &conn,
                 event,
                 root,
                 shell_window,
                 keyboard_surface.window,
+                keyboard_surface.popup_window().unwrap_or(x11rb::NONE),
                 volume_surface.window,
                 status_bar_surface.window,
                 (width, height),
@@ -349,7 +520,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             match device.poll_presses() {
                 Ok(count) => {
                     if count > 0 {
-                        state.toggle_screen();
+                        state.power_key();
                     }
                 }
                 Err(error) => {
@@ -411,6 +582,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                         ipc::respond::<model::PublicState>(stream, Err(error));
                         continue;
                     }
+                    if let Command::ProfileBudget(kpx) = command {
+                        backdrop::FRAME_BUDGET_KPX.store(kpx, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    if let Command::ProfileFrames(enabled) = command {
+                        renderer.compositor.debug_frames = enabled;
+                    }
+                    if let Command::ProfileSkip(mask) = command {
+                        renderer.compositor.skip_nodes = mask;
+                    }
+                    if let Command::Profile(enabled) = command {
+                        renderer.compositor.set_profile(enabled);
+                        profile_frames = enabled;
+                        eprintln!("frame profiling {}", if enabled { "on" } else { "off" });
+                    }
                     apply_command(
                         &conn,
                         root,
@@ -424,8 +609,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                         audio_volume.as_ref(),
                         key_repeat_timing,
                     );
-                    let public =
+                    let mut public =
                         state.public(width, height, apps.public(), suspend_coordinator.public());
+                    public.animation = last_animation.clone();
                     ipc::respond(stream, Ok(&public));
                 }
                 Err(error) => ipc::respond::<model::PublicState>(stream, Err(&error)),
@@ -474,6 +660,29 @@ fn main() -> Result<(), Box<dyn Error>> {
             next_memory_status = now + MEMORY_STATUS_INTERVAL;
         }
 
+        // Snapshots must be taken while the app is still on screen: before
+        // the registry unmaps it below and before the shell is raised.
+        if std::mem::take(&mut state.pending_switcher) {
+            state.open_switcher(apps.running_by_recency());
+        }
+        if let Some(app) = state.pending_capture.take()
+            && state.screen_awake
+        {
+            renderer.capture_app(&conn, app)?;
+        }
+        if std::mem::take(&mut state.pending_fade_capture) {
+            renderer.capture_fade(&conn)?;
+        }
+        if state.shell_covers_app() {
+            raise_shell(&conn, shell_window)?;
+        }
+        for app in std::mem::take(&mut state.pending_kills) {
+            if apps.terminate(app) {
+                eprintln!("closed {} from the app switcher", app.display_name());
+            }
+            renderer.forget_app(&conn, app);
+        }
+
         let desired_app = AppId::from_view(state.view);
         let update = apps.reconcile(desired_app);
         apply_registry_update(
@@ -485,12 +694,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             &mut apps,
             update,
         )?;
-        let desired_shell_inset = state.view.is_app();
-        if desired_shell_inset != shell_inset {
-            resize_shell_window(&conn, shell_window, width, height, desired_shell_inset)?;
-            shell_inset = desired_shell_inset;
+        for app in [AppId::System, AppId::Browser] {
+            if renderer.has_snapshot(app) && !apps.running_by_recency().contains(&app) {
+                renderer.forget_app(&conn, app);
+            }
         }
         state.replace_managed_windows(apps.active_windows());
+        if std::mem::take(&mut state.pending_reveal)
+            && state.view.is_app()
+            && let Some(window) = apps.primary_active_window()
+        {
+            // A cancelled home gesture settled back at full screen.
+            fullscreen_window(&conn, window, width, height)?;
+            conn.set_input_focus(InputFocus::PARENT, window, CURRENT_TIME)?;
+        }
         if state.app_ready_to_reveal() {
             let app_window = apps.primary_active_window();
             state.finish_app_launch();
@@ -500,7 +717,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         let keyboard_app_window =
-            if state.screen_awake && state.view.is_app() && !state.app_launching() {
+            if state.screen_awake && state.view.is_app() && !state.shell_covers_app() {
                 state.managed_windows.first().copied()
             } else {
                 None
@@ -528,7 +745,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         keyboard_surface.sync(&conn, &mut state.keyboard, keyboard_app_window)?;
         let volume_visible = state.screen_awake
             && state.view.is_app()
-            && !state.app_launching()
+            && !state.shell_covers_app()
             && state
                 .volume_overlay_until
                 .is_some_and(|deadline| deadline > Instant::now());
@@ -542,32 +759,74 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
             next_device_status = Instant::now() + DEVICE_STATUS_INTERVAL;
         }
-        if state.app_launching() && Instant::now() >= next_launch_animation {
+        if Instant::now() >= next_clock_tick {
+            // The minute changed: repaint every clock.
             state.redraw = true;
-            next_launch_animation = Instant::now() + LAUNCH_ANIMATION_INTERVAL;
+            next_clock_tick = clock::next_minute_boundary(Instant::now());
         }
         state.tick();
-        if state.redraw {
-            if !state.view.is_app() || state.app_launching() {
-                raise_shell(&conn, shell_window)?;
-                renderer.render(&conn, &state)?;
-                if state.app_launching() {
-                    status_bar_surface.request_raise();
+        if backlight_fades && let Some(device) = backlight.as_ref() {
+            match state.fade.filter(|_| state.screen_awake) {
+                Some(fade) => {
+                    if let Err(error) = device.set_fraction(1.0 - fade.black(Instant::now())) {
+                        eprintln!("backlight fade failed: {error}");
+                    }
+                    backlight_ramping = true;
+                }
+                None => {
+                    if backlight_ramping && state.screen_awake {
+                        // The fade-in finished: exactly the saved brightness.
+                        let _ = device.on();
+                    }
+                    backlight_ramping = false;
                 }
             }
-            state.redraw = false;
         }
+        if state.shell_covers_app() {
+            raise_shell(&conn, shell_window)?;
+        }
+        // Frames: one per vblank while anything moves, otherwise only when
+        // something changed. Every frame samples the model at the time it
+        // will reach the panel.
+        let now = Instant::now();
+        let animating = state.animating(now) || renderer.settling();
+        let shell_visible =
+            state.screen_awake && (!state.view.is_app() || state.shell_covers_app());
+        let wants_frame = shell_visible && (state.redraw || animating || state.shell_exposed);
+        if wants_frame && now >= frame_idle_until && renderer.compositor.ready(now) {
+            if std::mem::take(&mut state.shell_exposed) {
+                renderer.compositor.invalidate();
+            }
+            if !state.view.is_app() {
+                raise_shell(&conn, shell_window)?;
+            }
+            let display_time = renderer.compositor.next_display_time(now);
+            let drew = renderer.render(&conn, &state, display_time)?;
+            state.redraw = false;
+            if !drew {
+                // Nothing moved this vblank; do not spin until the next one.
+                frame_idle_until = display_time;
+            }
+        }
+        if was_animating && !animating && renderer.compositor.stats.frames > 0 {
+            let summary = renderer.compositor.stats.summary();
+            if profile_frames {
+                eprintln!("animation summary: {summary}");
+            }
+            last_animation = Some(summary);
+            renderer.compositor.stats = Default::default();
+        }
+        was_animating = animating;
         // Present the status surface after the loading shell. Besides keeping
         // the cutout strip out of the app viewport, this gives the bar the last
         // stacking request on every animated launch frame and prevents the two
         // override-redirect surfaces from alternately covering one another.
-        let status_bar_visible = state.screen_awake && state.view.is_app();
+        let status_bar_visible =
+            state.screen_awake && state.view.is_app() && !state.shell_covers_app();
         status_bar_surface.sync(
             &conn,
             status_bar_visible,
-            state.wifi_connected,
-            state.battery_percent,
-            state.battery_charging,
+            &StatusInfo::from_state(&state, config.clock_24h),
         )?;
         // External-app MapRequest/configure operations may be the only X11
         // traffic in this state, so they cannot rely on a shell repaint to
@@ -581,17 +840,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                     state.screen_on();
                     suspend_coordinator.fail_sleep("unsafe_shell_state");
                     raise_shell(&conn, shell_window)?;
-                    renderer.render(&conn, &state)?;
+                    renderer.render(&conn, &state, Instant::now())?;
                     state.redraw = false;
                     conn.flush()?;
                 } else {
                     // The lock frame and every app unmap are already flushed.
                     // Only then may device-local hardware be powered down.
-                    let result = power_down_display(&mut backlight, touchscreen.as_ref());
+                    let result = power_down_display(
+                        &conn,
+                        &display_power,
+                        &mut backlight,
+                        touchscreen.as_ref(),
+                    );
                     match result {
                         Ok(()) => suspend_coordinator.complete_sleep(),
                         Err(code) => {
                             eprintln!("screen-off transaction failed: {code}");
+                            let _ = display_power.on(&conn);
                             if let Some(device) = touchscreen.as_ref() {
                                 let _ = device.on();
                             }
@@ -601,7 +866,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             state.screen_on();
                             suspend_coordinator.fail_sleep(code);
                             raise_shell(&conn, shell_window)?;
-                            renderer.render(&conn, &state)?;
+                            renderer.render(&conn, &state, Instant::now())?;
                             state.redraw = false;
                             conn.flush()?;
                         }
@@ -612,12 +877,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // Waking is also transactional: the complete lock frame is
                 // presented while the panel is dark, before either input or
                 // brightness is restored.
+                // The lock screen then fades in: by ramping the backlight up
+                // from dark, or (without one) from a black first frame.
+                state.fade_in();
                 raise_shell(&conn, shell_window)?;
-                renderer.render(&conn, &state)?;
+                renderer.compositor.invalidate();
+                renderer.render(&conn, &state, Instant::now())?;
                 state.redraw = false;
                 conn.flush()?;
-                match power_up_display(backlight.as_ref(), touchscreen.as_ref()) {
-                    Ok(()) => suspend_coordinator.complete_wake(),
+                match power_up_display(
+                    &conn,
+                    &display_power,
+                    backlight.as_ref(),
+                    touchscreen.as_ref(),
+                    !backlight_fades,
+                ) {
+                    Ok(()) => {
+                        suspend_coordinator.complete_wake();
+                        state.fade_in();
+                    }
                     Err(code) => {
                         eprintln!("screen-on transaction failed: {code}");
                         suspend_coordinator.fail_wake(code);
@@ -648,7 +926,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                     Err(error) => {
                         eprintln!("deep suspend handoff failed: {error}");
                         state.screen_on();
-                        let _ = power_up_display(backlight.as_ref(), touchscreen.as_ref());
+                        let _ = power_up_display(
+                            &conn,
+                            &display_power,
+                            backlight.as_ref(),
+                            touchscreen.as_ref(),
+                            true,
+                        );
                         suspend_coordinator.fail_wake("deep_suspend_handoff_failed");
                     }
                 }
@@ -658,8 +942,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         if apps.browser_running() {
             deadline = deadline.min(next_media_activity);
         }
-        if state.app_launching() {
-            deadline = deadline.min(next_launch_animation);
+        if state.screen_awake {
+            deadline = deadline.min(next_clock_tick);
+        }
+        let shell_visible =
+            state.screen_awake && (!state.view.is_app() || state.shell_covers_app());
+        if shell_visible && (state.redraw || state.animating(now) || renderer.settling()) {
+            // A frame in flight wakes the loop through its Present event;
+            // otherwise wake when the next frame may be drawn.
+            let frame_deadline = if renderer.compositor.frame_in_flight() {
+                renderer.compositor.next_deadline()
+            } else {
+                Some(frame_idle_until.max(renderer.compositor.next_deadline().unwrap_or(now)))
+            };
+            if let Some(frame_deadline) = frame_deadline {
+                deadline = deadline.min(frame_deadline.max(now));
+            }
         }
         if let Some(state_deadline) = state.next_deadline(now) {
             deadline = deadline.min(state_deadline);
@@ -669,6 +967,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         if let Some(input_deadline) = next_input_deadline(&state, &raw_touch) {
             deadline = deadline.min(input_deadline);
+        }
+        if backlight_fades && state.screen_awake && state.fade.is_some() {
+            // Backlight fade steps, at the panel's refresh rate.
+            deadline = deadline.min(now + Duration::from_micros(8_333));
+        }
+        if !state.animating(now) && !renderer.settling() && state.screen_awake {
+            if let Some(next) = renderer.prepare_idle(&conn, now)? {
+                deadline = deadline.min(next);
+            }
         }
         if apps.needs_process_poll() {
             deadline = deadline.min(now + FALLBACK_PROCESS_STATUS_INTERVAL);
@@ -688,7 +995,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // backlight at zero. Wake only to the freshly rendered lock screen.
     if !state.screen_awake {
         state.screen_on();
-        let _ = renderer.render(&conn, &state);
+        let _ = renderer.render(&conn, &state, Instant::now());
+        let _ = display_power.on(&conn);
         if let Some(device) = touchscreen.as_ref() {
             let _ = device.on();
         }
@@ -701,8 +1009,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     keyboard_surface.destroy(&conn);
     volume_surface.destroy(&conn);
     status_bar_surface.destroy(&conn);
-    let _ = conn.free_pixmap(shell_back_buffer);
-    let _ = conn.free_gc(gc);
+    renderer.destroy(&conn);
     let _ = conn.flush();
     eprintln!("a26-shell stopping");
     Ok(())
@@ -748,7 +1055,9 @@ fn safe_to_power_down(state: &ShellState, apps: &AppRegistry) -> bool {
         && apps.active().is_none()
 }
 
-fn power_down_display(
+fn power_down_display<C: Connection>(
+    conn: &C,
+    display: &DisplayPower,
     backlight: &mut Option<Backlight>,
     touchscreen: Option<&TouchscreenPower>,
 ) -> Result<(), &'static str> {
@@ -759,13 +1068,21 @@ fn power_down_display(
     let Some(touchscreen) = touchscreen else {
         return Err("touchscreen_unavailable");
     };
-    touchscreen.off().map_err(|_| "touchscreen_sleep_failed")
+    touchscreen.off().map_err(|_| "touchscreen_sleep_failed")?;
+    // Last: the panel, DSI and DECON power down behind a dark, inert screen.
+    display.off(conn).map_err(|_| "display_sleep_failed")
 }
 
-fn power_up_display(
+fn power_up_display<C: Connection>(
+    conn: &C,
+    display: &DisplayPower,
     backlight: Option<&Backlight>,
     touchscreen: Option<&TouchscreenPower>,
+    lit: bool,
 ) -> Result<(), &'static str> {
+    // First: the panel powers up and scans out the lock frame that was
+    // already rendered; brightness and touch follow.
+    display.on(conn).map_err(|_| "display_wake_failed")?;
     let Some(touchscreen) = touchscreen else {
         return Err("touchscreen_unavailable");
     };
@@ -773,7 +1090,13 @@ fn power_up_display(
     let Some(backlight) = backlight else {
         return Err("backlight_unavailable");
     };
-    backlight.on().map_err(|_| "backlight_wake_failed")
+    if lit {
+        backlight.on()
+    } else {
+        // A fade ramps it up from dark.
+        backlight.set_fraction(0.0)
+    }
+    .map_err(|_| "backlight_wake_failed")
 }
 
 fn next_input_deadline(state: &ShellState, raw_touch: &RawTouchTracker) -> Option<Instant> {
@@ -789,7 +1112,7 @@ fn next_input_deadline(state: &ShellState, raw_touch: &RawTouchTracker) -> Optio
         .flat_map(|pointer| {
             [
                 pointer.keyboard_next_repeat_at,
-                pointer.started.checked_add(STALE_POINTER_TIMEOUT),
+                pointer.last_activity.checked_add(STALE_POINTER_TIMEOUT),
             ]
         })
         .flatten()
@@ -856,6 +1179,7 @@ fn handle_x_event(
     root: u32,
     shell_window: u32,
     keyboard_window: u32,
+    popup_window: u32,
     volume_window: u32,
     status_bar_window: u32,
     dimensions: (u16, u16),
@@ -922,7 +1246,7 @@ fn handle_x_event(
                 if let Some(y) = raw_axis(&event, 1, height.saturating_sub(1)) {
                     raw_touch.y = y;
                 }
-                pointer_move(state, keyboard_geometry, raw_touch.x, raw_touch.y);
+                pointer_move(state, keyboard_geometry, height, raw_touch.x, raw_touch.y);
             }
         }
         Event::XinputRawTouchEnd(event) => {
@@ -955,7 +1279,10 @@ fn handle_x_event(
                 raw_touch.touch_id = None;
             }
         }
-        Event::Expose(event) if event.window == shell_window => state.redraw = true,
+        Event::Expose(event) if event.window == shell_window => {
+            state.shell_exposed = true;
+            state.redraw = true;
+        }
         Event::Expose(event) if event.window == keyboard_window => {
             state.keyboard.request_redraw();
         }
@@ -979,7 +1306,13 @@ fn handle_x_event(
             }
         }
         Event::MotionNotify(event) if event.event == shell_window => {
-            pointer_move(state, keyboard_geometry, event.event_x, event.event_y);
+            pointer_move(
+                state,
+                keyboard_geometry,
+                height,
+                event.event_x,
+                event.event_y,
+            );
         }
         Event::ButtonRelease(event) if event.event == shell_window => {
             pointer_end(
@@ -1021,11 +1354,6 @@ fn handle_x_event(
                         &ChangeWindowAttributesAux::new().event_mask(EventMask::FOCUS_CHANGE),
                     )?;
                 }
-                if should_show {
-                    conn.map_window(event.window)?;
-                    let _ = conn.xfixes_hide_cursor(event.window)?;
-                }
-                state.replace_managed_windows(apps.active_windows());
                 let is_active = registration
                     .as_ref()
                     .is_some_and(|registration| apps.active() == Some(registration.owner));
@@ -1033,19 +1361,33 @@ fn handle_x_event(
                     .as_ref()
                     .is_some_and(|registration| registration.primary);
                 if is_active {
-                    state.last_action = "map_external_window".into();
-                    state.redraw = true;
                     let app_height = if is_primary && state.keyboard.is_visible() {
                         keyboard_geometry.app_height()
                     } else {
                         height
                     };
-                    fullscreen_window(conn, event.window, width, app_height)?;
-                    if state.app_launching() {
+                    if state.shell_covers_app() {
+                        // A new window is created at the top of the stack.
+                        // Put the shell back above it before it maps so the
+                        // launch screen never flickers to a half-painted app.
+                        resize_app_window(conn, event.window, width, app_height)?;
+                        raise_shell(conn, shell_window)?;
+                    } else {
+                        fullscreen_window(conn, event.window, width, app_height)?;
+                    }
+                }
+                if should_show {
+                    conn.map_window(event.window)?;
+                    let _ = conn.xfixes_hide_cursor(event.window)?;
+                }
+                state.replace_managed_windows(apps.active_windows());
+                if is_active {
+                    state.last_action = "map_external_window".into();
+                    state.redraw = true;
+                    if state.shell_covers_app() {
                         if is_primary {
                             state.note_app_window_mapped();
                         }
-                        raise_shell(conn, shell_window)?;
                     } else if is_primary {
                         conn.set_input_focus(InputFocus::PARENT, event.window, CURRENT_TIME)?;
                     }
@@ -1061,12 +1403,14 @@ fn handle_x_event(
                 let is_primary = apps.primary_active_window() == Some(event.window);
                 if is_primary && state.keyboard.is_visible() {
                     resize_app_window(conn, event.window, width, keyboard_geometry.app_height())?;
+                } else if state.shell_covers_app() {
+                    resize_app_window(conn, event.window, width, height)?;
                 } else {
                     fullscreen_window(conn, event.window, width, height)?;
                 }
                 state.keyboard.request_raise();
                 status_bar_surface.request_raise();
-                if state.app_launching() {
+                if state.shell_covers_app() {
                     raise_shell(conn, shell_window)?;
                 }
             } else {
@@ -1086,6 +1430,7 @@ fn handle_x_event(
         Event::MapNotify(event)
             if event.window != shell_window
                 && event.window != keyboard_window
+                && event.window != popup_window
                 && event.window != volume_window
                 && event.window != status_bar_window =>
         {
@@ -1101,6 +1446,7 @@ fn handle_x_event(
         Event::ConfigureNotify(event)
             if event.window != shell_window
                 && event.window != keyboard_window
+                && event.window != popup_window
                 && event.window != volume_window
                 && event.window != status_bar_window =>
         {
@@ -1114,13 +1460,17 @@ fn handle_x_event(
             }
         }
         Event::DestroyNotify(event) => {
-            if event.window != volume_window && event.window != status_bar_window {
+            if event.window != volume_window
+                && event.window != status_bar_window
+                && event.window != popup_window
+            {
                 apps.remove_window(event.window);
                 state.replace_managed_windows(apps.active_windows());
             }
         }
         Event::UnmapNotify(event) => {
             if event.window != keyboard_window
+                && event.window != popup_window
                 && event.window != volume_window
                 && event.window != status_bar_window
             {
@@ -1216,31 +1566,6 @@ fn app_content_height(bottom: u16) -> u16 {
     bottom.saturating_sub(status_bar::HEIGHT).max(1)
 }
 
-fn resize_shell_window<C: Connection>(
-    conn: &C,
-    window: u32,
-    width: u16,
-    height: u16,
-    inset: bool,
-) -> Result<(), Box<dyn Error>> {
-    let (top, content_height) = shell_geometry(height, inset);
-    conn.configure_window(
-        window,
-        &ConfigureWindowAux::new()
-            .x(0)
-            .y(i32::from(top))
-            .width(u32::from(width))
-            .height(u32::from(content_height))
-            .border_width(0),
-    )?;
-    Ok(())
-}
-
-fn shell_geometry(height: u16, inset: bool) -> (u16, u16) {
-    let top = if inset { status_bar::HEIGHT } else { 0 };
-    (top, height.saturating_sub(top).max(1))
-}
-
 fn apply_registry_update(
     conn: &RustConnection,
     shell_window: u32,
@@ -1277,16 +1602,20 @@ fn apply_registry_update(
     }
 
     if let Some(app) = update.active_process_exited {
-        state.home();
+        state.home_after_exit();
         state.last_action = format!("{}_process_exited", app.display_name().to_ascii_lowercase());
         raise_shell(conn, shell_window)?;
     } else if let Some(app) = update.active_process_failed {
-        state.home();
+        state.home_after_exit();
         state.last_action = format!("{}_process_error", app.display_name().to_ascii_lowercase());
         raise_shell(conn, shell_window)?;
     } else if let Some(app) = update.resumed {
         state.note_app_resumed(app);
-        if let Some(window) = apps.primary_active_window() {
+        if state.shell_covers_app() {
+            // Keep the remapped window under the opening zoom; the main loop
+            // raises and focuses it once the animation completes.
+            raise_shell(conn, shell_window)?;
+        } else if let Some(window) = apps.primary_active_window() {
             fullscreen_window(conn, window, width, height)?;
             conn.set_input_focus(InputFocus::PARENT, window, CURRENT_TIME)?;
         }
@@ -1321,9 +1650,34 @@ fn pointer_begin(
     {
         state.keyboard.press_key_index(index);
     }
+    if !pointer.keyboard_owned {
+        state.pressed = press_target(state, x, y);
+        if state.pressed.is_some() {
+            state.redraw = true;
+        }
+    }
+    if !pointer.keyboard_owned {
+        if state.switcher.is_some() {
+            state.switcher_touch_begin(f32::from(x), f32::from(y));
+        } else if state.view == View::Locked {
+            state.lock_drag_begin(f32::from(y));
+        }
+    }
     state.pointer = Some(pointer);
     state.last_action = "pointer_begin".into();
     action
+}
+
+/// The shell control under a new touch, highlighted until it is released.
+fn press_target(state: &mut ShellState, x: i16, y: i16) -> Option<Press> {
+    let lockout = state.is_lockout_active();
+    match state.view {
+        View::Locked if state.lock_face == LockFace::Passcode && !lockout => {
+            ui::keypad_action_at(x, y, !state.pin_input.is_empty()).map(Press::Keypad)
+        }
+        View::Launcher => ui::launcher_app_at(x, y).map(Press::App),
+        _ => None,
+    }
 }
 
 fn new_pointer_gesture(
@@ -1347,6 +1701,7 @@ fn new_pointer_gesture(
             last_x: x,
             last_y: y,
             started,
+            last_activity: started,
             keyboard_owned,
             keyboard_key_index,
             keyboard_pressed: keyboard_owned && keyboard_key_index.is_some(),
@@ -1358,17 +1713,50 @@ fn new_pointer_gesture(
     )
 }
 
-fn pointer_move(state: &mut ShellState, keyboard_geometry: &KeyboardGeometry, x: i16, y: i16) {
+fn pointer_move(
+    state: &mut ShellState,
+    keyboard_geometry: &KeyboardGeometry,
+    height: u16,
+    x: i16,
+    y: i16,
+) {
+    if let Some(pointer) = state.pointer.as_ref()
+        && !pointer.keyboard_owned
+    {
+        let (fx, fy) = (f32::from(x), f32::from(y));
+        let rise = f32::from(pointer.start_y) - fy;
+        let in_zone = f32::from(pointer.start_y) >= f32::from(height) - model::HOME_GESTURE_ZONE;
+        if state.gesture.is_some() {
+            state.update_home_gesture(fx, fy);
+        } else if state.switcher.is_some() {
+            state.switcher_touch_move(fx, fy);
+        } else if state.view == View::Locked {
+            state.lock_drag_move(fy);
+        } else if state.view.is_app() && in_zone && rise >= model::HOME_GESTURE_SLOP {
+            state.begin_home_gesture(fx, fy);
+        }
+    }
     let current_key_index = keyboard_geometry.key_index_at(&state.keyboard, x, y);
     let pressed_key_index = state.pointer.as_ref().and_then(|pointer| {
         (pointer.keyboard_owned && pointer.keyboard_key_index == current_key_index)
             .then_some(pointer.keyboard_key_index)
             .flatten()
     });
+    if state.pressed.is_some()
+        && let Some(pointer) = state.pointer.as_ref()
+        && (i32::from(x) - i32::from(pointer.start_x))
+            .abs()
+            .max((i32::from(y) - i32::from(pointer.start_y)).abs())
+            > PRESS_SLOP
+    {
+        state.pressed = None;
+        state.redraw = true;
+    }
     if let Some(pointer) = state.pointer.as_mut() {
         let was_pressed = pointer.keyboard_pressed;
         pointer.last_x = x;
         pointer.last_y = y;
+        pointer.last_activity = Instant::now();
         pointer.keyboard_pressed = pressed_key_index.is_some();
         if pressed_key_index.is_none() {
             pointer.keyboard_next_repeat_at = None;
@@ -1440,6 +1828,7 @@ fn update_raw_keyboard_contact(
     let was_pressed = pointer.keyboard_pressed;
     pointer.last_x = next_x;
     pointer.last_y = next_y;
+    pointer.last_activity = Instant::now();
     pointer.keyboard_pressed = should_press;
     if !should_press {
         pointer.keyboard_next_repeat_at = None;
@@ -1579,7 +1968,7 @@ fn cancel_stale_pointer(state: &mut ShellState, raw_touch: &mut RawTouchTracker,
     let legacy_stale = state
         .pointer
         .as_ref()
-        .is_some_and(|pointer| now.duration_since(pointer.started) >= STALE_POINTER_TIMEOUT);
+        .is_some_and(|pointer| now.duration_since(pointer.last_activity) >= STALE_POINTER_TIMEOUT);
     let mut recovered = false;
     if legacy_stale {
         if let Some(pointer) = state.pointer.take()
@@ -1593,7 +1982,7 @@ fn cancel_stale_pointer(state: &mut ShellState, raw_touch: &mut RawTouchTracker,
     }
     let mut position = 0;
     while position < raw_touch.keyboard_contacts.len() {
-        if now.duration_since(raw_touch.keyboard_contacts[position].1.started)
+        if now.duration_since(raw_touch.keyboard_contacts[position].1.last_activity)
             >= STALE_POINTER_TIMEOUT
         {
             let (_, pointer) = raw_touch.keyboard_contacts.remove(position);
@@ -1645,6 +2034,12 @@ fn pointer_end(
     config: &Config,
     key_injector: &XtestInjector,
 ) {
+    // Still on the keypad key or app icon it pressed (a slide past the slop
+    // clears it), so the release counts however long the finger rested.
+    let pressed = state.pressed.take();
+    if pressed.is_some() {
+        state.redraw = true;
+    }
     let Some(mut pointer) = state.pointer.take() else {
         return;
     };
@@ -1661,6 +2056,18 @@ fn pointer_end(
     }
     let dx = i32::from(pointer.last_x) - i32::from(pointer.start_x);
     let dy = i32::from(pointer.last_y) - i32::from(pointer.start_y);
+    if state.gesture.is_some() {
+        state.update_home_gesture(f32::from(x), f32::from(y));
+        state.end_home_gesture();
+        return;
+    }
+    if state.switcher.is_some() {
+        state.switcher_touch_end();
+        return;
+    }
+    if state.view == View::Locked && state.lock_drag_end(dx.abs().max(dy.abs()) as f32) {
+        return;
+    }
     let elapsed = pointer.started.elapsed();
     let upward = -dy;
     let bottom_start = i32::from(pointer.start_y) >= i32::from(height) - 180;
@@ -1675,7 +2082,21 @@ fn pointer_end(
         state.last_action = "swipe_up_background".into();
         return;
     }
-    if dx.abs() <= 35 && dy.abs() <= 35 && elapsed <= Duration::from_millis(650) {
+    // A horizontal swipe along the bottom edge jumps to the other app, as on
+    // iPhone.
+    let switch_swipe = state.view.is_app()
+        && bottom_start
+        && dx.abs() >= 300
+        && dy.abs() <= 220
+        && dx.abs() >= dy.abs() * 2
+        && elapsed <= Duration::from_millis(1000);
+    if switch_swipe {
+        state.switch_app();
+        return;
+    }
+    let held_on_target = pressed.is_some() && dx.abs() <= 35 && dy.abs() <= 35;
+    if held_on_target || (dx.abs() <= 35 && dy.abs() <= 35 && elapsed <= Duration::from_millis(650))
+    {
         handle_tap(
             conn,
             root,
@@ -1731,11 +2152,16 @@ fn handle_tap(
     state: &mut ShellState,
     x: i16,
     y: i16,
-    width: u16,
+    _width: u16,
     keyboard_geometry: &KeyboardGeometry,
     config: &Config,
     key_injector: &XtestInjector,
 ) {
+    if state.switcher.is_some() {
+        state.switcher_touch_begin(f32::from(x), f32::from(y));
+        state.switcher_touch_end();
+        return;
+    }
     if keyboard_geometry.owns_touch(&state.keyboard, x, y) {
         if let Some(action) = keyboard_geometry.action_at(&state.keyboard, x, y) {
             handle_keyboard_action(conn, state, action, key_injector);
@@ -1745,23 +2171,18 @@ fn handle_tap(
         return;
     }
     match state.view {
-        View::Locked => match ui::keypad_action_at(width, x, y) {
+        View::Locked if state.lock_face == LockFace::Clock => state.show_passcode(),
+        View::Locked => match ui::keypad_action_at(x, y, !state.pin_input.is_empty()) {
             Some(KeypadAction::Digit(digit)) => state.input_digit(digit, config),
             Some(KeypadAction::Backspace) => state.backspace_pin(),
-            Some(KeypadAction::Submit) => {
-                state.submit_pin(config);
-            }
+            Some(KeypadAction::Cancel) => state.cancel_passcode(),
             None => state.last_action = "lock_tap_outside".into(),
         },
-        View::Launcher => {
-            if ui::system_app_at(x, y) {
-                state.launch_system();
-            } else if ui::browser_app_at(x, y) {
-                state.launch_browser();
-            } else {
-                state.last_action = "launcher_tap_outside".into();
-            }
-        }
+        View::Launcher => match ui::launcher_app_at(x, y) {
+            Some(AppId::System) => state.launch_system(),
+            Some(AppId::Browser) => state.launch_browser(),
+            None => state.last_action = "launcher_tap_outside".into(),
+        },
         View::System | View::Browser => {
             let app_name = if state.view == View::System {
                 "system"
@@ -1838,7 +2259,12 @@ fn apply_command(
     key_repeat_timing: KeyRepeatTiming,
 ) {
     match command {
-        Command::Ping | Command::State => {}
+        Command::Ping
+        | Command::State
+        | Command::Profile(_)
+        | Command::ProfileSkip(_)
+        | Command::ProfileBudget(_)
+        | Command::ProfileFrames(_) => {}
         Command::Digit(digit) => state.input_digit(digit, config),
         Command::Backspace => state.backspace_pin(),
         Command::Submit => {
@@ -1860,7 +2286,7 @@ fn apply_command(
                 handle_keyboard_action(conn, state, action, key_injector);
             }
         }
-        Command::PointerMove(x, y) => pointer_move(state, keyboard_geometry, x, y),
+        Command::PointerMove(x, y) => pointer_move(state, keyboard_geometry, height, x, y),
         Command::PointerEnd(x, y) => pointer_end(
             conn,
             root,
@@ -1875,6 +2301,7 @@ fn apply_command(
         ),
         Command::Lock => state.lock(),
         Command::Home => state.home(),
+        Command::Switcher => state.pending_switcher = true,
         Command::LaunchSystem => state.launch_system(),
         Command::LaunchBrowser => state.launch_browser(),
         Command::KeyboardShow(purpose) => {
@@ -1890,7 +2317,7 @@ fn apply_command(
         Command::VolumeUp => change_volume(state, audio_volume, 5),
         Command::VolumeDown => change_volume(state, audio_volume, -5),
         Command::VolumeSet(value) => set_volume(state, audio_volume, value),
-        Command::Power => state.toggle_screen(),
+        Command::Power => state.power_key(),
         Command::ScreenOff => state.screen_off(),
         Command::ScreenOn => state.screen_on(),
         Command::LeaseAcquire(_, _, _)
@@ -1950,8 +2377,6 @@ mod touch_tests {
         assert_eq!(app_content_height(2340), 2216);
         assert_eq!(app_content_height(1520), 1396);
         assert_eq!(app_content_height(0), 1);
-        assert_eq!(shell_geometry(2340, true), (124, 2216));
-        assert_eq!(shell_geometry(2340, false), (0, 2340));
     }
 
     #[test]
@@ -2105,6 +2530,7 @@ mod touch_tests {
             last_x: 64,
             last_y: 1604,
             started: now - STALE_POINTER_TIMEOUT - Duration::from_millis(1),
+            last_activity: now - STALE_POINTER_TIMEOUT - Duration::from_millis(1),
             keyboard_owned: true,
             keyboard_key_index: Some(0),
             keyboard_pressed: true,

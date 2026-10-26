@@ -25,7 +25,7 @@ fi
 exec </dev/null >>"$LOG" 2>&1
 
 log() {
-    echo "moon-boot: $* [$(date --iso-8601=seconds 2>/dev/null || date)]"
+    echo "moon-boot: $* [$(date --iso-8601=seconds 2>/dev/null || date) up=$(cut -d' ' -f1 /proc/uptime)]"
 }
 
 read_uint() {
@@ -60,7 +60,11 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     owner="$(cat "$LOCK/pid" 2>/dev/null || true)"
     owner_boot="$(cat "$LOCK/boot-id" 2>/dev/null || true)"
     case "$owner" in ''|*[!0-9]*) owner='' ;; esac
-    if [ "$owner_boot" = "$boot_id" ] && [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+    # Properties live as long as this Android init. With stage-2 containment a
+    # contained Android can die and an uncontained one boot within the same
+    # kernel boot_id; the dead container's PIDs then mean nothing here.
+    if [ "$owner_boot" = "$boot_id" ] && [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null &&
+       [ "$(getprop moon.supervisor.pid)" = "$owner" ]; then
         log "supervisor already running pid=$owner"
         exit 0
     fi
@@ -69,6 +73,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 echo $$ >"$LOCK/pid"
 echo "$boot_id" >"$LOCK/boot-id"
+setprop moon.supervisor.pid $$
 cleanup_lock() { rm -rf "$LOCK"; }
 trap cleanup_lock EXIT HUP INT TERM
 
@@ -91,10 +96,12 @@ if [ "$DIRECT" = 0 ]; then
 fi
 
 previous_attempt="$(cat "$PERSIST/last-attempt-boot-id" 2>/dev/null || true)"
-[ "$previous_attempt" != "$boot_id" ] || {
+if [ "$previous_attempt" = "$boot_id" ] && [ "$(getprop moon.supervisor.attempted)" = 1 ]; then
     log 'this boot was already attempted; refusing a duplicate takeover'
     exit 0
-}
+fi
+[ "$previous_attempt" != "$boot_id" ] || log 'same kernel boot, new Android init (stage-2 fallback); starting'
+setprop moon.supervisor.attempted 1
 echo "$boot_id" >"$PERSIST/last-attempt-boot-id"
 chmod 0600 "$PERSIST/last-attempt-boot-id"
 
@@ -250,8 +257,6 @@ for required in \
     "$ROOT/opt/a26-shell/bin/a26-shellctl" \
     "$PERSIST/moon-audio-start.sh" \
     "$PERSIST/moon-audio-stop.sh" \
-    "$ROOT/opt/a26-audio/moon-audiod" \
-    "$ROOT/opt/a26-audio/moon-permissiond" \
     /data/local/tmp/a26-xorg-takeover.sh \
     /data/local/tmp/a26-xorg-safety-watchdog.sh \
     /data/local/tmp/a26-android-graphics-restore.sh \
@@ -276,17 +281,26 @@ log "starting autonomous takeover token=$token attempt=$failures"
     /data/local/tmp/a26-xorg-takeover.sh "$token" \
     >/dev/null 2>&1 </dev/null &
 
+# Native audio (AAudio plus Moon's "permission" stand-in) is never waited for:
+# a stalled audio start once held this boot past the 240 s readiness deadline
+# into an Android fallback. A detached keeper starts it as soon as the
+# framework is gone, bounds each attempt, retries in the background, and Moon
+# gains sound whenever it is ready.
+if [ -x "$PERSIST/moon-audio-keeper.sh" ]; then
+    "$BB" nohup "$BB" setsid /system/bin/sh "$PERSIST/moon-audio-keeper.sh" \
+        >/dev/null 2>&1 </dev/null &
+else
+    log 'audio keeper missing; Moon runs without audio'
+fi
+
 xorg_ready=0
-for _ in $($BB seq 1 100); do
+for _ in $($BB seq 1 500); do
     status="$(cat "$ROOT/root/xorg-session.status" 2>/dev/null || true)"
-    if echo "$status" | grep -q '^XORG_READY=1$'; then
-        xorg_ready=1
-        break
-    fi
-    if echo "$status" | grep -q '^XORG_READY=0$'; then
-        break
-    fi
-    sleep 1
+    case "$status" in
+        XORG_READY=1*) xorg_ready=1; break ;;
+        XORG_READY=0*) break ;;
+    esac
+    "$BB" sleep 0.2
 done
 if [ "$xorg_ready" != 1 ]; then
     log 'Xorg readiness was not proven; restoring Android'
@@ -296,14 +310,20 @@ fi
 echo "$token" >"$XORG_STATE/keep-token"
 log "Xorg ready pid=$(pidof Xorg 2>/dev/null || true); safety token committed locally"
 
-# Native audio (AAudio plus Moon's "permission" stand-in) needs no framework;
-# start it once the framework is gone so the stand-in is registered. Moon reads
-# the volume file it creates at startup. Moon still runs without audio.
-if /system/bin/sh "$PERSIST/moon-audio-start.sh"; then
-    log "audio ready pid=$(cat /data/local/tmp/moon-audio/bridge.pid 2>/dev/null || true)"
-else
-    log 'native audio did not become ready; continuing without audio'
-fi
+# Without the framework nothing boosts the foreground UI, so the scheduler ran
+# Moon's animation frames on slow cores at low clocks. Moon raises its own
+# thread's utilization floor; give Xorg, which composites every frame, the
+# same 60 % floor through a cpu group. It applies only while Xorg runs.
+boost_display_server() {
+    group=/dev/cpuctl/moon-display
+    [ -d /dev/cpuctl ] || return 0
+    mkdir -p "$group" && echo 60 >"$group/cpu.uclamp.min" || return 0
+    for task in /proc/$(pidof Xorg 2>/dev/null | cut -d' ' -f1)/task/[0-9]*; do
+        echo "${task##*/}" >"$group/tasks" 2>/dev/null || true
+    done
+}
+boost_display_server
+
 
 start_moon() {
     rm -f "$ROOT/run/a26-shell/control.sock"
@@ -455,6 +475,14 @@ if [ "$DIRECT" = 1 ]; then
         setprop dev.bootcomplete 1
         log 'reported boot completion for the native session'
     fi
+fi
+# Everything not needed to show the lock screen (Wi-Fi, trimming Android
+# services, network time) runs detached from here on.
+if [ -x "$PERSIST/moon-post-ready.sh" ]; then
+    post_ready_mode=''
+    [ "$DIRECT" = 0 ] || post_ready_mode=--direct
+    "$BB" nohup "$BB" setsid /system/bin/sh "$PERSIST/moon-post-ready.sh" $post_ready_mode \
+        >/dev/null 2>&1 </dev/null &
 fi
 
 shell_unhealthy=0
