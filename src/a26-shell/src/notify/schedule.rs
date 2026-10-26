@@ -26,7 +26,7 @@ pub fn next_fire(hour: u8, minute: u8, days: &[u8], after: i64) -> Option<i64> {
         if candidate == -1 {
             continue;
         }
-        let candidate = first_occurrence(out_of_gap(i64::from(candidate), hour, minute));
+        let candidate = first_occurrence(out_of_gap(candidate, hour, minute));
         if candidate > after {
             return Some(candidate);
         }
@@ -131,7 +131,7 @@ pub mod tests {
         tm.tm_hour = h;
         tm.tm_min = mi;
         tm.tm_isdst = -1;
-        i64::from(unsafe { libc::mktime(&mut tm) })
+        unsafe { libc::mktime(&mut tm) }
     }
 
     #[test]

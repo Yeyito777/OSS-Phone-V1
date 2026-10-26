@@ -410,7 +410,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let initial_volume = audio_volume
         .as_ref()
-        .and_then(|control| match control.get() {
+        .and_then(|control| match control.startup_value() {
             Ok(volume) => Some(volume),
             Err(error) => {
                 eprintln!("persisted audio volume unavailable: {error}");

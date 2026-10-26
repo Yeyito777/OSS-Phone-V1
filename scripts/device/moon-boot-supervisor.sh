@@ -325,7 +325,25 @@ boost_display_server() {
 boost_display_server
 
 
+# Moon reads its starting volume from the live file; if it is missing (a
+# cleared /data/local/tmp), seed it from the persisted copy first, so Moon
+# never starts at its default and overwrites the user's volume.
+seed_volume() {
+    live_dir=/data/local/tmp/moon-audio
+    value="$(cat "$live_dir/volume" 2>/dev/null || true)"
+    case "$value" in ''|*[!0-9]*) ;; *) [ "$value" -le 100 ] && return ;; esac
+    value="$(cat "$PERSIST/volume" 2>/dev/null || true)"
+    case "$value" in ''|*[!0-9]*) return ;; esac
+    [ "$value" -le 100 ] || return
+    mkdir -p "$live_dir"
+    printf '%s\n' "$value" >"$live_dir/volume.new.$$" &&
+        chown 1000:1000 "$live_dir" "$live_dir/volume.new.$$" &&
+        chmod 0660 "$live_dir/volume.new.$$" &&
+        mv -f "$live_dir/volume.new.$$" "$live_dir/volume"
+}
+
 start_moon() {
+    seed_volume
     rm -f "$ROOT/run/a26-shell/control.sock"
     : >"$ROOT/root/a26-shell.log"
     # GPU mode (moon-gpu-session.sh): Moon draws through moon-compositor.
