@@ -1,7 +1,10 @@
 # GPU compositing for Moon: research, design and migration plan
 
-Status: research and proof of concept (October 2026). Device: SM-A266M,
-A266MUBU1AYB8, OSS kernel (5.10.223, GKI KMI), Moon direct boot.
+Status: research, an on-device proof of concept, and an integration built
+and tested off-device, awaiting the phone (October 2026). Device: SM-A266M,
+A266MUBU1AYB8, OSS kernel (5.10.223, GKI KMI), Moon direct boot. Companion
+study: `notes/wayland/DESIGN.md` on `wayland-experiment` (the Wayland
+agent's measurements of planes, CPU composition and stock compositors).
 
 ## Goal and the problem
 
@@ -91,95 +94,146 @@ The display side has three candidates:
 ## Q2: the display path
 
 Who owns KMS decides everything else, because DRM master is exclusive:
-Xorg's modesetting driver and a GPU compositor cannot both drive CRTC 120.
+Xorg's modesetting driver and any other compositor cannot both drive CRTC
+120.
 
 | Option | Assessment |
 | --- | --- |
 | Keep Xorg on KMS, add glamor | Glamor needs GBM and a GBM EGL platform; the blob has neither (probed). Rejected. |
 | Keep Xorg on KMS, GPU renders, Xorg shows it | Without glamor the modesetting driver never page-flips (`present.c:278`, `if (!ms->drmmode.glamor) return FALSE`) and cannot import a dmabuf as a pixmap (no DRI3). The best it could do is CPU-copy a GPU frame through MIT-SHM and the shadow framebuffer: two 10 MB copies a frame on the CPU, no flips, tearing. Rejected. |
-| Wayland compositor + Xwayland | Right long-term shape, but Moon is an X11 window manager and both apps and the browser are X11. wlroots needs GBM; Smithay would need a custom renderer/allocator for this blob. Rewriting the WM, input, keyboard and lifecycle code first is a large migration with no performance gain over the option below. Deferred. |
-| **A GPU compositor that owns KMS, Moon drives it, Xorg moves to a headless driver** | Chosen. Below. |
+| A stock Wayland compositor (weston, cage, sway, phoc) as the session | Measured by the Wayland agent (`notes/wayland/DESIGN.md`, branch `wayland-experiment`): faster than Xorg on the CPU (cage holds 120 Hz up to 2.0 Mpx a frame), but none uses the display planes without a GPU, none has Moon's UX, and Moon would become a client that cannot animate other apps' pixels cheaply. Rejected by both studies. |
+| **One Moon-driven compositor that owns KMS** | Chosen, by both studies independently. What it shows comes from Moon's scene (`compositor::Frame`); how it shows it is tiered: planes, then GPU, then CPU. Below. |
 
 ### The chosen architecture
 
 ```text
-             Alpine chroot (musl)                       Android side (bionic)
- ┌──────────────────────────────────────────┐    ┌──────────────────────────────┐
- │ Xorg :0 on the dummy video driver         │    │ moon-compositor              │
- │  evdev touch/keys, XI2, XTEST, RENDER     │    │  DRM master on card0          │
- │  apps (System, CEF) draw here as today    │    │  EGL/GLES on libGLES_mali     │
- │        │ root: CopyArea into a dmabuf     │    │  dmabuf framebuffers, atomic  │
- │        ▼ (MIT-SHM AttachFd)               │    │  flips with IN_FENCE_FD        │
- │  "X mirror" dmabuf ───────────────────────┼───▶│  textures: X mirror, layers,  │
- │                                           │    │  snapshots                    │
- │ Moon (a26-shell)                          │    │                               │
- │  WM, input, gestures, model, ui.rs        │    │                               │
- │  compositor.rs: Frame { base, nodes }  ───┼───▶│  renders the Frame, flips at  │
- │  CPU-drawn layers (memfd)              ───┼───▶│  vblank, reports presentation │
- │  ◀──────────── presented(seq, time) ──────┼────│                               │
- └──────────────────────────────────────────┘    └──────────────────────────────┘
+             Alpine chroot (musl)                         Android side (bionic)
+ ┌────────────────────────────────────────────┐    ┌────────────────────────────────┐
+ │ Xorg :0 on the dummy video driver           │    │ moon-compositor (src/moon-gpu) │
+ │  evdev touch/keys, XI2, XTEST, RENDER       │    │  the only DRM master on card0  │
+ │  apps (System, CEF) draw here as today      │    │  per frame, the cheapest of:   │
+ │        │ root DAMAGE: CopyArea into         │    │   1. display planes (DPP0-7)   │
+ │        ▼ a MIT-SHM pixmap on the dmabuf     │    │   2. GPU: GLES on the Mali     │
+ │  "X mirror" (cached dma-heap) ──────────────┼───▶│   3. CPU: 4 threads, cached    │
+ │                                             │    │  flips with IN_FENCE_FD, flip  │
+ │ Moon (a26-shell)                            │    │  events with kernel timestamps │
+ │  WM, input, gestures, model, ui.rs          │    │  ACTIVE=0/1 for screen off/on  │
+ │  compositor.rs + gpu.rs: Frame { base,  ────┼───▶│                                │
+ │    nodes }, layers in dma-heap buffers  ────┼───▶│                                │
+ │  ◀─────────────── presented(seq, time) ─────┼────│                                │
+ └────────────────────────────────────────────┘    └────────────────────────────────┘
 ```
 
-- **moon-compositor** (C, NDK; `src/moon-gpu/`) is the only DRM master.
-  It renders Moon's existing scene description (`compositor::Frame`: a base
-  surface plus Image/Fill nodes with source/destination rectangles, alpha,
-  corner radius and filtering) with two GLES programs, one fragment pass per
-  node, and flips one frame per vblank. A dim is a uniform, not a
-  pre-darkened copy; a rounded corner is a signed-distance coverage term, not
-  a mask repair; scaled snapshots are bilinear textures. Full-frame redraw
-  costs the GPU about a millisecond (measured below), so damage tracking
-  becomes an optimisation for power rather than a condition for 120 Hz.
+- **moon-compositor** (C, NDK) owns DRM master and shows Moon's existing
+  scene description (`compositor::Frame`: a base surface plus Image/Fill
+  nodes with source/destination rectangles, alpha, corner radius and
+  filtering) one frame per vblank. Each frame takes the first tier that can
+  show it:
+  1. **Planes.** The base and every node on its own DPP plane: plane alpha
+     for fades, the three scaling planes (DPP1/3/7, 0.5x-8x) for scaled
+     nodes, and a dim of the bottom layer as plane alpha over the CRTC's
+     black. Rounded corners only where the buffer has them baked in at that
+     scale (switcher card copies). One TEST_ONLY commit decides; nothing is
+     drawn. The Wayland agent measured this tier: up to six moving, scaling,
+     fading full-screen cards over a background at 120 Hz with 0 missed
+     vblanks and 0.03 ms of CPU a frame, and with a 1.07 Mpx CPU-drawn
+     layer under them still 0 missed.
+  2. **GPU.** Two GLES programs draw the frame into a dmabuf: a dim is a
+     uniform, a rounded corner a signed-distance coverage term, scaled
+     snapshots are bilinear textures. The proof of concept below runs a
+     heavier scene than any Moon frame at 120 Hz in 3.4 ms of GPU time.
+  3. **CPU.** Without a usable EGL (the blob fails to load, or `--cpu`),
+     four threads draw the frame in interleaved bands into cached `system`
+     dma-heap buffers, which are flushed and scanned out. The Wayland agent
+     measured the pixman equivalent at 2.53 Mpx a frame, 120 Hz, 0 missed,
+     and found the rule that makes it possible: never read a scanout buffer
+     that is mapped uncached (40.9 ms for a frame against 1.3 ms cached).
+     This tier is the fallback, not the target.
 - **Surfaces.** Moon's CPU-drawn layers (wallpaper, home, lock clock,
-  keypad, labels) are written into shared memory (memfd) and uploaded with
-  `glTexSubImage2D` of the changed rectangles, exactly where Moon's
-  `Uploader` sends `PutImage` today. Snapshots (cards) are GPU copies of the
-  X mirror taken when Moon asks, where `capture_root` copies the root today.
+  keypad, labels) live in cached `system` dma-heap buffers that Moon
+  allocates and writes between `DMA_BUF_IOCTL_SYNC` start and end, exactly
+  where its `Uploader` sent `PutImage` before; the compositor samples them
+  in place or scans them out. Snapshots (cards) are copies of the X mirror
+  made by the compositor when Moon asks, where `capture_root` copied the
+  root before; for the switcher, a second copy at card size with the card's
+  corners baked in lets the cards go on planes.
 - **X content.** Xorg keeps running with all its input drivers, XI2,
   XTEST, focus and the WM protocol, but on the `dummy` video driver: it no
-  longer touches DRM. The visible root (apps, status strip, keyboard and
-  volume windows) is copied by the X server into a dmabuf-backed MIT-SHM
-  pixmap (`ShmAttachFd` maps any fd whose `fstat` has a size; dmabufs have
-  `i_size` = buffer size, `drivers/dma-buf/dma-buf.c:496`), on Moon's
-  request, for the rectangles X DAMAGE reported. A trailing one-pixel
-  `ShmPutImage` with `send_event` gives Moon an asynchronous completion event
-  in request order, so no reply is ever awaited on Moon's connection. The
-  compositor samples that dmabuf as a texture with no further copy. This is
-  the one CPU copy apps already pay today (shadow framebuffer to scanout).
+  longer touches DRM. The visible root (apps, status strip, keyboard, volume
+  and banner windows) is copied by the X server into a MIT-SHM pixmap on the
+  compositor's mirror dmabuf (`ShmAttachFd` maps any fd whose `fstat` has a
+  size; dmabufs have `i_size` = buffer size, `drivers/dma-buf/dma-buf.c:496`),
+  for the rectangles X DAMAGE reported. A trailing one-pixel `ShmPutImage`
+  with `send_event` gives Moon an asynchronous completion event in request
+  order, so no reply is ever awaited on Moon's connection. The compositor
+  cleans the mirror's caches (about 0.4 ms, measured by the Wayland agent)
+  and shows it: on the primary plane while an app is in front (nothing
+  drawn), or as a texture inside a frame. The CopyArea is the one CPU copy
+  apps already paid (shadow framebuffer to scanout).
 - **Pacing.** The compositor reports each flip's vblank sequence and
-  kernel timestamp to Moon, which replaces Present's completion events in
-  `compositor.rs` (`ready`, `next_display_time`, the 60 Hz fallback
-  heuristics become unnecessary at 120 Hz but stay as a safety net).
-- **Screen off** becomes `ACTIVE=0/1` on the CRTC, the same commit DPMS
-  makes today (`display_power.rs`), requested over the socket.
+  kernel timestamp to Moon, replacing Present's completion events in
+  `compositor.rs` (`ready`, `next_display_time`).
+- **Screen off** is `ACTIVE=0/1` on the CRTC, the commit DPMS makes today
+  (`display_power.rs`), requested over the socket.
 
 What must run for this path: the kernel's mali_kbase and exynos-drm, nothing
 else. gralloc's allocator HAL and gpuservice keep running as today but are
 not used; SurfaceFlinger and the HWC stay stopped.
 
+## The two answers compared: this design and Moon as a Wayland compositor
+
+The Wayland agent's study (`notes/wayland/DESIGN.md`) reached the same KMS
+half: one Moon-driven compositor, planes first, then GPU, then CPU. The two
+designs differ only in how apps reach that compositor. Its recommended
+endgame (option A there) makes Moon a Wayland server (smithay pieces, an
+Xwayland X11 WM for System and CEF); this one keeps X11 with Xorg headless.
+Its option C *is* this design.
+
+| | This design: X11 apps, headless Xorg, X mirror | Moon as a Wayland compositor (+ Xwayland) |
+| --- | --- | --- |
+| Shell animations | Identical: the same tiered compositor shows Moon's frames | Identical |
+| Latency, shell | A frame is on screen at the next vblank after Moon submits it; touch goes evdev → Xorg (XI2) → Moon, one local socket hop more than libinput in Moon | Next vblank; touch read by Moon directly |
+| Latency, apps | App → X server (CPU, pixman) → CopyArea into the mirror (about 1.6 ms for a full 10 MB frame, cached to cached) → next vblank, scanned out directly | X11 apps: the same copy (Xwayland's `wl_shm` buffer into a dmabuf). Native Wayland apps with dmabufs: none |
+| Tearing | The mirror is one buffer the display scans while Xorg writes it (as Xorg tears today); double-buffering it is a known step | Client buffers are released per frame: no tearing |
+| Robustness | More processes (Xorg, moon-compositor, Moon); each failure lands on today's software path, in place (measured: a compositor-to-Xorg handoff without a reboot) | Fewer processes, but the new code sits in the most fragile layers (input, focus, Xwayland window management) |
+| Migration cost | Built on `gpu-compositor`: about 2.1k lines of C, 1.2k of Rust and 0.5k of scripts; no app, input or keyboard code changes | 5-8k lines changed, 4-8 weeks (its estimate), mostly input, focus, keyboard and Xwayland |
+| App compatibility | System and CEF unchanged: same X server, same XTEST keyboard and taps | System ran under Xwayland; CEF under Xwayland or ozone-wayland untested; text-input-v3 would replace the XTEST keyboard |
+| X11 workarounds | Stay (the sequence-number deadlock rules, XTEST injection) | Disappear |
+
+They are steps, not rivals. This design delivers the 120 Hz shell now
+without touching apps or input. moon-compositor, its protocol and Moon's
+backend are the KMS half the Wayland endgame needs; going there later
+replaces the X mirror with per-surface client buffers and retires headless
+Xorg, and nothing in the compositor has to change.
+
 ## Q3: risk, fallback and robustness
 
-- **The software path stays the default and the fallback.** GPU mode is a
-  session-level switch (`"gpu": true` in Moon's config plus the
-  compositor binary present). Moon's XRender compositor is untouched and
-  remains what runs when the switch is off, when moon-compositor fails its
-  startup check (EGL, dmabuf import, first modeset, first flip within a
-  deadline), or after repeated runtime failures. Starting Xorg with the
-  modesetting configuration is exactly today's session.
-- **A compositor crash must not blank the panel.** DRM framebuffers belong
-  to the open file, not the process: if the card is opened by a tiny holder
-  that keeps the fd and passes duplicates to moon-compositor (`SCM_RIGHTS`),
-  a crashed compositor leaves its last frame on screen with the CRTC still
-  active, and its restart continues on the same file. Without a holder, the
-  kernel removes the framebuffers on close and, because the primary plane
-  loses its framebuffer, turns the CRTC off (`atomic_remove_fb`). Whether
-  this firmware can re-enable the CRTC from a second master in place was a
-  hard question for the existing design (deep suspend and a runtime modeset
-  could not); it is measured below.
-- **Moon reconnects.** Moon keeps the CPU copy of every layer already
-  (`Uploader::shadow`), so a restarted compositor is re-fed in one frame.
-- Timeouts: Moon never blocks on the compositor socket (nonblocking,
-  bounded queue); if no presentation arrives within 250 ms it drops the
-  frame clock to a timer, as it already does when Present stops.
+- **Opt-in, and the software path stays the fallback.** GPU mode is
+  `GPU_COMPOSITOR=1` in `/data/adb/moon/config` (`scripts/gpu/install.sh
+  --enable|--disable`). Moon's XRender compositor is untouched and is what
+  runs when the switch is off, when the compositor binary is missing, when
+  it is not ready within four seconds (EGL, buffers, scanout, the first
+  commit), or after a GPU-mode failure earlier in the same boot. Xorg on the
+  panel with the modesetting configuration is exactly today's session.
+- **At runtime** (`scripts/device/moon-gpu-session.sh keep`): a dead
+  compositor is restarted (twice per boot); Moon notices the closed socket,
+  reconnects once a second and re-sends every layer (it keeps them all), and
+  the mirror is re-attached. After the restarts the session falls back in
+  place: headless Xorg is stopped, the takeover starts Xorg on the panel
+  again (no modeset is needed: the CRTC stays active across masters), and
+  the supervisor, which watches for that switch every second, restarts Moon
+  on the software path. Wi-Fi and audio keep running.
+- **A hung compositor** (alive, no flips) is not detected yet: Moon keeps
+  running (its frame watchdog moves on after 250 ms) but the screen
+  freezes. Moon could report it to the session script; not built.
+- **Kernel hazards.** Every commit sets `HDR_FD=-1` on every plane it
+  touches and a modeset `DQE_FD=-1` (see the panic below). The mode is never
+  changed and the CRTC never disabled other than through `ACTIVE`.
+- **Restoring Android** (`a26-android-graphics-restore.sh`) stops the
+  compositor before it starts the HWC.
+- **Deep suspend** (opt-in, off by default) still hands off through
+  `xrandr --off`, which does nothing on the headless Xorg; it is not
+  supported together with GPU mode yet.
 
 ## Proof of concept
 
@@ -266,22 +320,36 @@ blocking (otherwise its stray flip event offsets every later one and
 commits fail with EBUSY), and a fresh frame should be committed only after
 the previous one's flip event.
 
+## What is built (branch `gpu-compositor`)
+
+| Piece | Where |
+| --- | --- |
+| moon-compositor: KMS (all planes, scaler probe, fd sanitising), the three tiers, the X mirror, copies, the protocol, a GPU clock floor while frames flow | `src/moon-gpu/{compositor,kms,gpu,render,cpu}.c`, `proto.h` |
+| Moon's backend: layers in dma-heap buffers, Frame to the wire, the X mirror with DAMAGE and completion markers, snapshots and card copies, exact dims instead of darkened copies, flip events as the frame clock, reconnects | `src/a26-shell/src/gpu.rs`; switches in `compositor.rs`, `ui.rs`, `main.rs`, `display_power.rs` |
+| Session: start/keep/stop, the takeover loop with in-place fallback, the supervisor (MOON_GPU_SOCKET, fallback watch), restore, the chroot bind of `/run/moon-gpu` | `scripts/device/moon-gpu-session.sh`, `a26-xorg-takeover.sh`, `moon-boot-supervisor.sh`, `a26-android-graphics-restore.sh`, `a26-enter-chroot.sh`, `a26-xorg-persistent-session.sh` |
+| Headless Xorg configuration and the dummy driver | `scripts/gpu/xorg/20-a26-gpu.conf`, `scripts/gpu/install.sh` |
+| Off-device test: Moon in GPU mode on Xvfb against a protocol stand-in | `scripts/gpu/mock-run.sh`, `scripts/gpu/mock-compositor.py` |
+
+Verified off-device (whale, Xvfb, the stand-in compositor): Moon connects,
+uploads its layers, and the lock and home screens and the unlock animation
+arrive frame by frame, paced by presentation events; an app (xev) in front
+is shown through the X mirror; the switcher shows the app's snapshot, at
+rest through its card copy. The CPU tier's renderer was checked on whale
+(rounded, scaled, translucent and dimmed nodes; 4.9 ms for a heavy frame on
+four x86 threads). On the phone: pending.
+
 ## Migration plan
 
-1. **moon-compositor daemon** (from the PoC): socket protocol, surfaces,
-   Frame rendering, X mirror import, presentation events, power on/off, fd
-   holder, startup self-test.
-2. **Moon GPU backend** in `compositor.rs`, behind the existing
-   `Compositor` API (create_layer/upload/create_snapshot/capture_root/
-   compose/handle_event): selected at startup, the XRender backend stays.
-   App switcher and background fades first: with dims as uniforms, the
-   fade copies (`create_dimmed`, `set_rows`, `RowFade`) are skipped in GPU
-   mode.
-3. **Session integration**: the supervisor starts the holder and
-   moon-compositor after the HWC handoff, Xorg with the dummy-driver
-   configuration, then Moon with the socket path; on any startup failure,
-   today's modesetting Xorg session.
-4. Later: every shell surface as a compositor layer (status strip, keyboard
-   and volume windows leave X), KMS overlay planes for the foreground app
-   (no composition at all while an app is static), AFBC buffers, and
-   eventually a Wayland front end for apps.
+1. **On the phone, opt-in** (this branch): measure the switcher, home
+   gesture, launch zoom, lock fades and an app scrolling through the mirror
+   on each tier; screen off/on; a compositor kill (restart, then in-place
+   fallback). Merge with `GPU_COMPOSITOR` off by default.
+2. **Default on** once a week of daily use shows no regressions; the
+   software session remains the fallback.
+3. **Fewer copies and more planes:** double-buffer the X mirror (no
+   tearing); the status strip, keyboard, volume and banner windows as Moon
+   layers on planes instead of X windows; the foreground app's region of the
+   mirror on its own plane; AFBC for GPU output (DPP1/2/4/7 scan it out).
+4. **Wayland front end** (the Wayland agent's option A): Moon as the
+   Wayland server with an Xwayland WM, per-surface client buffers instead of
+   the mirror, headless Xorg retired. moon-compositor and its protocol stay.
