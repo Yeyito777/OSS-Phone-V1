@@ -9,9 +9,6 @@ use std::ffi::CString;
 use std::io::Write as _;
 use std::os::fd::{AsFd, FromRawFd, OwnedFd};
 
-use wayland_server::protocol::wl_data_device::WlDataDevice;
-use wayland_server::protocol::wl_data_device_manager::{self, WlDataDeviceManager};
-use wayland_server::protocol::wl_data_source::WlDataSource;
 use wayland_server::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_server::protocol::wl_output::{self, WlOutput};
 use wayland_server::protocol::wl_pointer::WlPointer;
@@ -80,7 +77,6 @@ fn keymap_fd() -> std::io::Result<(OwnedFd, u32)> {
 pub(crate) fn create_globals(handle: &DisplayHandle) {
     handle.create_global::<WlState, WlSeat, ()>(7, ());
     handle.create_global::<WlState, WlOutput, ()>(4, ());
-    handle.create_global::<WlState, WlDataDeviceManager, ()>(3, ());
 }
 
 impl GlobalDispatch<WlSeat, ()> for WlState {
@@ -232,7 +228,8 @@ pub(crate) fn set_keyboard_focus(
             }
         }
         super::text_input::enter(state, &new);
-        state.seat.focus = Some(new);
+        state.seat.focus = Some(new.clone());
+        super::clipboard::focus(state, _handle, &new);
     }
 }
 
@@ -454,68 +451,5 @@ impl Dispatch<WlOutput, ()> for WlState {
         _data: &(),
     ) {
         state.outputs.retain(|output| output != resource);
-    }
-}
-
-impl GlobalDispatch<WlDataDeviceManager, ()> for WlState {
-    fn bind(
-        _state: &mut Self,
-        _handle: &DisplayHandle,
-        _client: &Client,
-        resource: New<WlDataDeviceManager>,
-        _data: &(),
-        data_init: &mut DataInit<'_, Self>,
-    ) {
-        data_init.init(resource, ());
-    }
-}
-
-/// Clipboard and drag-and-drop are not offered yet; toolkits that insist on
-/// a data device get one that never has a selection.
-impl Dispatch<WlDataDeviceManager, ()> for WlState {
-    fn request(
-        _state: &mut Self,
-        _client: &Client,
-        _resource: &WlDataDeviceManager,
-        request: wl_data_device_manager::Request,
-        _data: &(),
-        _handle: &DisplayHandle,
-        data_init: &mut DataInit<'_, Self>,
-    ) {
-        match request {
-            wl_data_device_manager::Request::CreateDataSource { id } => {
-                data_init.init(id, ());
-            }
-            wl_data_device_manager::Request::GetDataDevice { id, .. } => {
-                data_init.init(id, ());
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<WlDataSource, ()> for WlState {
-    fn request(
-        _state: &mut Self,
-        _client: &Client,
-        _resource: &WlDataSource,
-        _request: <WlDataSource as Resource>::Request,
-        _data: &(),
-        _handle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, Self>,
-    ) {
-    }
-}
-
-impl Dispatch<WlDataDevice, ()> for WlState {
-    fn request(
-        _state: &mut Self,
-        _client: &Client,
-        _resource: &WlDataDevice,
-        _request: <WlDataDevice as Resource>::Request,
-        _data: &(),
-        _handle: &DisplayHandle,
-        _data_init: &mut DataInit<'_, Self>,
-    ) {
     }
 }

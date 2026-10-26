@@ -13,6 +13,7 @@
 //! Like the rest of Moon, nothing here ever blocks: the listening socket and
 //! the clients are nonblocking and polled by the main loop.
 
+mod clipboard;
 mod presentation;
 mod seat;
 mod shell;
@@ -174,6 +175,7 @@ pub struct WlState {
     pub(crate) scale: i32,
     pub(crate) outputs: Vec<wayland_server::protocol::wl_output::WlOutput>,
     pub(crate) feedbacks: presentation::Feedbacks,
+    pub(crate) clipboard: clipboard::Clipboard,
     pub(crate) serial: u32,
 }
 
@@ -273,6 +275,7 @@ impl WaylandServer {
         seat::create_globals(&handle);
         text_input::create_globals(&handle);
         presentation::create_globals(&handle);
+        clipboard::create_globals(&handle);
         Ok(Self {
             display,
             listener,
@@ -292,6 +295,7 @@ impl WaylandServer {
                 scale: scale.max(1),
                 outputs: Vec::new(),
                 feedbacks: presentation::Feedbacks::default(),
+                clipboard: clipboard::Clipboard::default(),
                 serial: 0,
             },
             socket_path,

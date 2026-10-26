@@ -393,3 +393,192 @@ fn toplevel_configure_commit_release_touch_and_text() {
     assert_eq!(*h.client.committed.lock().unwrap(), "x");
     assert_eq!(h.client.keys, vec![28]);
 }
+
+mod clipboard {
+    use std::io::{Read as _, Write as _};
+    use std::os::fd::{AsFd, OwnedFd};
+
+    use wayland_client::protocol::{
+        wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source,
+        wl_registry, wl_seat, wl_surface,
+    };
+    use wayland_client::{Connection, Dispatch, QueueHandle, delegate_noop, event_created_child};
+    use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+
+    use crate::wayland::WaylandServer;
+
+    #[derive(Default)]
+    struct App {
+        compositor: Option<wl_compositor::WlCompositor>,
+        seat: Option<wl_seat::WlSeat>,
+        manager: Option<wl_data_device_manager::WlDataDeviceManager>,
+        wm: Option<xdg_wm_base::XdgWmBase>,
+        offers: Vec<(wl_data_offer::WlDataOffer, Vec<String>)>,
+        selection: Option<wl_data_offer::WlDataOffer>,
+        sent: Vec<String>,
+    }
+
+    impl Dispatch<wl_registry::WlRegistry, ()> for App {
+        fn event(
+            a: &mut Self,
+            r: &wl_registry::WlRegistry,
+            e: wl_registry::Event,
+            _: &(),
+            _: &Connection,
+            qh: &QueueHandle<Self>,
+        ) {
+            if let wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } = e
+            {
+                match interface.as_str() {
+                    "wl_compositor" => a.compositor = Some(r.bind(name, version, qh, ())),
+                    "wl_seat" => a.seat = Some(r.bind(name, version, qh, ())),
+                    "wl_data_device_manager" => a.manager = Some(r.bind(name, version, qh, ())),
+                    "xdg_wm_base" => a.wm = Some(r.bind(name, version, qh, ())),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    impl Dispatch<wl_data_device::WlDataDevice, ()> for App {
+        fn event(
+            a: &mut Self,
+            _: &wl_data_device::WlDataDevice,
+            e: wl_data_device::Event,
+            _: &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            match e {
+                wl_data_device::Event::DataOffer { id } => a.offers.push((id, Vec::new())),
+                wl_data_device::Event::Selection { id } => a.selection = id,
+                _ => {}
+            }
+        }
+        event_created_child!(App, wl_data_device::WlDataDevice, [
+            wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, ()),
+        ]);
+    }
+
+    impl Dispatch<wl_data_offer::WlDataOffer, ()> for App {
+        fn event(
+            a: &mut Self,
+            o: &wl_data_offer::WlDataOffer,
+            e: wl_data_offer::Event,
+            _: &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            if let wl_data_offer::Event::Offer { mime_type } = e
+                && let Some(entry) = a.offers.iter_mut().find(|(offer, _)| offer == o)
+            {
+                entry.1.push(mime_type);
+            }
+        }
+    }
+
+    impl Dispatch<wl_data_source::WlDataSource, ()> for App {
+        fn event(
+            a: &mut Self,
+            _: &wl_data_source::WlDataSource,
+            e: wl_data_source::Event,
+            _: &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            if let wl_data_source::Event::Send { mime_type, fd } = e {
+                let mut file = std::fs::File::from(fd);
+                file.write_all(b"copied text").unwrap();
+                a.sent.push(mime_type);
+            }
+        }
+    }
+
+    delegate_noop!(App: ignore wl_compositor::WlCompositor);
+    delegate_noop!(App: ignore wl_surface::WlSurface);
+    delegate_noop!(App: ignore wl_seat::WlSeat);
+    delegate_noop!(App: ignore wl_data_device_manager::WlDataDeviceManager);
+    delegate_noop!(App: ignore xdg_wm_base::XdgWmBase);
+    delegate_noop!(App: ignore xdg_surface::XdgSurface);
+    delegate_noop!(App: ignore xdg_toplevel::XdgToplevel);
+
+    #[test]
+    fn selection_is_offered_to_the_focused_app_and_read_through_a_pipe() {
+        let dir = std::env::temp_dir().join(format!("moon-wl-clip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut server =
+            WaylandServer::bind(&dir, "wayland-0", (1080, 2340), (1080, 2216), 120_000, 1).unwrap();
+        let stream = std::os::unix::net::UnixStream::connect(dir.join("wayland-0")).unwrap();
+        let connection = Connection::from_socket(stream).unwrap();
+        let mut queue = connection.new_event_queue();
+        let qh = queue.handle();
+        connection.display().get_registry(&qh, ());
+        let mut app = App::default();
+        let mut pump = |server: &mut WaylandServer, app: &mut App| {
+            for _ in 0..3 {
+                connection.flush().unwrap();
+                server.dispatch();
+                if let Some(guard) = connection.prepare_read() {
+                    let mut poll = libc::pollfd {
+                        fd: std::os::fd::AsRawFd::as_raw_fd(&guard.connection_fd()),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    // SAFETY: one pollfd.
+                    if unsafe { libc::poll(&mut poll, 1, 20) } > 0 {
+                        guard.read().unwrap();
+                    }
+                }
+                queue.dispatch_pending(app).unwrap();
+            }
+        };
+        pump(&mut server, &mut app);
+        let surface = app.compositor.as_ref().unwrap().create_surface(&qh, ());
+        let xdg = app.wm.as_ref().unwrap().get_xdg_surface(&surface, &qh, ());
+        let _toplevel = xdg.get_toplevel(&qh, ());
+        surface.commit();
+        let device =
+            app.manager
+                .as_ref()
+                .unwrap()
+                .get_data_device(app.seat.as_ref().unwrap(), &qh, ());
+        pump(&mut server, &mut app);
+        let id = *server.state.toplevels.keys().next().unwrap();
+        server.set_keyboard_focus(Some(id));
+        pump(&mut server, &mut app);
+        // Nothing copied yet.
+        assert!(app.selection.is_none());
+
+        let source = app.manager.as_ref().unwrap().create_data_source(&qh, ());
+        source.offer("text/plain;charset=utf-8".into());
+        device.set_selection(Some(&source), 0);
+        pump(&mut server, &mut app);
+        let offer = app.selection.clone().expect("the selection is offered");
+        let mimes = &app.offers.iter().find(|(o, _)| *o == offer).unwrap().1;
+        assert_eq!(mimes, &vec!["text/plain;charset=utf-8".to_string()]);
+
+        let mut fds = [0; 2];
+        // SAFETY: pipe2 fills two fds.
+        assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
+        // SAFETY: fresh descriptors owned here.
+        let (read, write) = unsafe {
+            (
+                std::os::fd::FromRawFd::from_raw_fd(fds[0]),
+                std::os::fd::FromRawFd::from_raw_fd(fds[1]),
+            )
+        };
+        let (read, write): (OwnedFd, OwnedFd) = (read, write);
+        offer.receive("text/plain;charset=utf-8".into(), write.as_fd());
+        drop(write);
+        pump(&mut server, &mut app);
+        assert_eq!(app.sent, vec!["text/plain;charset=utf-8".to_string()]);
+        let mut text = String::new();
+        std::fs::File::from(read).read_to_string(&mut text).unwrap();
+        assert_eq!(text, "copied text");
+    }
+}
