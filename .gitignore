@@ -28,6 +28,7 @@
 !/scripts/device/moon-mode-stop.list
 !/scripts/device/moon-audio-start.sh
 !/scripts/device/moon-audio-stop.sh
+!/scripts/device/moon-audio-keeper.sh
 !/scripts/device/moon-suspend-cycle.sh
 !/scripts/device/a26-enter-chroot.sh
 !/scripts/device/a26-xorg-takeover.sh

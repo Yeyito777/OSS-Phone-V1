@@ -257,8 +257,6 @@ for required in \
     "$ROOT/opt/a26-shell/bin/a26-shellctl" \
     "$PERSIST/moon-audio-start.sh" \
     "$PERSIST/moon-audio-stop.sh" \
-    "$ROOT/opt/a26-audio/moon-audiod" \
-    "$ROOT/opt/a26-audio/moon-permissiond" \
     /data/local/tmp/a26-xorg-takeover.sh \
     /data/local/tmp/a26-xorg-safety-watchdog.sh \
     /data/local/tmp/a26-android-graphics-restore.sh \
@@ -283,23 +281,17 @@ log "starting autonomous takeover token=$token attempt=$failures"
     /data/local/tmp/a26-xorg-takeover.sh "$token" \
     >/dev/null 2>&1 </dev/null &
 
-# Native audio (AAudio plus Moon's "permission" stand-in) needs no framework,
-# only that it is gone so the stand-in is the registered service. On a direct
-# boot it never ran, so audio starts alongside Xorg; the legacy path starts it
-# after the takeover stopped the framework. Moon reads the volume file it
-# creates at startup, and still runs without audio.
-audio_pid=''
-if [ "$DIRECT" = 1 ]; then
-    /system/bin/sh "$PERSIST/moon-audio-start.sh" &
-    audio_pid=$!
+# Native audio (AAudio plus Moon's "permission" stand-in) is never waited for:
+# a stalled audio start once held this boot past the 240 s readiness deadline
+# into an Android fallback. A detached keeper starts it as soon as the
+# framework is gone, bounds each attempt, retries in the background, and Moon
+# gains sound whenever it is ready.
+if [ -x "$PERSIST/moon-audio-keeper.sh" ]; then
+    "$BB" nohup "$BB" setsid /system/bin/sh "$PERSIST/moon-audio-keeper.sh" \
+        >/dev/null 2>&1 </dev/null &
+else
+    log 'audio keeper missing; Moon runs without audio'
 fi
-finish_audio_start() {
-    audio_ok=0
-    if [ -n "$audio_pid" ]; then
-        wait "$audio_pid" && audio_ok=1
-        audio_pid=''
-    fi
-}
 
 xorg_ready=0
 for _ in $($BB seq 1 500); do
@@ -312,7 +304,6 @@ for _ in $($BB seq 1 500); do
 done
 if [ "$xorg_ready" != 1 ]; then
     log 'Xorg readiness was not proven; restoring Android'
-    finish_audio_start
     /system/bin/sh /data/local/tmp/a26-android-graphics-restore.sh
     exit 30
 fi
@@ -333,12 +324,6 @@ boost_display_server() {
 }
 boost_display_server
 
-finish_audio_start
-if [ "$audio_ok" = 1 ] || /system/bin/sh "$PERSIST/moon-audio-start.sh"; then
-    log "audio ready pid=$(cat /data/local/tmp/moon-audio/bridge.pid 2>/dev/null || true)"
-else
-    log 'native audio did not become ready; continuing without audio'
-fi
 
 start_moon() {
     rm -f "$ROOT/run/a26-shell/control.sock"

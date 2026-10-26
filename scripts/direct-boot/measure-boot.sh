@@ -29,7 +29,7 @@ for run in $(seq 1 "$COUNT"); do
     done
     echo "== run $run: ready $((SECONDS - started)) s after adb reboot"
     phone 'b=$(cat /proc/sys/kernel/random/boot_id); awk -v b="$b" "index(\$0, \"boot_id=\" b) { on = 1 } on" /data/adb/moon/boot.log |
-        grep -E "supervisor start|display bootstrap|takeover|Xorg ready|audio ready|active default" |
-        sed -E "s/^moon-boot: //; s/ \[[^]]* (up=[0-9.]+)\]$/ \1/"
+        grep -E "supervisor start|display bootstrap|takeover|Xorg ready|moon-audio: ready|active default" |
+        sed -E "s/^moon-(boot|audio): //; s/ \[[^]]* (up=[0-9.]+)\]$/ \1/"
         grep -E "^(takeover begin|graphics services|DRM card|Xorg answered|native Wi-Fi)" /data/local/tmp/a26-xorg-control/takeover.log | sed -E "s/ token=[^ ]*//; s/ [0-9-]+T[^ ]* / /"'
 done

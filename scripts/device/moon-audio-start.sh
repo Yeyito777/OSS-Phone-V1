@@ -14,24 +14,29 @@ PERMISSION_PIDFILE="$RUNTIME/permissiond.pid"
 PIDFILE="$RUNTIME/bridge.pid"
 MEDIA_HEARTBEAT="$RUNTIME/browser-media-active"
 
+# Pidfiles live on /data and outlive reboots, so a recorded PID can belong to
+# any process now. Identify it by /proc/PID/exe, never /proc/PID/cmdline:
+# reading cmdline takes the target's mmap lock and blocks for as long as that
+# process is stuck, which is how one boot's audio start hung for ~245 s.
+pid_runs() {
+    case "$2" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$(readlink "/proc/$2/exe" 2>/dev/null)" = "$1" ]
+}
 valid_bridge_pid() {
     pid="$(cat "$PIDFILE" 2>/dev/null || true)"
-    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-    [ -r "/proc/$pid/cmdline" ] || return 1
-    tr '\000' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q "^$AUDIOD "
+    pid_runs "$AUDIOD" "$pid"
 }
 
 valid_permissiond_pid() {
     ppid="$(cat "$PERMISSION_PIDFILE" 2>/dev/null || true)"
-    case "$ppid" in ''|*[!0-9]*) return 1 ;; esac
-    [ -r "/proc/$ppid/cmdline" ] || return 1
-    tr '\000' ' ' <"/proc/$ppid/cmdline" 2>/dev/null | grep -q "^$PERMISSIOND "
+    pid_runs "$PERMISSIOND" "$ppid"
 }
 
 [ -x "$BB" ] || { echo "Moon BusyBox is unavailable" >&2; exit 20; }
 [ -x "$AUDIOD" ] || { echo "Moon audio daemon is unavailable" >&2; exit 21; }
 [ -x "$PERMISSIOND" ] || { echo "Moon permission service is unavailable" >&2; exit 21; }
-[ -n "$(pidof audioserver 2>/dev/null || true)" ] || {
+# init's service state, not pidof: pidof reads every process's cmdline.
+[ "$(getprop init.svc.audioserver)" = running ] || {
     echo "audioserver is not running" >&2
     exit 22
 }
@@ -42,7 +47,7 @@ mkdir -p "$RUNTIME" "$BASE"
 # missing. Without the Java framework, register Moon's native stand-in (it
 # replaces a stale registration of a stopped system_server); while the
 # framework runs, its real service is used instead.
-if [ -z "$(pidof system_server 2>/dev/null || true)" ] && ! valid_permissiond_pid; then
+if [ "$(getprop init.svc.zygote)" != running ] && ! valid_permissiond_pid; then
     rm -f "$PERMISSION_PIDFILE"
     "$BB" nohup "$BB" setsid "$PERMISSIOND" "$PERMISSION_PIDFILE" \
         >"$PERMISSION_LOG" 2>&1 </dev/null &
@@ -65,7 +70,11 @@ rm -f "$PIDFILE" "$MEDIA_HEARTBEAT"
 
 rm -f "$RUNTIME/pcm"
 mknod "$RUNTIME/pcm" p || exit 23
-if [ -r "$PERSIST/volume" ]; then
+# Moon may already be running and writing its volume here (audio is never
+# waited for at boot); keep that value, else the one saved at the last stop.
+if [ -r "$RUNTIME/volume" ]; then
+    volume="$(cat "$RUNTIME/volume" 2>/dev/null || echo 50)"
+elif [ -r "$PERSIST/volume" ]; then
     volume="$(cat "$PERSIST/volume" 2>/dev/null || echo 50)"
 else
     volume=50
