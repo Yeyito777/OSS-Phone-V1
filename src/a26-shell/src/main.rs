@@ -665,7 +665,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             // of Moon's is drawn over it (the key callout, volume, banner)
             // and no snapshot is about to be taken from the mirror. The
             // keyboard itself sits below the app's area.
-            let overlay = (state.keyboard.is_visible() && state.keyboard.latest_pressed().is_some())
+            let overlay = (state.keyboard.is_visible()
+                && state.keyboard.latest_pressed().is_some())
                 || state
                     .volume_overlay_until
                     .is_some_and(|deadline| deadline > Instant::now())

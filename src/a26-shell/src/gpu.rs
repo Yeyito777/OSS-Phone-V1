@@ -45,11 +45,15 @@ use crate::compositor::{FrameStats, Node, SurfaceId};
 use crate::gfx::{Canvas, RectF};
 use crate::present::Damage;
 
-/// Moon offers v3 (a byte offset for shm surfaces, which Wayland client
-/// buffers need) and falls back to v2: a compositor older than v3 drops a
-/// client whose version differs from its own.
+/// Moon offers the newest version it speaks (v3: a byte offset for shm
+/// surfaces, which Wayland client buffers need) and steps down, at most to
+/// v2, only when the compositor closes the link after the hello: a
+/// compositor older than v3 drops a client whose version differs from its
+/// own. Timeouts and connect errors are plain failures, retried at the top.
 const PROTO_VERSION: u32 = 3;
-const PROTO_V2: u32 = 2;
+const PROTO_MIN_VERSION: u32 = 2;
+/// Wayland client surfaces need offsets (v3 and later).
+const CLIENT_SURFACE_VERSION: u32 = 3;
 const MIRROR_ID: u32 = u32::MAX;
 
 const MSG_HELLO: u16 = 1;
@@ -147,6 +151,23 @@ fn le_u64(bytes: &[u8], at: usize) -> u64 {
 pub struct GpuLink {
     path: PathBuf,
     fd: Option<OwnedFd>,
+    /// The compositor closed the link (EOF, reset or broken pipe), as
+    /// opposed to Moon giving up on it.
+    peer_closed: bool,
+}
+
+/// Why a handshake failed: the compositor hung up after the hello (it does
+/// not speak that version, or it is restarting), or anything else.
+enum HandshakeError {
+    ClosedByPeer,
+    Failed(Box<dyn Error>),
+}
+
+/// The compositor socket's inode: a different one after a failed attempt
+/// means a new compositor (the keeper restarted it), not a refusal.
+fn socket_inode(path: &std::path::Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt as _;
+    std::fs::metadata(path).ok().map(|meta| meta.ino())
 }
 
 pub type SharedLink = std::rc::Rc<std::cell::RefCell<GpuLink>>;
@@ -166,6 +187,7 @@ impl GpuLink {
         }
         // SAFETY: fd is a fresh socket owned by nothing else.
         let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        self.peer_closed = false;
         // SAFETY: sockaddr_un is plain old data; zeroed is a valid value.
         let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
         address.sun_family = libc::AF_UNIX as libc::sa_family_t;
@@ -239,6 +261,10 @@ impl GpuLink {
                 return true;
             }
             eprintln!("gpu: compositor link lost: {error}");
+            self.peer_closed = matches!(
+                error.kind(),
+                io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+            );
             self.fd = None;
             return false;
         }
@@ -268,12 +294,17 @@ impl GpuLink {
                 && error.kind() != io::ErrorKind::Interrupted
             {
                 eprintln!("gpu: compositor link lost: {error}");
+                self.peer_closed = matches!(
+                    error.kind(),
+                    io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+                );
                 self.fd = None;
             }
             return None;
         }
         if received == 0 {
             eprintln!("gpu: compositor closed the link");
+            self.peer_closed = true;
             self.fd = None;
             return None;
         }
@@ -445,8 +476,9 @@ enum Surface {
     },
 }
 
-/// A Wayland app shown directly over the X mirror while it is in front:
-/// its buffer's `src` rectangle drawn at `dst` on the screen.
+/// One surface of a Wayland app shown directly over the X mirror while the
+/// app is in front: its buffer's `src` rectangle drawn at `dst` on the
+/// screen (the toplevel, then its subsurfaces and popups in stacking order).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Direct {
     pub surface: SurfaceId,
@@ -513,7 +545,7 @@ pub struct GpuBackend {
     buffer: Vec<u8>,
     /// The negotiated protocol version (3, or 2 for an older compositor).
     version: u32,
-    direct: Option<Direct>,
+    direct: Vec<Direct>,
     /// The newest frame serial the compositor reported on screen.
     presented_serial: u32,
 }
@@ -534,6 +566,7 @@ impl GpuBackend {
         let link = std::rc::Rc::new(std::cell::RefCell::new(GpuLink {
             path: socket,
             fd: None,
+            peer_closed: false,
         }));
         let capture_gc = conn.generate_id()?;
         conn.create_gc(
@@ -581,7 +614,7 @@ impl GpuBackend {
             profile,
             buffer: vec![0; MAX_PACKET],
             version: PROTO_VERSION,
-            direct: None,
+            direct: Vec::new(),
             presented_serial: 0,
         };
         // The compositor starts before Moon; allow it a moment if not.
@@ -599,22 +632,49 @@ impl GpuBackend {
         Ok((backend, link))
     }
 
-    /// Connects, says hello and attaches the mirror the compositor offers:
-    /// in v3, or in v2 if the compositor closes the link on v3.
+    /// Connects, says hello and attaches the mirror the compositor offers,
+    /// in the newest version both speak. A version is given up only when
+    /// the compositor closes the link after its hello, twice in a row on
+    /// the same socket (once could be a compositor dying under a restart;
+    /// a new socket inode means a new compositor, asked again).
     fn handshake<C: Connection>(&mut self, conn: &C, wait: Duration) -> Result<(), Box<dyn Error>> {
-        match self.handshake_version(conn, wait, PROTO_VERSION) {
-            Ok(()) => {
-                self.version = PROTO_VERSION;
-                Ok(())
+        let path = self.link.borrow().path.clone();
+        let mut version = PROTO_VERSION;
+        let mut refusals = 0;
+        loop {
+            let inode = socket_inode(&path);
+            match self.handshake_version(conn, wait, version) {
+                Ok(()) => {
+                    if version != self.version || version < PROTO_VERSION {
+                        eprintln!("gpu: protocol v{version}");
+                    }
+                    if version < CLIENT_SURFACE_VERSION {
+                        eprintln!(
+                            "gpu: compositor speaks v{version}: Wayland apps stay on the X path"
+                        );
+                    }
+                    self.version = version;
+                    return Ok(());
+                }
+                Err(HandshakeError::ClosedByPeer) => {
+                    if socket_inode(&path) != inode {
+                        // A new compositor came up meanwhile: ask it anew.
+                        refusals = 0;
+                        continue;
+                    }
+                    refusals += 1;
+                    if refusals < 2 {
+                        continue;
+                    }
+                    if version <= PROTO_MIN_VERSION {
+                        return Err("the compositor closes every hello".into());
+                    }
+                    eprintln!("gpu: protocol v{version} refused; trying v{}", version - 1);
+                    version -= 1;
+                    refusals = 0;
+                }
+                Err(HandshakeError::Failed(error)) => return Err(error),
             }
-            Err(error) if !self.link.borrow().connected() => {
-                eprintln!("gpu: protocol v{PROTO_VERSION} refused ({error}); trying v{PROTO_V2}");
-                self.handshake_version(conn, wait, PROTO_V2)?;
-                self.version = PROTO_V2;
-                eprintln!("gpu: compositor speaks v{PROTO_V2}: Wayland apps stay on the X path");
-                Ok(())
-            }
-            Err(error) => Err(error),
         }
     }
 
@@ -623,18 +683,28 @@ impl GpuBackend {
         conn: &C,
         wait: Duration,
         version: u32,
-    ) -> Result<(), Box<dyn Error>> {
-        self.link.borrow_mut().connect()?;
+    ) -> Result<(), HandshakeError> {
+        let closed = |link: &SharedLink| {
+            if link.borrow().peer_closed {
+                HandshakeError::ClosedByPeer
+            } else {
+                HandshakeError::Failed("compositor link lost".into())
+            }
+        };
+        self.link
+            .borrow_mut()
+            .connect()
+            .map_err(|error| HandshakeError::Failed(error.into()))?;
         let mut hello = Msg::new(MSG_HELLO);
         hello.u32(version);
         if !self.link.borrow_mut().send(hello.finish(), None) {
-            return Err("hello failed".into());
+            return Err(closed(&self.link));
         }
         let deadline = Instant::now() + wait;
         let mut welcomed = false;
         while Instant::now() < deadline {
             let Some(socket) = self.link.borrow().raw_fd() else {
-                return Err("compositor closed the link".into());
+                return Err(closed(&self.link));
             };
             let mut pfd = libc::pollfd {
                 fd: socket,
@@ -685,12 +755,14 @@ impl GpuBackend {
                 None => Ok(false),
             };
             self.buffer = buffer;
-            if result? && welcomed {
+            if result.map_err(HandshakeError::Failed)? && welcomed {
                 return Ok(());
             }
         }
         self.link.borrow_mut().fd = None;
-        Err("no welcome from the compositor".into())
+        Err(HandshakeError::Failed(
+            "no welcome from the compositor".into(),
+        ))
     }
 
     fn attach_mirror<C: Connection>(
@@ -1158,10 +1230,17 @@ impl GpuBackend {
                 for index in 0..self.surfaces.len() {
                     match &mut self.surfaces[index] {
                         Some(Surface::Layer { .. }) => self.announce_layer(SurfaceId(index)),
-                        Some(Surface::Client { .. }) => self.announce_client(SurfaceId(index)),
+                        // A v2 compositor cannot take client surfaces: the
+                        // Wayland side sees that and falls back to X.
+                        Some(Surface::Client { .. }) if self.version >= CLIENT_SURFACE_VERSION => {
+                            self.announce_client(SurfaceId(index))
+                        }
                         Some(Surface::Snapshot { present }) => *present = false,
                         _ => {}
                     }
+                }
+                if self.version < CLIENT_SURFACE_VERSION {
+                    self.direct.clear();
                 }
                 self.mirror_damage.push(self.screen());
                 if self.mirror_mode {
@@ -1253,16 +1332,21 @@ impl GpuBackend {
     fn send_mirror_frame(&mut self) {
         let mut msg = Msg::new(MSG_FRAME);
         self.serial = self.serial.wrapping_add(1).max(1);
-        let direct = self.direct.filter(|direct| {
-            matches!(
-                self.surfaces.get(direct.surface.0),
-                Some(Some(Surface::Client { .. }))
-            )
-        });
+        let direct: Vec<Direct> = self
+            .direct
+            .iter()
+            .copied()
+            .filter(|direct| {
+                matches!(
+                    self.surfaces.get(direct.surface.0),
+                    Some(Some(Surface::Client { .. }))
+                )
+            })
+            .collect();
         msg.u32(self.serial)
             .u32(0)
             .u32(0)
-            .u32(1 + u32::from(direct.is_some()));
+            .u32(1 + direct.len() as u32);
         push_image(
             &mut msg,
             MIRROR_ID,
@@ -1276,7 +1360,7 @@ impl GpuBackend {
         // A Wayland app in front: its own buffer over the mirror's (stale)
         // copy of it. The status strip and keyboard still come from the
         // mirror, beside the app's area.
-        if let Some(direct) = direct {
+        for direct in direct {
             push_image(
                 &mut msg,
                 wire(direct.surface),
@@ -1295,7 +1379,7 @@ impl GpuBackend {
 
     /// Whether Wayland client buffers can be shown directly (v3 offsets).
     pub fn supports_client_surfaces(&self) -> bool {
-        self.version >= 3 && self.link.borrow().connected()
+        self.version >= CLIENT_SURFACE_VERSION && self.link.borrow().connected()
     }
 
     /// A compositor surface on a client's wl_shm buffer (its pool's fd at
@@ -1366,7 +1450,7 @@ impl GpuBackend {
     /// Shows a Wayland app's buffer over the mirror (or stops): a new frame
     /// at once while an app is in front, so each commit is one frame and
     /// its `presented_serial` says when the buffer reached the panel.
-    pub fn set_direct(&mut self, direct: Option<Direct>) -> Option<u32> {
+    pub fn set_direct(&mut self, direct: Vec<Direct>) -> Option<u32> {
         self.direct = direct;
         if self.mirror_mode && self.mirror.is_some() && self.link.borrow().connected() {
             self.send_mirror_frame();

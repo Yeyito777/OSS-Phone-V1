@@ -54,7 +54,8 @@ impl Seat {
 
     pub(crate) fn forget_surface(&mut self, key: SurfaceKey) {
         let _ = key;
-        self.touch_points.retain(|_, (surface, _)| surface.is_alive());
+        self.touch_points
+            .retain(|_, (surface, _)| surface.is_alive());
         if self.focus.as_ref().is_some_and(|focus| !focus.is_alive()) {
             self.focus = None;
         }

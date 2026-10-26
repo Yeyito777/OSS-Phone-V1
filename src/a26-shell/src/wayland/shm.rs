@@ -46,6 +46,8 @@ pub struct ShmBuffer {
     pub width: i32,
     pub height: i32,
     pub stride: i32,
+    /// ARGB8888 (premultiplied alpha) rather than XRGB8888.
+    pub argb: bool,
 }
 
 pub(crate) fn create_globals(handle: &DisplayHandle) {
@@ -123,13 +125,14 @@ impl Dispatch<WlShmPool, Arc<ShmPool>> for WlState {
                 stride,
                 format,
             } => {
-                match format.into_result() {
-                    Ok(wl_shm::Format::Argb8888 | wl_shm::Format::Xrgb8888) => {}
+                let argb = match format.into_result() {
+                    Ok(wl_shm::Format::Argb8888) => true,
+                    Ok(wl_shm::Format::Xrgb8888) => false,
                     _ => {
                         resource.post_error(wl_shm::Error::InvalidFormat, "unsupported format");
                         return;
                     }
-                }
+                };
                 let (size, _) = pool.size();
                 let valid = width > 0
                     && height > 0
@@ -149,6 +152,7 @@ impl Dispatch<WlShmPool, Arc<ShmPool>> for WlState {
                         width,
                         height,
                         stride,
+                        argb,
                     }),
                 );
             }

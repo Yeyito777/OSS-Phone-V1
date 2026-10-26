@@ -39,8 +39,8 @@ use crate::compositor::SurfaceId;
 use crate::gfx::RectF;
 use crate::gpu::{Direct, GpuBackend};
 use crate::keyboard::{KeyboardInput, KeyboardPurpose};
-use crate::present::Damage;
 use crate::model::AppId;
+use crate::present::Damage;
 use crate::wayland::{self, Placement, ShmBuffer, ShmPool, SurfaceKey, ToplevelId, WaylandServer};
 
 /// Frame callbacks fire at most once per refresh.
@@ -120,6 +120,10 @@ pub struct WaylandApps {
     stale: Vec<SurfaceKey>,
     /// Commits to show directly once the GPU backend is at hand.
     direct_commits: Vec<(SurfaceKey, WlBuffer, Arc<ShmBuffer>, Vec<wayland::Rect>)>,
+    /// Per directly shown surface: its compositor surface and buffer size.
+    shown: HashMap<SurfaceKey, (SurfaceId, i32, i32)>,
+    /// The directly shown app's surfaces moved, appeared or went: resend.
+    direct_dirty: bool,
 }
 
 impl WaylandApps {
@@ -170,6 +174,8 @@ impl WaylandApps {
             presenting: Vec::new(),
             stale: Vec::new(),
             direct_commits: Vec::new(),
+            shown: HashMap::new(),
+            direct_dirty: false,
         })
     }
 
@@ -274,6 +280,7 @@ impl WaylandApps {
             }
             wayland::Event::SurfaceCreated { surface, placement }
             | wayland::Event::SurfaceMoved { surface, placement } => {
+                self.direct_dirty = true;
                 self.place_child(conn, surface, placement)?;
             }
             wayland::Event::Commit {
@@ -284,6 +291,8 @@ impl WaylandApps {
                 geometry,
             } => self.commit(conn, surface, buffer, resource, &damage, geometry)?,
             wayland::Event::Unmapped { surface } => {
+                self.direct_dirty = true;
+                self.shown.remove(&surface);
                 if let Some(proxy) = self.proxies.get_mut(&surface) {
                     proxy.has_content = false;
                     if proxy.toplevel.is_none() {
@@ -295,6 +304,9 @@ impl WaylandApps {
                 }
             }
             wayland::Event::Destroyed { surface, toplevel } => {
+                self.direct_dirty = true;
+                self.shown.remove(&surface);
+                self.stale.retain(|key| *key != surface);
                 if let Some(id) = toplevel {
                     eprintln!("wayland: toplevel {} closed", id.0);
                 }
@@ -465,14 +477,6 @@ impl WaylandApps {
             self.server.release(&resource);
             return Ok(());
         };
-        let new_crop = geometry.and_then(|rect| rect.clip(buffer.width, buffer.height));
-        if self.direct == Some(surface) && new_crop == old_crop {
-            // Shown directly by moon-compositor (update_direct sends it).
-            self.direct_commits
-                .push((surface, resource, buffer, damage.to_vec()));
-            return Ok(());
-        }
-        let seg = self.segment(conn, &buffer.pool)?;
         let crop = geometry.and_then(|rect| rect.clip(buffer.width, buffer.height));
         let shown = crop.unwrap_or(wayland::Rect::new(0, 0, buffer.width, buffer.height));
         let crop_changed = has_content && crop != old_crop;
@@ -509,6 +513,15 @@ impl WaylandApps {
                 }
             }
         }
+        if self.direct.is_some() && self.direct == self.root_of(surface) {
+            // Shown directly by moon-compositor (update_direct sends it);
+            // the X window keeps its place and size for input.
+            self.direct_commits
+                .push((surface, resource, buffer, damage.to_vec()));
+            self.note_content(surface, window);
+            return Ok(());
+        }
+        let seg = self.segment(conn, &buffer.pool)?;
         let whole = [shown];
         let rects: Vec<wayland::Rect> = (if crop_changed { &whole[..] } else { damage })
             .iter()
@@ -543,7 +556,16 @@ impl WaylandApps {
                 .or_default()
                 .push_back((resource, buffer));
         }
-        let proxy = self.proxies.get_mut(&surface).expect("looked up above");
+        self.note_content(surface, window);
+        Ok(())
+    }
+
+    /// A surface has content: a toplevel's first content puts its proxy
+    /// under Moon's management.
+    fn note_content(&mut self, surface: SurfaceKey, window: u32) {
+        let Some(proxy) = self.proxies.get_mut(&surface) else {
+            return;
+        };
         let first = !proxy.has_content;
         proxy.has_content = true;
         if first && proxy.toplevel.is_some() && !proxy.managed {
@@ -553,15 +575,58 @@ impl WaylandApps {
                 owner: proxy.owner,
             });
         }
-        Ok(())
     }
 
-    /// GPU mode, once per loop iteration after `dispatch`: shows the app in
-    /// `window` (the foreground app, when nothing of Moon's covers it) with
-    /// its own buffers instead of through its X proxy, and settles buffers
-    /// whose frames reached the panel. Leaving direct mode (or `window`
-    /// None, as before a snapshot) first brings the proxy up to date, so
-    /// the X mirror and snapshots show the app's last frame.
+    /// The toplevel a surface belongs to.
+    fn root_of(&self, mut key: SurfaceKey) -> Option<SurfaceKey> {
+        for _ in 0..16 {
+            if self.proxies.get(&key)?.toplevel.is_some() {
+                return Some(key);
+            }
+            key = *self.parents.get(&key)?;
+        }
+        None
+    }
+
+    /// A surface and its popups and subsurfaces, parents first, siblings in
+    /// creation order (their stacking order).
+    fn tree(&self, root: SurfaceKey) -> Vec<SurfaceKey> {
+        let mut order = vec![root];
+        let mut index = 0;
+        while index < order.len() && order.len() < 64 {
+            let parent = order[index];
+            let mut children: Vec<SurfaceKey> = self
+                .parents
+                .iter()
+                .filter(|(_, p)| **p == parent)
+                .map(|(child, _)| *child)
+                .collect();
+            children.sort();
+            order.extend(children);
+            index += 1;
+        }
+        order
+    }
+
+    /// Where a surface's window shows its first pixel on the screen.
+    fn screen_origin(&self, key: SurfaceKey) -> (i32, i32) {
+        match self.parents.get(&key) {
+            Some(parent) => {
+                let (px, py) = self.screen_origin(*parent);
+                let (x, y) = self.child_position(key);
+                (px + x, py + y)
+            }
+            None => (0, i32::from(crate::status_bar::HEIGHT)),
+        }
+    }
+
+    /// GPU mode, once per loop iteration after `dispatch` (and again after
+    /// the compositor's flips are read): shows the app in `window` (the
+    /// foreground app, when nothing of Moon's covers it) from its own
+    /// buffers instead of through its X proxies, and settles buffers whose
+    /// frames reached the panel. Leaving direct mode (or `window` None, as
+    /// before a snapshot) first brings the proxies up to date, so the X
+    /// mirror and snapshots show the app's last frame.
     pub fn update_direct<C: Connection>(
         &mut self,
         conn: &C,
@@ -592,35 +657,65 @@ impl WaylandApps {
         if target != self.direct
             && let Some(old) = self.direct.take()
         {
-            gpu.set_direct(None);
+            gpu.set_direct(Vec::new());
+            self.shown.clear();
             if self.debug {
                 eprintln!("wayland: direct off for surface {}", old.0);
             }
         }
         let commits = std::mem::take(&mut self.direct_commits);
-        if let Some(key) = target {
-            if self.direct != Some(key) {
-                self.direct = Some(key);
-                if self.debug {
-                    eprintln!("wayland: direct on for surface {}", key.0);
-                }
-                if let Some((buffer, shm)) = self.proxies.get(&key).and_then(|p| p.current.clone()) {
+        let mut changed = std::mem::take(&mut self.direct_dirty);
+        let mut sent: Vec<(SurfaceKey, WlBuffer, Arc<ShmBuffer>)> = Vec::new();
+        if let Some(root) = target
+            && self.direct != Some(root)
+        {
+            self.direct = Some(root);
+            if self.debug {
+                eprintln!("wayland: direct on for surface {}", root.0);
+            }
+            // Everything of the app on screen now comes from its buffers.
+            for key in self.tree(root) {
+                if let Some((buffer, shm)) = self.proxies.get(&key).and_then(|p| p.current.clone())
+                {
                     let all = [wayland::Rect::new(0, 0, shm.width, shm.height)];
-                    self.show_direct(gpu, key, buffer, shm, &all);
+                    if self.share(gpu, key, &buffer, &shm, &all) {
+                        changed = true;
+                    }
                 }
             }
         }
         for (key, buffer, shm, rects) in commits {
-            if self.direct == Some(key) {
-                self.show_direct(gpu, key, buffer, shm, &rects);
+            if self.direct.is_some() && self.direct == self.root_of(key) {
+                if self.share(gpu, key, &buffer, &shm, &rects) {
+                    sent.push((key, buffer, shm));
+                    changed = true;
+                } else {
+                    self.make_current(key, buffer, shm);
+                    self.mark_stale(key);
+                }
             } else {
                 // Direct mode ended before this commit was shown.
                 self.make_current(key, buffer, shm);
                 self.mark_stale(key);
             }
         }
+        if changed && let Some(root) = self.direct {
+            let nodes = self.direct_nodes(root);
+            match gpu.set_direct(nodes) {
+                Some(serial) => {
+                    for (key, buffer, shm) in sent {
+                        self.presenting.push((serial, key, buffer, shm));
+                    }
+                }
+                None => {
+                    for (key, buffer, shm) in sent {
+                        self.make_current(key, buffer, shm);
+                    }
+                }
+            }
+        }
         for key in std::mem::take(&mut self.stale) {
-            if self.direct == Some(key) {
+            if self.direct.is_some() && self.direct == self.root_of(key) {
                 self.stale.push(key);
             } else if let Err(error) = self.sync_proxy(conn, key) {
                 eprintln!("wayland: proxy refresh failed: {error}");
@@ -640,9 +735,9 @@ impl WaylandApps {
         }
     }
 
-    /// Direct display needs protocol v3 and a pool the compositor may map
-    /// safely (sealed against shrinking); popups and subsurfaces are X
-    /// child windows, so a toplevel showing any stays on the X path.
+    /// Direct display needs client surfaces (protocol v3) and pools the
+    /// compositor may map safely (sealed against shrinking): every surface
+    /// of the app that shows content must qualify.
     fn can_go_direct(&self, key: SurfaceKey, gpu: &GpuBackend) -> bool {
         let Some(proxy) = self.proxies.get(&key) else {
             return false;
@@ -651,23 +746,28 @@ impl WaylandApps {
             && proxy.toplevel.is_some()
             && proxy.mapped
             && proxy.has_content
-            && proxy
-                .current
-                .as_ref()
-                .is_some_and(|(_, shm)| shm.pool.sealed)
-            && !self.parents.iter().any(|(child, parent)| {
-                *parent == key && self.proxies.get(child).is_some_and(|c| c.has_content)
+            && self.tree(key).iter().all(|member| {
+                self.proxies.get(member).is_none_or(|p| {
+                    // A first buffer still on its way has no `current` yet;
+                    // `share` checks every buffer as it is shown.
+                    !p.has_content || p.current.as_ref().is_none_or(|(_, shm)| shm.pool.sealed)
+                })
             })
     }
 
-    fn show_direct(
+    /// Hands a buffer's damage to the compositor (creating its surface the
+    /// first time); the surface then shows that buffer. False if it cannot.
+    fn share(
         &mut self,
         gpu: &mut GpuBackend,
         key: SurfaceKey,
-        buffer: WlBuffer,
-        shm: Arc<ShmBuffer>,
+        buffer: &WlBuffer,
+        shm: &Arc<ShmBuffer>,
         rects: &[wayland::Rect],
-    ) {
+    ) -> bool {
+        if !shm.pool.sealed {
+            return false;
+        }
         let surface = match self.client_surfaces.get(&buffer.id()) {
             Some((_, surface)) => *surface,
             None => match gpu.create_client_surface(
@@ -676,7 +776,7 @@ impl WaylandApps {
                 shm.width as u32,
                 shm.height as u32,
                 shm.stride as u32,
-                false,
+                shm.argb,
             ) {
                 Ok(surface) => {
                     self.client_surfaces
@@ -685,9 +785,7 @@ impl WaylandApps {
                 }
                 Err(error) => {
                     eprintln!("wayland: cannot share a client buffer: {error}");
-                    self.make_current(key, buffer, shm);
-                    self.mark_stale(key);
-                    return;
+                    return false;
                 }
             },
         };
@@ -701,26 +799,42 @@ impl WaylandApps {
             })
             .collect();
         gpu.client_damage(surface, &damage);
-        let (crop, window) = match self.proxies.get(&key) {
-            Some(proxy) => (proxy.crop, proxy.window),
-            None => return,
-        };
-        let shown = crop.unwrap_or(wayland::Rect::new(0, 0, shm.width, shm.height));
-        let (width, height) = self.last_size(window);
-        let (w, h) = (
-            shown.width.min(i32::from(width)) as f32,
-            shown.height.min(i32::from(height)) as f32,
-        );
-        let direct = Direct {
-            surface,
-            src: RectF::new(shown.x as f32, shown.y as f32, w, h),
-            dst: RectF::new(0.0, f32::from(crate::status_bar::HEIGHT), w, h),
-        };
-        match gpu.set_direct(Some(direct)) {
-            Some(serial) => self.presenting.push((serial, key, buffer, shm)),
-            None => self.make_current(key, buffer, shm),
-        }
+        self.shown.insert(key, (surface, shm.width, shm.height));
         self.mark_stale(key);
+        true
+    }
+
+    /// The app's visible surfaces as frame nodes, bottom to top.
+    fn direct_nodes(&self, root: SurfaceKey) -> Vec<Direct> {
+        let mut nodes = Vec::new();
+        for key in self.tree(root) {
+            let Some(proxy) = self.proxies.get(&key) else {
+                continue;
+            };
+            let Some(&(surface, width, height)) = self.shown.get(&key) else {
+                continue;
+            };
+            if !proxy.has_content || (key != root && !proxy.mapped) {
+                continue;
+            }
+            let shown = proxy
+                .crop
+                .unwrap_or(wayland::Rect::new(0, 0, width, height));
+            let (mut w, mut h) = (shown.width, shown.height);
+            if key == root {
+                // The toplevel is clipped to the area Moon gave the app.
+                let (ww, wh) = self.last_size(proxy.window);
+                w = w.min(i32::from(ww));
+                h = h.min(i32::from(wh));
+            }
+            let (x, y) = self.screen_origin(key);
+            nodes.push(Direct {
+                surface,
+                src: RectF::new(shown.x as f32, shown.y as f32, w as f32, h as f32),
+                dst: RectF::new(x as f32, y as f32, w as f32, h as f32),
+            });
+        }
+        nodes
     }
 
     fn mark_stale(&mut self, key: SurfaceKey) {
@@ -730,10 +844,16 @@ impl WaylandApps {
     }
 
     /// Copies the buffer on screen into the proxy (after direct mode).
-    fn sync_proxy<C: Connection>(&mut self, conn: &C, key: SurfaceKey) -> Result<(), Box<dyn Error>> {
-        let Some((window, shm, crop)) = self.proxies.get(&key).and_then(|proxy| {
-            Some((proxy.window, proxy.current.as_ref()?.1.clone(), proxy.crop))
-        }) else {
+    fn sync_proxy<C: Connection>(
+        &mut self,
+        conn: &C,
+        key: SurfaceKey,
+    ) -> Result<(), Box<dyn Error>> {
+        let Some((window, shm, crop)) = self
+            .proxies
+            .get(&key)
+            .and_then(|proxy| Some((proxy.window, proxy.current.as_ref()?.1.clone(), proxy.crop)))
+        else {
             return Ok(());
         };
         let shown = crop.unwrap_or(wayland::Rect::new(0, 0, shm.width, shm.height));
@@ -887,6 +1007,7 @@ impl WaylandApps {
                     && let Some(proxy) = self.proxies.get_mut(&key)
                 {
                     proxy.mapped = true;
+                    self.direct_dirty = true;
                     self.reconfigure(event.window, None);
                 }
                 false
@@ -896,6 +1017,7 @@ impl WaylandApps {
                     && let Some(proxy) = self.proxies.get_mut(&key)
                 {
                     proxy.mapped = false;
+                    self.direct_dirty = true;
                     if self.touch_window == Some(event.window) {
                         self.touch_window = None;
                         self.server.touch_cancel();

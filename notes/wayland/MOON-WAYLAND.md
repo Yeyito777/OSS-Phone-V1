@@ -176,28 +176,37 @@ The X proxy stops receiving copies meanwhile. It is brought up to date
 
 | Shown directly when | Otherwise (X proxy path) |
 |---|---|
-| GPU mode, protocol v3, the app in front, nothing of Moon's over it | keyboard visible, volume HUD, notification banner (still X windows in the mirror) |
+| GPU mode, protocol v3, the app in front, nothing of Moon's over the app's area (the keyboard sits below it) | a key callout, the volume HUD or a notification banner over the app (still X windows in the mirror) |
 | the pool is sealed against shrinking (moon-compositor maps it: a shrinking pool would SIGBUS it) | unsealable pools (memfd without `MFD_ALLOW_SEALING`) |
-| the toplevel has no popup or subsurface showing (those are X child windows) | menus open, subsurfaces |
+| popups and subsurfaces are extra nodes, in stacking order, ARGB ones blended | |
 | no snapshot pending | the home gesture, the switcher and fades: the proxy is synced before the mirror is copied, so cards show the latest frame |
 
-**Protocol version.** Moon offers v3 and falls back to v2 when the
-compositor closes the link (pre-v3 compositors drop any other version).
-With v2, Wayland apps simply stay on the X path. Verified with the
-stand-in's new `--max-version 2` (`MOCK_ARGS` in `mock-run.sh`).
+**Protocol version.** Moon offers its newest version (v3) and steps down,
+one version at a time to v2, only when the compositor closes the link after
+the hello, twice in a row on the same socket. Pre-v3 compositors drop any
+other version. Not stepping down on anything else is from the GPU agent's
+review:
+- a timeout or a connect error is a plain failure, retried at the top
+  version;
+- a socket inode that changed means a new compositor, which is asked anew.
+
+With v2, client surfaces are never announced (not even on a reconnect),
+and Wayland apps return to the X path. Verified with the stand-in's new
+`--max-version 2` (`MOCK_ARGS` in `mock-run.sh`).
 
 Verified on whale with the stand-in compositor:
 - the demo's animation runs at 120.0 fps from flip-paced frame callbacks,
   with the client surfaces (1080x2217 XRGB) on the stand-in;
 - the switcher card shows the frame that was on screen (the proxy is
   synced before capture);
-- tapping a text field leaves direct mode (the keyboard is an X window);
-  typing works, and Enter returns to direct mode.
+- with the keyboard up the app stays direct (it is resized above the
+  keyboard), and typing works;
+- GTK's text-handle popover (an ARGB `xdg_popup`) is drawn as a blended
+  node over the app in direct mode.
 
 Next in M2:
-- Moon's keyboard, volume HUD and banner as frame nodes in GPU mode, so
+- Moon's key callout, volume HUD and banner as frame nodes in GPU mode, so
   they no longer end direct mode;
-- popups and subsurfaces as extra nodes;
 - `linux-dmabuf` for clients with dmabufs (planes, zero copy).
 
 ## Requests for moon-compositor (M2)

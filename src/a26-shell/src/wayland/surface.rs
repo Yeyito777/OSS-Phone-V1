@@ -171,7 +171,8 @@ impl Dispatch<WlSurface, ()> for WlState {
                 height,
             } => {
                 if let Some(data) = state.surfaces.get_mut(&id) {
-                    data.pending_damage.push((Rect::new(x, y, width, height), true));
+                    data.pending_damage
+                        .push((Rect::new(x, y, width, height), true));
                 }
             }
             wl_surface::Request::SetBufferScale { scale } => {
