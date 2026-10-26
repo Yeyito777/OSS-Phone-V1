@@ -1067,13 +1067,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         let app_fds = apps.poll_fds();
         wait_for_activity(
-            &conn,
-            &ipc,
-            power_key.as_ref(),
-            volume_keys.as_ref(),
-            renderer.compositor.gpu_fd(),
-            &app_fds,
-            notifyd.poll_fd(),
+            &WaitSources {
+                conn: &conn,
+                ipc: &ipc,
+                power_key: power_key.as_ref(),
+                volume_keys: volume_keys.as_ref(),
+                gpu_fd: renderer.compositor.gpu_fd(),
+                app_fds: &app_fds,
+                notify: notifyd.poll_fd(),
+            },
             deadline.saturating_duration_since(now),
         )?;
     }
@@ -1207,16 +1209,28 @@ fn next_input_deadline(state: &ShellState, raw_touch: &RawTouchTracker) -> Optio
         .min()
 }
 
-fn wait_for_activity(
-    conn: &RustConnection,
-    ipc: &IpcServer,
-    power_key: Option<&PowerKey>,
-    volume_keys: Option<&VolumeKeys>,
+/// Everything Moon's idle wait blocks on.
+struct WaitSources<'a> {
+    conn: &'a RustConnection,
+    ipc: &'a IpcServer,
+    power_key: Option<&'a PowerKey>,
+    volume_keys: Option<&'a VolumeKeys>,
     gpu_fd: Option<RawFd>,
-    app_fds: &[RawFd],
+    app_fds: &'a [RawFd],
+    /// moon-notifyd's socket and whether it has output pending.
     notify: Option<(RawFd, bool)>,
-    timeout: Duration,
-) -> io::Result<()> {
+}
+
+fn wait_for_activity(sources: &WaitSources, timeout: Duration) -> io::Result<()> {
+    let WaitSources {
+        conn,
+        ipc,
+        power_key,
+        volume_keys,
+        gpu_fd,
+        app_fds,
+        notify,
+    } = *sources;
     let mut descriptors = Vec::with_capacity(5 + app_fds.len());
     let mut add = |fd: RawFd| {
         descriptors.push(libc::pollfd {
