@@ -69,6 +69,12 @@ start)
         log "enabled but $BIN is missing; software path"
         exit 1
     fi
+    # Deep suspend hands the display off through Xorg (xrandr --off), which
+    # a headless Xorg cannot do.
+    if grep -q '"deep_suspend": *true' "$ROOT/etc/a26-shell/config.json" 2>/dev/null; then
+        log "deep suspend is enabled; software path"
+        exit 1
+    fi
     if [ "$(cat "$RUN/failed-boot" 2>/dev/null)" = "$boot_id" ]; then
         log "failed earlier this boot; software path"
         exit 1
@@ -93,7 +99,16 @@ keep)
     while [ -e "$RUN/active" ]; do
         "$BB" sleep 1
         [ -e "$RUN/active" ] || break
-        live_pid "$RUN/compositor.pid" moon-compositor >/dev/null && continue
+        if pid="$(live_pid "$RUN/compositor.pid" moon-compositor)"; then
+            # Alive but its loop stopped (a GPU or display hang): kill it,
+            # which the next pass treats as an exit.
+            age=$(( $("$BB" date +%s) - $("$BB" stat -c %Y "$RUN/compositor.sock.alive" 2>/dev/null || "$BB" date +%s) ))
+            if [ "$age" -gt 10 ]; then
+                log "compositor stopped answering for ${age}s; killing it"
+                kill -KILL "$pid" 2>/dev/null
+            fi
+            continue
+        fi
         restarts=$((restarts + 1))
         log "compositor exited ($restarts/$MAX_RESTARTS): $(tail -1 "$RUN/compositor.log" 2>/dev/null)"
         if [ "$restarts" -le "$MAX_RESTARTS" ] && start_compositor; then

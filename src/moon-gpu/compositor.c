@@ -1172,12 +1172,25 @@ int main(int argc, char **argv) {
         }
     }
 
-    uint64_t last_report = now_ns();
+    /* A heartbeat next to the socket: moon-gpu-session.sh kills a compositor
+     * whose loop stops turning (a GPU or display hang). */
+    char heartbeat[256];
+    snprintf(heartbeat, sizeof heartbeat, "%s.alive", socket_path);
+    uint64_t last_report = now_ns(), last_beat = 0;
+    int lost_in_a_row = 0;
     while (!quit) {
+        if (now_ns() - last_beat > 2000000000ull) {
+            last_beat = now_ns();
+            int fd = open(heartbeat, O_WRONLY | O_CREAT | O_CLOEXEC, 0600);
+            if (fd >= 0) {
+                futimens(fd, NULL);
+                close(fd);
+            }
+        }
         struct pollfd p[3] = {{.fd = c.k.fd, .events = POLLIN},
                               {.fd = c.listen_fd, .events = POLLIN},
                               {.fd = c.client_fd, .events = POLLIN}};
-        int timeout = c.flip_pending || c.floored ? 50 : -1;
+        int timeout = c.flip_pending || c.floored ? 50 : 2000;
         int n = poll(p, c.client_fd >= 0 ? 3 : 2, timeout);
         if (n < 0 && errno != EINTR) {
             LOG("poll: %s", strerror(errno));
@@ -1192,7 +1205,14 @@ int main(int argc, char **argv) {
             c.flight_fence = -1;
             c.flip_pending = 0;
             c.dirty = 1;
+            /* The display stopped flipping: let the session restart us. */
+            if (++lost_in_a_row >= 5) {
+                LOG("display not flipping; exiting");
+                break;
+            }
         }
+        if (c.last_flip_ns && now_ns() - c.last_flip_ns < FLIP_TIMEOUT_NS)
+            lost_in_a_row = 0;
         if (p[1].revents & POLLIN) {
             int fd = accept4(c.listen_fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
             if (fd >= 0) {
@@ -1226,6 +1246,7 @@ int main(int argc, char **argv) {
     }
     set_floor(&c, 0);
     LOG("exiting");
+    unlink(heartbeat);
     unlink(socket_path);
     if (ready_file)
         unlink(ready_file);
