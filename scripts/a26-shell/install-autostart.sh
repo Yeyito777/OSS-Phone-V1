@@ -16,6 +16,7 @@ for script in \
     "$PROJECT_ROOT/scripts/device/moon-audio-start.sh" \
     "$PROJECT_ROOT/scripts/device/moon-audio-stop.sh" \
     "$PROJECT_ROOT/scripts/device/moon-audio-keeper.sh" \
+    "$PROJECT_ROOT/scripts/device/moon-gpu-session.sh" \
     "$PROJECT_ROOT/scripts/device/moon-suspend-cycle.sh" \
     "$PROJECT_ROOT/scripts/device/a26-enter-chroot.sh" \
     "$PROJECT_ROOT/scripts/device/90-moon-autostart.sh" \
@@ -38,6 +39,8 @@ adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-audio-stop.sh" \
     /data/local/tmp/moon-audio-stop.sh >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-audio-keeper.sh" \
     /data/local/tmp/moon-audio-keeper.sh >/dev/null
+adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-gpu-session.sh" \
+    /data/local/tmp/moon-gpu-session.sh >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-suspend-cycle.sh" \
     /data/local/tmp/moon-suspend-cycle.sh >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-direct-policy.sh" \
@@ -79,6 +82,8 @@ cp /data/local/tmp/moon-audio-stop.sh \
     /data/adb/moon/moon-audio-stop.sh.new
 cp /data/local/tmp/moon-audio-keeper.sh \
     /data/adb/moon/moon-audio-keeper.sh.new
+cp /data/local/tmp/moon-gpu-session.sh \
+    /data/adb/moon/moon-gpu-session.sh.new
 cp /data/local/tmp/moon-suspend-cycle.sh \
     /data/adb/moon/moon-suspend-cycle.sh.new
 cp /data/local/tmp/moon-direct-policy.sh \
@@ -108,6 +113,7 @@ chown 0:0 \
     /data/adb/moon/moon-audio-start.sh.new \
     /data/adb/moon/moon-audio-stop.sh.new \
     /data/adb/moon/moon-audio-keeper.sh.new \
+    /data/adb/moon/moon-gpu-session.sh.new \
     /data/adb/moon/moon-suspend-cycle.sh.new \
     /data/adb/moon/moon-direct-policy.sh.new \
     /data/adb/moon/moon-post-ready.sh.new \
@@ -124,6 +130,7 @@ chmod 0700 \
     /data/adb/moon/moon-audio-start.sh.new \
     /data/adb/moon/moon-audio-stop.sh.new \
     /data/adb/moon/moon-audio-keeper.sh.new \
+    /data/adb/moon/moon-gpu-session.sh.new \
     /data/adb/moon/moon-suspend-cycle.sh.new \
     /data/adb/moon/moon-direct-policy.sh.new \
     /data/adb/moon/moon-post-ready.sh.new
@@ -149,6 +156,8 @@ mv -f /data/adb/moon/moon-audio-stop.sh.new \
     /data/adb/moon/moon-audio-stop.sh
 mv -f /data/adb/moon/moon-audio-keeper.sh.new \
     /data/adb/moon/moon-audio-keeper.sh
+mv -f /data/adb/moon/moon-gpu-session.sh.new \
+    /data/adb/moon/moon-gpu-session.sh
 mv -f /data/adb/moon/moon-suspend-cycle.sh.new \
     /data/adb/moon/moon-suspend-cycle.sh
 mv -f /data/adb/moon/moon-direct-policy.sh.new \
@@ -198,6 +207,7 @@ rm -f \
     /data/local/tmp/moon-audio-start.sh \
     /data/local/tmp/moon-audio-stop.sh \
     /data/local/tmp/moon-audio-keeper.sh \
+    /data/local/tmp/moon-gpu-session.sh \
     /data/local/tmp/moon-suspend-cycle.sh \
     /data/local/tmp/moon-direct-policy.sh \
     /data/local/tmp/moon-post-ready.sh \
