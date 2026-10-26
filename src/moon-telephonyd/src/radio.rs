@@ -15,6 +15,26 @@ const IRADIO_RESPONSE: &str = "android.hardware.radio@1.0::IRadioResponse";
 const IRADIO_INDICATION: &str = "android.hardware.radio@1.0::IRadioIndication";
 /// The newest IRadio the service must implement for us to use it.
 pub const IRADIO_FQNAME: &str = "android.hardware.radio@1.0::IRadio";
+/// The SIM slot/eUICC configuration HAL (one instance, "default").
+pub const IRADIO_CONFIG: &str = "android.hardware.radio.config@1.0::IRadioConfig";
+/// We take its @1.2 callbacks: getSimSlotsStatusResponse_1_2 carries the EID.
+const CONFIG_RESPONSE_CHAIN: [&str; 3] = [
+    "android.hardware.radio.config@1.2::IRadioConfigResponse",
+    "android.hardware.radio.config@1.1::IRadioConfigResponse",
+    "android.hardware.radio.config@1.0::IRadioConfigResponse",
+];
+const CONFIG_INDICATION_CHAIN: [&str; 3] = [
+    "android.hardware.radio.config@1.2::IRadioConfigIndication",
+    "android.hardware.radio.config@1.1::IRadioConfigIndication",
+    "android.hardware.radio.config@1.0::IRadioConfigIndication",
+];
+
+/// IRadioConfig method codes (1.0 then 1.1).
+pub mod config_req {
+    pub const SET_RESPONSE_FUNCTIONS: u32 = 1;
+    pub const GET_SIM_SLOTS_STATUS: u32 = 2;
+    pub const GET_PHONE_CAPABILITY: u32 = 4;
+}
 
 /// IRadio@1.0 method codes (declaration order, from 1). The full set we
 /// may use, not only what is used today.
@@ -56,6 +76,10 @@ pub mod req {
     pub const SET_INITIAL_ATTACH_APN: u32 = 102;
     pub const GET_IMS_REGISTRATION_STATE: u32 = 103;
     pub const SET_DATA_ALLOWED: u32 = 114;
+    pub const ICC_TRANSMIT_APDU_BASIC_CHANNEL: u32 = 105;
+    pub const ICC_OPEN_LOGICAL_CHANNEL: u32 = 106;
+    pub const ICC_CLOSE_LOGICAL_CHANNEL: u32 = 107;
+    pub const ICC_TRANSMIT_APDU_LOGICAL_CHANNEL: u32 = 108;
     pub const SET_INDICATION_FILTER: u32 = 128;
     pub const RESPONSE_ACKNOWLEDGEMENT: u32 = 130;
 }
@@ -82,6 +106,9 @@ mod resp {
     pub const GET_SMSC_ADDRESS: u32 = 90;
     pub const GET_VOICE_RADIO_TECHNOLOGY: u32 = 98;
     pub const GET_IMS_REGISTRATION_STATE: u32 = 102;
+    pub const ICC_TRANSMIT_APDU_BASIC_CHANNEL: u32 = 104;
+    pub const ICC_OPEN_LOGICAL_CHANNEL: u32 = 105;
+    pub const ICC_TRANSMIT_APDU_LOGICAL_CHANNEL: u32 = 107;
     pub const ACKNOWLEDGE_REQUEST: u32 = 129;
 }
 
@@ -407,6 +434,51 @@ pub enum Response {
         registered: bool,
         family: i32,
     },
+    /// iccOpenLogicalChannel: the channel and the SELECT response.
+    Channel {
+        id: i32,
+        select: Vec<u8>,
+    },
+    /// IccIoResult (APDU responses): status words and hex data.
+    IccIo {
+        sw1: i32,
+        sw2: i32,
+        data: String,
+    },
+    SimSlots(Vec<SimSlot>),
+    PhoneCapability {
+        max_active_data: u8,
+        max_active_internet: u8,
+        dsda: bool,
+    },
+}
+
+/// SimSlotStatus@1.2 (IRadioConfig): one physical slot.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SimSlot {
+    pub card_state: i32,
+    pub active: bool,
+    pub atr: String,
+    pub logical_slot: i32,
+    pub iccid: String,
+    pub eid: String,
+}
+
+impl SimSlot {
+    fn decode(v: View, with_eid: bool) -> Self {
+        Self {
+            card_state: v.i32(0),
+            active: v.i32(4) == 1,
+            atr: v.string(8),
+            logical_slot: v.i32(24),
+            iccid: v.string(32),
+            eid: if with_eid {
+                v.string(48)
+            } else {
+                String::new()
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -448,6 +520,53 @@ pub enum Event {
     AckWanted {
         slot: usize,
     },
+    /// An IRadioConfig response.
+    ConfigResponse {
+        serial: i32,
+        error: i32,
+        body: Response,
+    },
+    SimSlotsChanged(Vec<SimSlot>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Role {
+    Response(usize),
+    Indication(usize),
+    ConfigResponse,
+    ConfigIndication,
+}
+
+fn decode_config_response(code: u32, r: &mut crate::binder::Reader) -> Response {
+    match code {
+        // getSimSlotsStatusResponse (1.0) / _1_2: vec<SimSlotStatus>
+        1 => r.buffer().map(|v| {
+            Response::SimSlots(
+                v.vec(0, 48)
+                    .into_iter()
+                    .map(|s| SimSlot::decode(s, false))
+                    .collect(),
+            )
+        }),
+        7 => r.buffer().map(|v| {
+            Response::SimSlots(
+                v.vec(0, 64)
+                    .into_iter()
+                    .map(|s| SimSlot::decode(s, true))
+                    .collect(),
+            )
+        }),
+        // getPhoneCapabilityResponse: PhoneCapability { uint8 maxActiveData;
+        // uint8 maxActiveInternetData; bool isInternetLingeringSupported;
+        // vec<ModemInfo> logicalModemList; }
+        3 => r.buffer().map(|v| Response::PhoneCapability {
+            max_active_data: v.u8(0),
+            max_active_internet: v.u8(1),
+            dsda: v.u8(0) > 1,
+        }),
+        _ => Some(Response::Empty),
+    }
+    .unwrap_or(Response::Empty)
 }
 
 fn decode_response(code: u32, r: &mut crate::binder::Reader) -> Response {
@@ -488,6 +607,17 @@ fn decode_response(code: u32, r: &mut crate::binder::Reader) -> Response {
             Response::DataCalls(v.vec(0, 120).into_iter().map(DataCall::decode).collect())
         }),
         resp::GET_FACILITY_LOCK | resp::GET_VOICE_RADIO_TECHNOLOGY => r.i32().map(Response::Int),
+        resp::ICC_OPEN_LOGICAL_CHANNEL => {
+            let id = r.i32();
+            let select = r.buffer().map(|v| v.byte_vec(0)).unwrap_or_default();
+            id.map(|id| Response::Channel { id, select })
+        }
+        resp::ICC_TRANSMIT_APDU_BASIC_CHANNEL | resp::ICC_TRANSMIT_APDU_LOGICAL_CHANNEL => buffer()
+            .map(|v| Response::IccIo {
+                sw1: v.i32(0),
+                sw2: v.i32(4),
+                data: v.string(8),
+            }),
         resp::GET_IMS_REGISTRATION_STATE => {
             let registered = r.bool();
             let family = r.i32();
@@ -546,9 +676,9 @@ fn decode_indication(code: u32, r: &mut crate::binder::Reader) -> Indication {
 }
 
 /// Decodes an incoming call on one of our objects into `events`.
-/// `objects[i]` = (slot, is_response) for object pointer i + 1.
-fn on_incoming(objects: &[(usize, bool)], events: &mut VecDeque<Event>, mut call: Incoming) {
-    let Some(&(slot, is_response)) = usize::try_from(call.object)
+/// `objects[i]` is the role of object pointer i + 1.
+fn on_incoming(objects: &[Role], events: &mut VecDeque<Event>, mut call: Incoming) {
+    let Some(&role) = usize::try_from(call.object)
         .ok()
         .and_then(|p| p.checked_sub(1))
         .and_then(|i| objects.get(i))
@@ -556,36 +686,67 @@ fn on_incoming(objects: &[(usize, bool)], events: &mut VecDeque<Event>, mut call
         return;
     };
     let r = &mut call.data;
-    if is_response {
-        if call.interface != IRADIO_RESPONSE {
-            return;
+    match role {
+        Role::Response(slot) => {
+            if call.interface != IRADIO_RESPONSE || call.code == resp::ACKNOWLEDGE_REQUEST {
+                return;
+            }
+            // RadioResponseInfo { type, serial, error }
+            let Some(info) = r.buffer() else { return };
+            let (kind, serial, error) = (info.i32(0), info.i32(4), info.i32(8));
+            let body = decode_response(call.code, r);
+            events.push_back(Event::Response {
+                slot,
+                code: call.code,
+                serial,
+                error,
+                body,
+            });
+            if kind == 2 {
+                events.push_back(Event::AckWanted { slot });
+            }
         }
-        if call.code == resp::ACKNOWLEDGE_REQUEST {
-            return;
+        Role::Indication(slot) => {
+            if call.interface != IRADIO_INDICATION {
+                return;
+            }
+            let kind = r.i32().unwrap_or(0);
+            let indication = decode_indication(call.code, r);
+            events.push_back(Event::Indication { slot, indication });
+            if kind == 1 {
+                events.push_back(Event::AckWanted { slot });
+            }
         }
-        // RadioResponseInfo { type, serial, error }
-        let Some(info) = r.buffer() else { return };
-        let (kind, serial, error) = (info.i32(0), info.i32(4), info.i32(8));
-        let body = decode_response(call.code, r);
-        events.push_back(Event::Response {
-            slot,
-            code: call.code,
-            serial,
-            error,
-            body,
-        });
-        if kind == 2 {
-            events.push_back(Event::AckWanted { slot });
+        Role::ConfigResponse => {
+            if !CONFIG_RESPONSE_CHAIN.contains(&call.interface.as_str()) {
+                return;
+            }
+            let Some(info) = r.buffer() else { return };
+            let (serial, error) = (info.i32(4), info.i32(8));
+            let body = decode_config_response(call.code, r);
+            events.push_back(Event::ConfigResponse {
+                serial,
+                error,
+                body,
+            });
         }
-    } else {
-        if call.interface != IRADIO_INDICATION {
-            return;
-        }
-        let kind = r.i32().unwrap_or(0);
-        let indication = decode_indication(call.code, r);
-        events.push_back(Event::Indication { slot, indication });
-        if kind == 1 {
-            events.push_back(Event::AckWanted { slot });
+        Role::ConfigIndication => {
+            if !CONFIG_INDICATION_CHAIN.contains(&call.interface.as_str()) {
+                return;
+            }
+            let _kind = r.i32();
+            let with_eid = call.code == 2;
+            let size = if with_eid { 64 } else { 48 };
+            let slots = r
+                .buffer()
+                .map(|v| {
+                    v.vec(0, size)
+                        .into_iter()
+                        .map(|s| SimSlot::decode(s, with_eid))
+                        .collect()
+                })
+                .unwrap_or_default();
+            events.push_back(Event::SimSlotsChanged(slots));
         }
     }
 }
@@ -601,7 +762,10 @@ pub struct Slot {
 pub struct Radio {
     pub binder: Binder,
     pub slots: Vec<Slot>,
-    objects: Vec<(usize, bool)>,
+    /// IRadioConfig handle, once connected.
+    pub config: Option<u32>,
+    config_objects: (u64, u64),
+    objects: Vec<Role>,
     serial: i32,
     events: Rc<RefCell<VecDeque<Event>>>,
 }
@@ -613,9 +777,9 @@ impl Radio {
         let mut slots = Vec::new();
         for (i, name) in slot_names.iter().enumerate() {
             let response = binder.add_object(&[IRADIO_RESPONSE]);
-            objects.push((i, true));
+            objects.push(Role::Response(i));
             let indication = binder.add_object(&[IRADIO_INDICATION]);
-            objects.push((i, false));
+            objects.push(Role::Indication(i));
             slots.push(Slot {
                 name: name.to_string(),
                 handle: None,
@@ -623,9 +787,17 @@ impl Radio {
                 indication,
             });
         }
+        let config_objects = (
+            binder.add_object(&CONFIG_RESPONSE_CHAIN),
+            binder.add_object(&CONFIG_INDICATION_CHAIN),
+        );
+        objects.push(Role::ConfigResponse);
+        objects.push(Role::ConfigIndication);
         Ok(Self {
             binder,
             slots,
+            config: None,
+            config_objects,
             objects,
             serial: 0,
             events: Rc::new(RefCell::new(VecDeque::new())),
@@ -660,6 +832,40 @@ impl Radio {
         }
         self.slots[slot].handle = Some(handle);
         Ok(true)
+    }
+
+    /// Connects to IRadioConfig/default (SIM slots, eUICC). Ok(false): absent.
+    pub fn connect_config(&mut self) -> Result<bool, Error> {
+        let Some(handle) = self.with_handler(|b, h| b.get_service(IRADIO_CONFIG, "default", h))?
+        else {
+            return Ok(false);
+        };
+        let mut parcel = Parcel::request(IRADIO_CONFIG);
+        parcel.write_local_object(self.config_objects.0);
+        parcel.write_local_object(self.config_objects.1);
+        if let Err(e) = self.with_handler(|b, h| {
+            b.call(
+                handle,
+                config_req::SET_RESPONSE_FUNCTIONS,
+                &parcel,
+                h,
+                |_| (),
+            )
+        }) {
+            let _ = self.binder.release(handle);
+            return Err(e);
+        }
+        self.config = Some(handle);
+        Ok(true)
+    }
+
+    pub fn config_request(&mut self, code: u32) -> Result<i32, Error> {
+        let handle = self.config.ok_or(Error::Dead)?;
+        let serial = self.next_serial();
+        let mut parcel = Parcel::request(IRADIO_CONFIG);
+        parcel.write_i32(serial);
+        self.with_handler(|b, h| b.send_oneway(handle, code, &parcel, h))?;
+        Ok(serial)
     }
 
     /// Slots whose rild died since the last call (they need `connect`).
@@ -730,6 +936,17 @@ pub mod args {
         let mut blob = Blob::new(40);
         blob.string(0, number).i32(16, 0 /* CLIR default */);
         blob.vec(24, 0, Blob::new(0));
+        p.write_blob(blob);
+    }
+
+    /// SimApdu { int32 sessionId, cla, instruction, p1, p2, p3; string data; }
+    pub fn sim_apdu(p: &mut Parcel, session: i32, apdu: [i32; 5], data_hex: &str) {
+        let mut blob = Blob::new(40);
+        blob.i32(0, session);
+        for (i, v) in apdu.iter().enumerate() {
+            blob.i32(4 + 4 * i, *v);
+        }
+        blob.string(24, data_hex);
         p.write_blob(blob);
     }
 
