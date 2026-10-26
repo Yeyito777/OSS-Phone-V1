@@ -176,7 +176,7 @@ The X proxy stops receiving copies meanwhile. It is brought up to date
 
 | Shown directly when | Otherwise (X proxy path) |
 |---|---|
-| GPU mode, protocol v3, the app in front, nothing of Moon's over the app's area (the keyboard sits below it) | a key callout, the volume HUD or a notification banner over the app (still X windows in the mirror) |
+| GPU mode, protocol v3, the app in front (the keyboard sits below the app's area; the volume HUD and banners over it are patches of the mirror, cut to their rounded shape by the node's corner radius) | a key callout over the app (not a rounded shape) |
 | the pool is sealed against shrinking (moon-compositor maps it: a shrinking pool would SIGBUS it) | unsealable pools (memfd without `MFD_ALLOW_SEALING`) |
 | popups and subsurfaces are extra nodes, in stacking order, ARGB ones blended | |
 | no snapshot pending | the home gesture, the switcher and fades: the proxy is synced before the mirror is copied, so cards show the latest frame |
@@ -205,8 +205,7 @@ Verified on whale with the stand-in compositor:
   node over the app in direct mode.
 
 Next in M2:
-- Moon's key callout, volume HUD and banner as frame nodes in GPU mode, so
-  they no longer end direct mode;
+- the key callout as a frame node too;
 - `linux-dmabuf` for clients with dmabufs (planes, zero copy).
 
 ## Requests for moon-compositor (M2)

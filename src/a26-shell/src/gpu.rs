@@ -481,9 +481,12 @@ enum Surface {
 /// screen (the toplevel, then its subsurfaces and popups in stacking order).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Direct {
-    pub surface: SurfaceId,
+    /// A client surface, or None for a patch of the X mirror (one of Moon's
+    /// overlay windows over the app, cut to its shape by `radius`).
+    pub surface: Option<SurfaceId>,
     pub src: RectF,
     pub dst: RectF,
+    pub radius: f32,
 }
 
 fn wire(id: SurfaceId) -> u32 {
@@ -641,6 +644,8 @@ impl GpuBackend {
         let path = self.link.borrow().path.clone();
         let mut version = PROTO_VERSION;
         let mut refusals = 0;
+        // A restarting compositor is asked again, but not forever.
+        let mut new_compositors = 0;
         loop {
             let inode = socket_inode(&path);
             match self.handshake_version(conn, wait, version) {
@@ -657,8 +662,9 @@ impl GpuBackend {
                     return Ok(());
                 }
                 Err(HandshakeError::ClosedByPeer) => {
-                    if socket_inode(&path) != inode {
+                    if socket_inode(&path) != inode && new_compositors < 3 {
                         // A new compositor came up meanwhile: ask it anew.
+                        new_compositors += 1;
                         refusals = 0;
                         continue;
                     }
@@ -1337,10 +1343,12 @@ impl GpuBackend {
             .iter()
             .copied()
             .filter(|direct| {
-                matches!(
-                    self.surfaces.get(direct.surface.0),
-                    Some(Some(Surface::Client { .. }))
-                )
+                direct.surface.is_none_or(|surface| {
+                    matches!(
+                        self.surfaces.get(surface.0),
+                        Some(Some(Surface::Client { .. }))
+                    )
+                })
             })
             .collect();
         msg.u32(self.serial)
@@ -1363,12 +1371,12 @@ impl GpuBackend {
         for direct in direct {
             push_image(
                 &mut msg,
-                wire(direct.surface),
+                direct.surface.map(wire).unwrap_or(MIRROR_ID),
                 direct.src,
                 direct.dst,
                 1.0,
                 1.0,
-                0.0,
+                direct.radius,
                 false,
             );
         }
@@ -1451,6 +1459,12 @@ impl GpuBackend {
     /// at once while an app is in front, so each commit is one frame and
     /// its `presented_serial` says when the buffer reached the panel.
     pub fn set_direct(&mut self, direct: Vec<Direct>) -> Option<u32> {
+        if self.version < CLIENT_SURFACE_VERSION {
+            // A v2 compositor never heard of client surfaces: nodes naming
+            // them must not reach it, even before the Wayland side notices.
+            self.direct.clear();
+            return None;
+        }
         self.direct = direct;
         if self.mirror_mode && self.mirror.is_some() && self.link.borrow().connected() {
             self.send_mirror_frame();

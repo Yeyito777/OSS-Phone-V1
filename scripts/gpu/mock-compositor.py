@@ -226,7 +226,16 @@ class Mock:
             pix = src[ys][:, xs].astype(np.float32) * dim
             cov = surface.coverage()
             a = alpha if cov is None else alpha * cov[ys][:, xs, None].astype(np.float32) / 255
-            out[y0:y1, x0:x1] = out[y0:y1, x0:x1] * (1 - a) + pix * alpha
+            m = 1.0
+            if radius > 0.5:
+                # The node's rounded corners, as moon-compositor draws them.
+                r = min(radius, dw / 2, dh / 2)
+                px = np.arange(x0, x1) + 0.5
+                py = np.arange(y0, y1) + 0.5
+                qx = np.maximum(np.maximum(dx + r - px, px - (dx + dw - r)), 0)[None, :]
+                qy = np.maximum(np.maximum(dy + r - py, py - (dy + dh - r)), 0)[:, None]
+                m = np.clip(r - np.sqrt(qx * qx + qy * qy) + 0.5, 0, 1)[:, :, None]
+            out[y0:y1, x0:x1] = out[y0:y1, x0:x1] * (1 - a * m) + pix * alpha * m
         return out
 
     def shot(self):

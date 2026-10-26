@@ -124,6 +124,8 @@ pub struct WaylandApps {
     shown: HashMap<SurfaceKey, (SurfaceId, i32, i32)>,
     /// The directly shown app's surfaces moved, appeared or went: resend.
     direct_dirty: bool,
+    /// Moon's overlay windows over the app: (rectangle, corner radius).
+    overlays: Vec<(RectF, f32)>,
 }
 
 impl WaylandApps {
@@ -176,6 +178,7 @@ impl WaylandApps {
             direct_commits: Vec::new(),
             shown: HashMap::new(),
             direct_dirty: false,
+            overlays: Vec::new(),
         })
     }
 
@@ -632,6 +635,7 @@ impl WaylandApps {
         conn: &C,
         gpu: Option<&mut GpuBackend>,
         window: Option<u32>,
+        overlays: &[(RectF, f32)],
     ) {
         let Some(gpu) = gpu else {
             return;
@@ -665,6 +669,10 @@ impl WaylandApps {
         }
         let commits = std::mem::take(&mut self.direct_commits);
         let mut changed = std::mem::take(&mut self.direct_dirty);
+        if self.overlays != overlays {
+            self.overlays = overlays.to_vec();
+            changed = true;
+        }
         let mut sent: Vec<(SurfaceKey, WlBuffer, Arc<ShmBuffer>)> = Vec::new();
         if let Some(root) = target
             && self.direct != Some(root)
@@ -829,9 +837,21 @@ impl WaylandApps {
             }
             let (x, y) = self.screen_origin(key);
             nodes.push(Direct {
-                surface,
+                surface: Some(surface),
                 src: RectF::new(shown.x as f32, shown.y as f32, w as f32, h as f32),
                 dst: RectF::new(x as f32, y as f32, w as f32, h as f32),
+                radius: 0.0,
+            });
+        }
+        // Moon's overlay windows over the app (volume, banner) come from
+        // the mirror, cut to their rounded shape: around the shape the
+        // mirror still holds the app's proxy, which is stale here.
+        for &(rect, radius) in &self.overlays {
+            nodes.push(Direct {
+                surface: None,
+                src: rect,
+                dst: rect,
+                radius,
             });
         }
         nodes

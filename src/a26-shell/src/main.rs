@@ -619,7 +619,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             )?;
         }
 
-        let mut wayland_direct = None;
+        let mut wayland_direct = (None, Vec::new());
         if let Some(server) = wayland.as_mut() {
             for action in server.dispatch(&conn) {
                 match action {
@@ -661,16 +661,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                     eprintln!("wayland: keyboard input had no focused client");
                 }
             }
-            // GPU mode: the app in front shows its own buffers when nothing
-            // of Moon's is drawn over it (the key callout, volume, banner)
-            // and no snapshot is about to be taken from the mirror. The
-            // keyboard itself sits below the app's area.
-            let overlay = (state.keyboard.is_visible()
-                && state.keyboard.latest_pressed().is_some())
-                || state
-                    .volume_overlay_until
-                    .is_some_and(|deadline| deadline > Instant::now())
-                || renderer.banner_window(&state, Instant::now()).is_some();
+            // GPU mode: the app in front shows its own buffers. Moon's volume
+            // and banner windows over it are drawn from the mirror on top;
+            // a key callout (not a rounded shape) or a snapshot about to be
+            // copied from the mirror sends the app back through X.
+            let now = Instant::now();
+            let mut overlays = Vec::new();
+            if state
+                .volume_overlay_until
+                .is_some_and(|deadline| deadline > now)
+            {
+                overlays.push((ui::VOLUME_HUD, ui::VOLUME_HUD.w / 2.0));
+            }
+            if let Some((y, height, _)) = renderer.banner_window(&state, now) {
+                overlays.push((
+                    gfx::RectF::new(alerts::CARD_X, y as f32, alerts::CARD_W, height),
+                    alerts::CARD_RADIUS,
+                ));
+            }
+            let overlay = state.keyboard.is_visible() && state.keyboard.latest_pressed().is_some();
             let direct_window = (state.screen_awake
                 && state.view.is_app()
                 && !state.shell_covers_app()
@@ -680,8 +689,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 && !overlay)
                 .then(|| state.managed_windows.first().copied())
                 .flatten();
-            server.update_direct(&conn, renderer.compositor.gpu_mut(), direct_window);
-            wayland_direct = direct_window;
+            server.update_direct(
+                &conn,
+                renderer.compositor.gpu_mut(),
+                direct_window,
+                &overlays,
+            );
+            wayland_direct = (direct_window, overlays);
             // A Moon gesture (the home swipe, the switcher) owns the touch now.
             if server.touch_active()
                 && (state.gesture.is_some() || !state.view.is_app() || state.shell_covers_app())
@@ -903,7 +917,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         {
             // The snapshot copies the X mirror: bring a directly shown
             // Wayland app's proxy up to date first.
-            server.update_direct(&conn, renderer.compositor.gpu_mut(), None);
+            server.update_direct(&conn, renderer.compositor.gpu_mut(), None, &[]);
         }
         if let Some(app) = state.pending_capture.take()
             && state.screen_awake
@@ -1100,7 +1114,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             renderer.compositor.dispatch_gpu(&conn, mirror);
             // Flips just reported settle directly shown Wayland buffers.
             if let Some(server) = wayland.as_mut() {
-                server.update_direct(&conn, renderer.compositor.gpu_mut(), wayland_direct);
+                server.update_direct(
+                    &conn,
+                    renderer.compositor.gpu_mut(),
+                    wayland_direct.0,
+                    &wayland_direct.1,
+                );
             }
         }
         // Frames: one per vblank while anything moves, otherwise only when
