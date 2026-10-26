@@ -99,6 +99,8 @@ fn log(message: impl AsRef<str>) {
 #[derive(Default)]
 struct SlotState {
     connected: bool,
+    /// A setRadioPower we sent is unanswered (no duplicates).
+    power_pending: bool,
     radio: Option<i32>,
     card: Option<CardStatus>,
     voice: Option<Registration>,
@@ -120,7 +122,6 @@ struct TrackedCall {
 enum Op {
     Unlock,
     Call,
-    Radio,
     ChannelOpen,
     Apdu,
     ChannelClose,
@@ -128,6 +129,7 @@ enum Op {
 
 enum Pending {
     Query,
+    RadioPower { slot: usize },
     Client { client: u64, id: u64, op: Op },
     SmsPart { message: u64 },
     DataSetup,
@@ -173,6 +175,8 @@ struct Client {
 /// queued while it is down (bounded) and its replies are discarded.
 struct Notifier {
     path: PathBuf,
+    /// Reconnect delay while moon-notifyd is down (5 s doubling to 60 s).
+    backoff: Duration,
     stream: Option<UnixStream>,
     output: VecDeque<u8>,
     input: Vec<u8>,
@@ -218,6 +222,7 @@ impl Notifier {
                     let _ = s.set_nonblocking(true);
                     self.stream = Some(s);
                     self.retry_at = None;
+                    self.backoff = Duration::ZERO;
                     self.input.clear();
                     // Learn the revision first (it may have been upgraded).
                     self.next_id += 1;
@@ -228,7 +233,9 @@ impl Notifier {
                     }
                 }
                 Err(_) => {
-                    self.retry_at = Some(Instant::now() + Duration::from_secs(5));
+                    self.backoff =
+                        (self.backoff * 2).clamp(Duration::from_secs(5), Duration::from_secs(60));
+                    self.retry_at = Some(Instant::now() + self.backoff);
                     return;
                 }
             }
@@ -324,6 +331,8 @@ pub struct Daemon {
     data: Data,
     last_state: Value,
     last_signal_event: Instant,
+    /// MOON_TELEPHONY_DEBUG=1: log every indication (wakeup accounting).
+    debug: bool,
 }
 
 pub fn run(paths: Paths) -> Result<(), Box<dyn Error>> {
@@ -350,6 +359,7 @@ pub fn run(paths: Paths) -> Result<(), Box<dyn Error>> {
     let mut daemon = Daemon {
         notifier: Notifier {
             path: paths.notify_socket.clone(),
+            backoff: Duration::ZERO,
             stream: None,
             output: VecDeque::new(),
             input: Vec::new(),
@@ -386,6 +396,7 @@ pub fn run(paths: Paths) -> Result<(), Box<dyn Error>> {
         data: Data::default(),
         last_state: Value::Null,
         last_signal_event: Instant::now(),
+        debug: std::env::var_os("MOON_TELEPHONY_DEBUG").is_some(),
     };
     daemon.notifier.send("ping", Map::new());
     log(format!(
@@ -633,10 +644,48 @@ impl Daemon {
         }
     }
 
+    /// Keeps each slot's radio power at the airplane setting, as Android's
+    /// ServiceStateTracker does: off while airplane mode is on (the modem
+    /// powers itself on at boot), back on when it reports off without it.
+    fn enforce_radio_power(&mut self, slot: usize) {
+        let want_on = !self.settings.airplane;
+        let s = &self.slots[slot];
+        if !s.connected || s.power_pending {
+            return;
+        }
+        let off_now = match s.radio {
+            Some(10) => false,
+            Some(0) => true,
+            _ => return, // unavailable or unknown: the modem is not ready
+        };
+        if off_now != want_on {
+            return;
+        }
+        log(format!(
+            "{}: radio power {}",
+            SLOTS[slot],
+            if want_on { "on" } else { "off (airplane)" }
+        ));
+        match self
+            .radio
+            .request(slot, req::SET_RADIO_POWER, |p| p.write_bool(want_on))
+        {
+            Ok(serial) => {
+                self.slots[slot].power_pending = true;
+                self.pending.insert(serial, Pending::RadioPower { slot });
+            }
+            Err(e) => self.radio_failed(slot, e),
+        }
+    }
+
     fn indication(&mut self, slot: usize, indication: Indication) {
+        if self.debug {
+            log(format!("{} indication {indication:?}", SLOTS[slot]));
+        }
         match indication {
             Indication::RadioState(state) => {
                 self.slots[slot].radio = Some(state);
+                self.enforce_radio_power(slot);
                 if state == 10 {
                     self.query(slot, req::GET_ICC_CARD_STATUS);
                     self.query(slot, req::GET_VOICE_REGISTRATION_STATE);
@@ -679,6 +728,16 @@ impl Daemon {
                 self.sms_part_sent(slot, message, error.max(2), -1)
             }
             (Some(Pending::DataSetup), body) => self.data_setup_done(error, body),
+            (Some(Pending::RadioPower { slot }), _) => {
+                self.slots[slot].power_pending = false;
+                if error != radio::error::NONE {
+                    log(format!(
+                        "{}: setRadioPower failed: {}",
+                        SLOTS[slot],
+                        radio::error_name(error)
+                    ));
+                }
+            }
             (Some(Pending::DataDeactivate), _) => {
                 self.data_hook_down();
                 self.data.state = DataState::Off;
@@ -2052,10 +2111,9 @@ impl Daemon {
                 }
             }
             "radio.set" => {
-                let slot = match need_radio() {
-                    Ok(s) => s,
-                    Err(e) => return Some(Err(e)),
-                };
+                if need_radio().is_err() {
+                    return Some(Err(("unavailable", "radio HAL not connected".into())));
+                }
                 let Some(airplane) = a.get("airplane").and_then(Value::as_bool) else {
                     return bad("airplane must be a boolean");
                 };
@@ -2066,9 +2124,13 @@ impl Daemon {
                 {
                     return Some(Err(("internal", format!("cannot save: {e}"))));
                 }
-                self.radio_command(slot, key, id, Op::Radio, req::SET_RADIO_POWER, move |p| {
-                    p.write_bool(!airplane)
-                })
+                // Every slot follows (DSDS: each has its own radio power);
+                // `radio` in the state changes when the modem reports it.
+                for slot in 0..self.slots.len() {
+                    self.enforce_radio_power(slot);
+                }
+                self.data_reconcile();
+                Some(Ok(json!({"airplane": airplane})))
             }
             _ => unreachable!(),
         }
