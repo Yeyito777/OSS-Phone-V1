@@ -208,6 +208,60 @@ Next in M2:
 - the key callout as a frame node too;
 - `linux-dmabuf` for clients with dmabufs (planes, zero copy).
 
+## Milestone 3: touch from evdev (built, opt-in)
+
+`MOON_TOUCH=evdev` makes Moon read the touchscreen itself:
+- `src/touch.rs`, multi-touch protocol B: slots become begin/update/end
+  contacts in screen pixels from the device's axis ranges, and
+  `SYN_DROPPED` ends every contact;
+- the device is found by name (`MOON_TOUCH_DEVICE`, default
+  `sec_touchscreen`) and never grabbed;
+- XI2 raw touches are ignored meanwhile.
+
+The XI2 handlers are now `touch_begin/update/end`, shared by both sources,
+so gestures, keyboard rollover and app taps behave the same. Apps still get
+their input from Xorg. Unit-tested off-device; on the phone it needs
+`getevent -p` to confirm the axis ranges and a few real touches.
+
+## Milestone 4: Xwayland replaces headless Xorg (plan)
+
+What has to be true for a GPU-mode session with no Xorg:
+
+1. **Moon draws all of its own UI into moon-compositor layers.** The shell
+   already does in GPU mode. The status strip, keyboard (with callout),
+   volume HUD and banners are still X windows and become layers or nodes
+   (their canvases exist; they're presented to X today).
+2. **Input without Xorg:** touch (M3) and keys (already evdev) are read by
+   Moon. Moon hit-tests surfaces and sends `wl_touch` to the client that
+   owns the touched surface. Xwayland is one such client: it turns
+   `wl_touch` on its surfaces into X touch and pointer events, so X11
+   apps get input the same way.
+3. **Moon is the X11 window manager of a rootless Xwayland.**
+   - Its existing X WM code (`manage_window`, configure, focus) runs
+     unchanged against Xwayland's display.
+   - Each X window's content is the `wl_surface` Xwayland associates with
+     it (`xwayland_shell_v1` serial, or `WL_SURFACE_ID`). That surface is a
+     client surface like any other, shown directly.
+   - XTEST still works inside Xwayland, so the keyboard path for X11 apps
+     (CEF) is unchanged.
+4. **The X mirror goes away.** Every app is surfaces. Snapshots are
+   compositor copies of client surfaces (protocol v4's foreign surfaces,
+   and a "render nodes into a surface" request, to be asked of the GPU
+   agent).
+5. **Session:**
+   - the supervisor starts moon-compositor and then Moon, which starts
+     Xwayland;
+   - readiness is the compositor plus Moon's control socket;
+   - any failure falls back to today's Xorg session on the panel (the
+     existing in-place fallback).
+
+The CEF browser stays an X11 app under Xwayland:
+- vimbrowser passes `--ozone-platform=x11` and has its own X11 window code
+  (`src/browser_window*.cc`);
+- its CEF 147 build does include Chromium's Ozone Wayland backend;
+- porting vimbrowser's window code would make it native, but that's a
+  vimbrowser change for later.
+
 ## Requests for moon-compositor (M2)
 
 1. **Client memfd surfaces, which may be unsealed:** check `F_SEAL_SHRINK`
