@@ -94,7 +94,13 @@ grep -Fq 'libc::poll(' "$SOURCE/src/main.rs" || {
 echo 'blocking event-loop guard: PASS'
 sh -n "$PROJECT_ROOT/scripts/device/moon-boot-supervisor.sh"
 
-mkdir -p "$IMAGE/bin" "$IMAGE/source"
+mkdir -p "$IMAGE/bin" "$IMAGE/source" "$IMAGE/share/fonts"
+# Fallback fonts for text Inter lacks (emoji, Greek, Cyrillic, symbols).
+"$PROJECT_ROOT/scripts/a26-shell/fetch-fonts.sh" "$PROJECT_ROOT/images/fonts"
+while read -r name _; do
+    [[ -z "$name" || "$name" == \#* ]] && continue
+    install -m0644 "$PROJECT_ROOT/images/fonts/$name" "$IMAGE/share/fonts/$name"
+done <"$PROJECT_ROOT/scripts/a26-shell/fonts.manifest"
 install -m0755 "$SOURCE/target/$TARGET/release/a26-shell" "$IMAGE/bin/a26-shell"
 install -m0755 "$SOURCE/target/$TARGET/release/a26-shellctl" "$IMAGE/bin/a26-shellctl"
 install -m0755 "$SOURCE/target/$TARGET/release/a26-shellshot" "$IMAGE/bin/a26-shellshot"

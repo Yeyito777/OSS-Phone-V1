@@ -1,0 +1,9 @@
+# Moon's fallback fonts (SIL OFL 1.1), pinned by hash: name sha256 url
+NotoSans-Regular.ttf 478c558ea716033cd60c03438f628dfa75694dcf6b5f6d505a2f05fd2b4f3823 https://github.com/notofonts/notofonts.github.io/raw/31c61988e76a48706c4a96a872fc3178dbd82121/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf
+NotoSans-SemiBold.ttf a4e91fd530ac2b4ef5367240144ff37d7d65d66cf76f2e9a2187b93c676f92d0 https://github.com/notofonts/notofonts.github.io/raw/31c61988e76a48706c4a96a872fc3178dbd82121/fonts/NotoSans/hinted/ttf/NotoSans-SemiBold.ttf
+NotoSansSymbols2-Regular.ttf c4a0a80f0041ce4be81e2478faad22776d23edb98ae3f0d19bd37044820ecf9d https://github.com/notofonts/notofonts.github.io/raw/31c61988e76a48706c4a96a872fc3178dbd82121/fonts/NotoSansSymbols2/hinted/ttf/NotoSansSymbols2-Regular.ttf
+NotoSansSymbols-Regular.ttf d0e98e9a2c046594c5021437273943be7e79e0fd980fde125279e22302212595 https://github.com/notofonts/notofonts.github.io/raw/31c61988e76a48706c4a96a872fc3178dbd82121/fonts/NotoSansSymbols/hinted/ttf/NotoSansSymbols-Regular.ttf
+NotoSansMath-Regular.ttf d51afd5739c7ba6c44fcab35a88160e25dfb69a2d4ad0bd99533f8d894af1f96 https://github.com/notofonts/notofonts.github.io/raw/31c61988e76a48706c4a96a872fc3178dbd82121/fonts/NotoSansMath/hinted/ttf/NotoSansMath-Regular.ttf
+NotoColorEmoji.ttf 15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44 https://github.com/googlefonts/noto-emoji/raw/v2026-09-24-unicode18_0/2D/fonts/NotoColorEmoji.ttf
+OFL-Noto.txt f2095b08bed08b23a6fe26112fcd679a2bee3f002eef077eb05d215ed1051bd8 https://github.com/notofonts/notofonts.github.io/raw/31c61988e76a48706c4a96a872fc3178dbd82121/fonts/LICENSE
+OFL-NotoColorEmoji.txt 500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b https://github.com/googlefonts/noto-emoji/raw/v2026-09-24-unicode18_0/LICENSE

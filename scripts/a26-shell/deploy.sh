@@ -26,6 +26,19 @@ for name in "${NAMES[@]}"; do
         exit 1
     }
 done
+# Fallback fonts: pushed only when the phone's copy differs (they are large
+# and rarely change).
+FONTS=/data/local/a26-linux/opt/a26-shell/share/fonts
+phone_fonts="$(adb -s "$SERIAL" shell "/data/local/tmp/su -c 'mkdir -p $FONTS && cd $FONTS && sha256sum * 2>/dev/null'" | tr -d '\r')"
+for font in "$IMAGE"/share/fonts/*; do
+    name="$(basename "$font")"
+    expected="$(sha256sum "$font" | awk '{print $1}')"
+    if ! grep -q "^$expected  $name$" <<<"$phone_fonts"; then
+        adb -s "$SERIAL" push "$font" "/data/local/tmp/$name" >/dev/null
+        adb -s "$SERIAL" shell "/data/local/tmp/su -c 'cp /data/local/tmp/$name $FONTS/$name.new && chmod 0644 $FONTS/$name.new && mv -f $FONTS/$name.new $FONTS/$name && rm -f /data/local/tmp/$name'"
+        echo "font updated: $name"
+    fi
+done
 echo "Deployed Moon binaries to $SERIAL."
 
 if [[ "${1:-}" == --reboot ]]; then
