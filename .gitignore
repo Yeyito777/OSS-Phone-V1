@@ -15,6 +15,7 @@
 !/src/a26-audio-bridge/
 !/src/moon-audiod/
 !/src/moon-gpu/
+!/src/oss-rebootmode-clear/
 /src/a26-shell/target/
 
 /scripts/*
