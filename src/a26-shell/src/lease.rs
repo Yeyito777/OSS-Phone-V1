@@ -46,7 +46,7 @@ pub struct PublicLeaseState {
 
 #[derive(Debug, Default)]
 pub struct LeaseManager {
-    deadlines: [[Option<Instant>; 2]; 2],
+    deadlines: [[Option<Instant>; 2]; AppId::COUNT],
 }
 
 impl LeaseManager {

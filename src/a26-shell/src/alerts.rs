@@ -258,7 +258,7 @@ impl Alerts {
         self.store
             .notifications
             .iter()
-            .filter(|n| !n.seen)
+            .filter(|n| !n.seen && !n.ringing)
             .collect()
     }
 }
@@ -314,7 +314,10 @@ impl ShellState {
                     self.alerts.pending_wake = true;
                 }
                 let urgent = notification.urgency == "high";
+                // A ringing call shows the call screen instead.
+                let call = notification.ringing && notification.app == "phone";
                 let banner_allowed = notification.urgency != "low"
+                    && !call
                     && self.screen_awake
                     && self.view != View::Locked
                     && !self.alerts.centre.visible(now)
@@ -398,6 +401,7 @@ impl ShellState {
         self.alerts.ringing().is_some()
             || self.alerts.centre.visible(now)
             || self.control.visible(now)
+            || self.calls_cover()
     }
 
     pub fn alerts_animating(&self, now: Instant) -> bool {
@@ -493,12 +497,18 @@ impl ShellState {
 
     /// Opens what a notification points at and tells the daemon.
     pub fn activate_notification(&mut self, id: &str) {
-        let open = self
+        let action = self
             .alerts
             .store
             .notification(id)
-            .and_then(|n| n.open.as_ref())
-            .and_then(|open| AppId::parse(&open.app));
+            .and_then(|n| n.open.clone());
+        let open = action.as_ref().and_then(|open| AppId::parse(&open.app));
+        if let (Some(app), Some(action)) = (open, &action)
+            && let Some(target) = &action.target
+        {
+            // The app reads it from Moon's state when it comes forward.
+            self.open_target = Some(crate::model::OpenTarget::new(app, target.clone()));
+        }
         self.alerts.outbox.push(Outgoing::Activate(id.to_owned()));
         self.alerts.store.notifications.retain(|n| n.id != id);
         if self.alerts.banner.as_ref().is_some_and(|b| b.id == id) {
@@ -510,10 +520,7 @@ impl ShellState {
         if let Some(app) = open
             && AppId::from_view(self.view) != Some(app)
         {
-            match app {
-                AppId::System => self.launch_system(),
-                AppId::Browser => self.launch_browser(),
-            }
+            self.open_app(app);
         }
         self.last_action = "notification_activated".into();
         self.redraw = true;
@@ -1169,8 +1176,14 @@ pub fn draw_card(
         SECONDARY,
         SECONDARY_ALPHA,
     );
+    // Messages and calls are titled by the number: shown as the call
+    // screen and the apps show it.
+    let title = match notification.app.as_str() {
+        "messages" | "phone" => crate::calls::format_number(&notification.title),
+        _ => notification.title.clone(),
+    };
     let title = text::fit(
-        &notification.title,
+        &title,
         Weight::SemiBold,
         TITLE_SIZE,
         right - x - time_width - 24.0,
@@ -1563,6 +1576,7 @@ mod tests {
             posted_at,
             seen: false,
             open: None,
+            ringing: false,
         }
     }
 

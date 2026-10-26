@@ -14,6 +14,7 @@ use x11rb::connection::Connection;
 
 use crate::alerts::{self, CARD_W, CARD_X, Icons, RingInfo};
 use crate::backdrop::{self, DimLevels, LEVEL_STEP, RowFade, level_dims};
+use crate::calls;
 use crate::clock::LocalTime;
 use crate::compositor::{Compositor, Frame, Node, SurfaceId};
 use crate::gfx::{self, Canvas, Image, Path, RectF, Rgb};
@@ -21,6 +22,7 @@ use crate::interaction::{CARD_RADIUS, SCREEN, SCREEN_H, SCREEN_W, SWITCHER_DIM};
 use crate::model::{AppId, Press, SHAKE_ANIMATION, ShellState, UNLOCK_ANIMATION, View};
 use crate::present::Damage;
 use crate::status_bar;
+use crate::telephony_client::Cellular;
 use crate::text::{self, Weight};
 
 pub const BLACK: Rgb = 0x000000;
@@ -54,7 +56,8 @@ const DOCK_RADIUS: f32 = 98.0;
 /// Center-to-center spacing of dock icons.
 const DOCK_PITCH: f32 = 254.0;
 /// The order of apps in the dock.
-pub const LAUNCHER_APPS: [AppId; 2] = [AppId::Browser, AppId::System];
+pub const LAUNCHER_APPS: [AppId; 4] =
+    [AppId::Phone, AppId::Browser, AppId::Messages, AppId::System];
 
 // Lock screen and passcode geometry.
 const PASSCODE_TITLE_BASELINE: f32 = 612.0;
@@ -89,6 +92,14 @@ pub struct StatusInfo {
     pub alarm_set: bool,
     /// Do Not Disturb is on (a crescent).
     pub dnd: bool,
+    /// Signal bars or a short state ("No SIM"), from moon-telephonyd.
+    pub cellular: Cellular,
+    /// The carrier, shown where the time would be (lock screen, Control
+    /// Centre).
+    pub carrier: Option<String>,
+    /// A call is up with its screen tucked away: the time sits in a green
+    /// pill.
+    pub call_pill: bool,
 }
 
 impl StatusInfo {
@@ -100,12 +111,24 @@ impl StatusInfo {
             battery_charging: state.battery_charging,
             alarm_set: state.alerts.store.alarm_set(),
             dnd: state.alerts.store.do_not_disturb,
+            cellular: if state.calls.store.connected {
+                state.calls.store.state.cellular()
+            } else {
+                Cellular::Hidden
+            },
+            carrier: state
+                .calls
+                .store
+                .connected
+                .then(|| state.calls.store.state.carrier())
+                .flatten(),
+            call_pill: state.calls.pill(),
         }
     }
 }
 
 /// The app icons notifications show, by app id.
-struct IconSet<'a>(&'a [AppIcon; 2]);
+struct IconSet<'a>(&'a [AppIcon; AppId::COUNT]);
 
 impl Icons for IconSet<'_> {
     fn icon(&self, app: &str) -> Option<&Image> {
@@ -146,6 +169,8 @@ impl AppIcon {
         let artwork = match app {
             AppId::System => load_icon("A26_SYSTEM_ICON", SYSTEM_ICON_PATH),
             AppId::Browser => load_icon("A26_BROWSER_ICON", BROWSER_ICON_PATH),
+            // Moon draws these two itself.
+            AppId::Phone | AppId::Messages => None,
         }
         .unwrap_or_else(|| fallback_icon(app));
         let splash = artwork.pixels[(6 * artwork.width + 6) as usize] & 0x00ff_ffff;
@@ -160,15 +185,46 @@ impl AppIcon {
     }
 }
 
-/// Artwork for an app whose installation provides none (development hosts).
+/// The Messages icon's bubble: an ellipse with a tail at its lower left.
+fn draw_speech_bubble(canvas: &mut Canvas, cx: f32, cy: f32, scale: f32) {
+    let (rx, ry) = (76.0 * scale, 62.0 * scale);
+    let mut bubble = Path::new();
+    let steps = 96;
+    let points: Vec<(f32, f32)> = (0..steps)
+        .map(|step| {
+            let angle = std::f32::consts::TAU * step as f32 / steps as f32;
+            (cx + rx * angle.cos(), cy + ry * angle.sin())
+        })
+        .collect();
+    bubble.polygon(&points);
+    canvas.fill_path(&bubble, WHITE, 1.0);
+    let mut tail = Path::new();
+    tail.polygon(&[
+        (cx - 50.0 * scale, cy + 34.0 * scale),
+        (cx - 22.0 * scale, cy + 54.0 * scale),
+        (cx - 70.0 * scale, cy + 78.0 * scale),
+        (cx - 56.0 * scale, cy + 62.0 * scale),
+    ]);
+    canvas.fill_path(&tail, WHITE, 1.0);
+}
+
+/// Artwork for an app whose installation provides none (development hosts),
+/// and Moon's own Phone and Messages icons.
 fn fallback_icon(app: AppId) -> Image {
     let size = ICON_SOURCE_SIZE;
     let mut canvas = Canvas::new(size, size);
     let (top, bottom, letter) = match app {
         AppId::System => (0x8e8e93, 0x48484a, "S"),
         AppId::Browser => (0x5ac8fa, 0x0a64d8, "B"),
+        AppId::Phone | AppId::Messages => (0x6ce87a, 0x1fc04a, ""),
     };
     canvas.fill_rows(|y| gfx::mix(top, bottom, y as f32 / size as f32));
+    let c = size as f32 / 2.0;
+    match app {
+        AppId::Phone => calls::draw_handset(&mut canvas, c, c, 1.6, false, WHITE),
+        AppId::Messages => draw_speech_bubble(&mut canvas, c, c - 4.0, 1.0),
+        AppId::System | AppId::Browser => {}
+    }
     let baseline = text::centered_baseline(size as f32 / 2.0, Weight::SemiBold, 120.0);
     text::draw_centered(
         &mut canvas,
@@ -297,10 +353,10 @@ pub struct Renderer {
     dots: Layer<usize>,
     volume: Layer<u8>,
     spinner: Layer<u32>,
-    icons: [AppIcon; 2],
-    icon_layers: [SurfaceId; 2],
-    labels: [SurfaceId; 2],
-    snapshots: [Option<SurfaceId>; 2],
+    icons: [AppIcon; AppId::COUNT],
+    icon_layers: [SurfaceId; AppId::COUNT],
+    labels: [SurfaceId; AppId::COUNT],
+    snapshots: [Option<SurfaceId>; AppId::COUNT],
     fade_snapshot: Option<SurfaceId>,
     /// Notifications and alarms (see alerts.rs).
     banner: Layer<u64>,
@@ -309,6 +365,11 @@ pub struct Renderer {
     centre: Layer<u64>,
     centre_card: Layer<u64>,
     ring: Layer<u64>,
+    /// The call screen, its status line and its slide-to-answer knob
+    /// (calls.rs).
+    call: Layer<u64>,
+    call_line: Layer<u64>,
+    call_knob: Layer<u8>,
 }
 
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
@@ -359,10 +420,10 @@ impl Renderer {
         let wall = compositor.create_layer(conn, width, height, false)?;
         compositor.upload(conn, wall, &wallpaper)?;
         let wall_levels = DimLevels::new(wall, level_dims(&LOCK_DIM_STOPS, LEVEL_STEP));
-        let icons = [AppIcon::new(AppId::System), AppIcon::new(AppId::Browser)];
-        let mut icon_layers = [wall; 2];
-        let mut labels = [wall; 2];
-        for app in [AppId::System, AppId::Browser] {
+        let icons = AppId::ALL.map(AppIcon::new);
+        let mut icon_layers = [wall; AppId::COUNT];
+        let mut labels = [wall; AppId::COUNT];
+        for app in AppId::ALL {
             let icon = &icons[app.index()];
             let id = compositor.create_layer(
                 conn,
@@ -432,6 +493,15 @@ impl Renderer {
                 true,
             )?,
             ring: Layer::new(conn, &mut compositor, w, h, true)?,
+            call: Layer::new(conn, &mut compositor, w, h, true)?,
+            call_line: Layer::new(conn, &mut compositor, w, calls::LINE.h as i32, true)?,
+            call_knob: Layer::new(
+                conn,
+                &mut compositor,
+                calls::KNOB as i32,
+                calls::KNOB as i32,
+                true,
+            )?,
             control: Layer::new(conn, &mut compositor, w, h, true)?,
             sliders: [
                 Layer::new(
@@ -464,7 +534,7 @@ impl Renderer {
             icons,
             icon_layers,
             labels,
-            snapshots: [None, None],
+            snapshots: [None; AppId::COUNT],
             fade_snapshot: None,
         };
         renderer.home_levels =
@@ -537,7 +607,10 @@ impl Renderer {
             }
         }
         self.update_background(conn, state, display_time)?;
-        if state.alerts.ringing().is_some() || state.alerts.centre.visible(display_time) {
+        if state.alerts.ringing().is_some()
+            || state.alerts.centre.visible(display_time)
+            || state.calls_cover()
+        {
             // Their background: the darkest wallpaper copy.
             let max = self.wall_levels.max_level();
             self.wall_levels
@@ -840,10 +913,18 @@ impl Renderer {
                 pressed: state.control.pressed,
             };
             let drawn = key.clone();
+            // The carrier stands where the time would be, as on iPhone.
+            let cc_status = match &status.carrier {
+                Some(_) => StatusInfo {
+                    time: String::new(),
+                    ..status.clone()
+                },
+                None => status.clone(),
+            };
             self.control
-                .update(conn, compositor, key_of(&(key, status)), |canvas| {
+                .update(conn, compositor, key_of(&(key, &cc_status)), |canvas| {
                     cc::draw_control(canvas, &drawn);
-                    draw_status_bar(canvas, status, None);
+                    draw_status_bar(canvas, &cc_status, None);
                 })?;
             for (index, slider) in [Slider::Brightness, Slider::Volume].into_iter().enumerate() {
                 let value = state
@@ -877,6 +958,33 @@ impl Renderer {
                     None,
                 );
             })?;
+        }
+        if let Some(view) = state.call_view() {
+            let calls = &state.calls;
+            let key = calls::CallKey {
+                view: view.clone(),
+                keypad: calls.keypad,
+                digits: calls.keypad_digits.clone(),
+                mute: calls.mute,
+                speaker: calls.speaker,
+                pressed: calls.pressed,
+            };
+            let call_status = StatusInfo {
+                call_pill: false,
+                ..status.clone()
+            };
+            self.call
+                .update(conn, compositor, key_of(&(&key, &call_status)), |canvas| {
+                    calls::draw_call_screen(canvas, &key);
+                    draw_status_bar(canvas, &call_status, None);
+                })?;
+            let line = calls::status_line(&view, now);
+            self.call_line
+                .update(conn, compositor, key_of(&line), |canvas| {
+                    calls::draw_status_line(canvas, &line);
+                })?;
+            self.call_knob
+                .update(conn, compositor, 0, calls::draw_knob)?;
         }
         Ok(())
     }
@@ -925,6 +1033,44 @@ impl Renderer {
         let alpha = if ringing { 1.0 } else { 0.0 };
         nodes.push(clipped(deep, top, SCREEN_H, alpha));
         nodes.push(clipped(self.ring.id, top, SCREEN_H, alpha));
+        // The call screen rises the same way, over everything but the
+        // banner and Control Centre.
+        let call = state.call_view();
+        let rise = state.calls.rise(t);
+        let top = (SCREEN_H * (1.0 - rise)).round();
+        let alpha = if call.is_some() { 1.0 } else { 0.0 };
+        nodes.push(clipped(deep, top, SCREEN_H, alpha));
+        nodes.push(clipped(self.call.id, top, SCREEN_H, alpha));
+        let line = calls::LINE;
+        nodes.push(Node::Image {
+            surface: self.call_line.id,
+            src: RectF::new(0.0, 0.0, line.w, line.h),
+            dst: RectF::new(0.0, line.y + top, line.w, line.h),
+            alpha: if line.y + top < SCREEN_H { alpha } else { 0.0 },
+            radius: 0.0,
+            smooth: false,
+        });
+        let sliding = matches!(
+            call,
+            Some(calls::CallView::Incoming {
+                locked: true,
+                waiting: false,
+                ..
+            })
+        );
+        let (knob_x, knob_y) = calls::knob_origin(state.calls.knob_offset(t).round());
+        nodes.push(Node::Image {
+            surface: self.call_knob.id,
+            src: RectF::new(0.0, 0.0, calls::KNOB, calls::KNOB),
+            dst: RectF::new(knob_x, knob_y + top, calls::KNOB, calls::KNOB),
+            alpha: if sliding && knob_y + top < SCREEN_H {
+                1.0
+            } else {
+                0.0
+            },
+            radius: 0.0,
+            smooth: false,
+        });
         // Banners: drawn here unless they float over an app in their own
         // window (main.rs).
         let banner = state
@@ -1676,16 +1822,37 @@ pub fn draw_status_bar(canvas: &mut Canvas, status: &StatusInfo, background: Opt
         canvas.fill_rect(0, 0, canvas.width, status_bar::HEIGHT.into(), color, 1.0);
     }
     let cy = height / 2.0 + 2.0;
-    text::draw_centered(
-        canvas,
-        &status.time,
-        168.0,
-        text::centered_baseline(cy, Weight::SemiBold, 47.0),
-        Weight::SemiBold,
-        47.0,
-        WHITE,
-        1.0,
-    );
+    if status.time.is_empty() {
+        // The lock screen's big clock stands in for the time; the carrier
+        // takes its place, as on iPhone.
+        if let Some(carrier) = &status.carrier {
+            let carrier = text::fit(carrier, Weight::SemiBold, 44.0, 560.0);
+            text::draw(
+                canvas,
+                &carrier,
+                72.0,
+                text::centered_baseline(cy, Weight::SemiBold, 44.0),
+                Weight::SemiBold,
+                44.0,
+                WHITE,
+                1.0,
+            );
+        }
+    } else {
+        if status.call_pill {
+            crate::calls::draw_pill(canvas);
+        }
+        text::draw_centered(
+            canvas,
+            &status.time,
+            168.0,
+            text::centered_baseline(cy, Weight::SemiBold, 47.0),
+            Weight::SemiBold,
+            47.0,
+            WHITE,
+            1.0,
+        );
+    }
     let mut right = canvas.width as f32 - 66.0;
     if status.battery_charging {
         draw_bolt(canvas, right - 12.0, cy, 0.72, WHITE);
@@ -1698,13 +1865,53 @@ pub fn draw_status_bar(canvas: &mut Canvas, status: &StatusInfo, background: Opt
         status.battery_percent,
         status.battery_charging,
     );
-    draw_wifi_glyph(
-        canvas,
-        right - 92.0 - 46.0,
-        cy + 15.0,
-        status.wifi_connected,
-    );
-    let mut glyph_x = right - 92.0 - 46.0 - 78.0;
+    // Then, leftward: Wi-Fi (or the cellular data technology when Wi-Fi is
+    // off), the cellular bars, and the alarm and Do Not Disturb glyphs.
+    let wifi_x = right - 92.0 - 46.0;
+    let cellular_rat = match &status.cellular {
+        Cellular::Bars { rat, .. } => *rat,
+        _ => None,
+    };
+    let mut edge = if status.wifi_connected || status.cellular == Cellular::Hidden {
+        draw_wifi_glyph(canvas, wifi_x, cy + 15.0, status.wifi_connected);
+        wifi_x - 35.0
+    } else if let Some(rat) = cellular_rat {
+        let width = text::measure(rat, Weight::SemiBold, 40.0);
+        let x = wifi_x + 35.0 - width;
+        let baseline = text::centered_baseline(cy, Weight::SemiBold, 40.0);
+        text::draw(canvas, rat, x, baseline, Weight::SemiBold, 40.0, WHITE, 1.0);
+        x
+    } else {
+        wifi_x + 35.0
+    };
+    match &status.cellular {
+        Cellular::Hidden => {}
+        Cellular::Bars { level, .. } => {
+            draw_signal_bars(canvas, edge - 20.0, cy, *level);
+            edge -= 20.0 + SIGNAL_W;
+        }
+        Cellular::Text(label) => {
+            let width = text::measure(label, Weight::SemiBold, 38.0);
+            let baseline = text::centered_baseline(cy, Weight::SemiBold, 38.0);
+            let x = edge - 20.0 - width;
+            text::draw(
+                canvas,
+                label,
+                x,
+                baseline,
+                Weight::SemiBold,
+                38.0,
+                WHITE,
+                1.0,
+            );
+            edge = x;
+        }
+        Cellular::Airplane => {
+            draw_airplane(canvas, edge - 20.0 - 24.0, cy);
+            edge -= 20.0 + 48.0;
+        }
+    }
+    let mut glyph_x = edge - 43.0;
     if status.alarm_set {
         alerts::draw_status_alarm(canvas, (glyph_x, cy), WHITE);
         glyph_x -= 60.0;
@@ -1712,6 +1919,51 @@ pub fn draw_status_bar(canvas: &mut Canvas, status: &StatusInfo, background: Opt
     if status.dnd {
         crate::control_centre::draw_status_moon(canvas, (glyph_x, cy), background);
     }
+}
+
+/// Width of the four signal bars.
+const SIGNAL_W: f32 = 4.0 * 10.0 + 3.0 * 5.0;
+
+/// iOS-style signal: four rising bars ending at `right`, lit up to `level`.
+fn draw_signal_bars(canvas: &mut Canvas, right: f32, cy: f32, level: u8) {
+    let bottom = cy + 16.0;
+    for bar in 0..4_u8 {
+        let x = right - SIGNAL_W + f32::from(bar) * 15.0;
+        let h = 11.0 + f32::from(bar) * 7.0;
+        let alpha = if bar < level { 1.0 } else { 0.32 };
+        canvas.fill_rrect(RectF::new(x, bottom - h, 10.0, h), 3.0, WHITE, alpha);
+    }
+}
+
+fn draw_airplane(canvas: &mut Canvas, cx: f32, cy: f32) {
+    let mut plane = Path::new();
+    // Fuselage, wings and tail, nose pointing right.
+    plane.stroke_segment((cx - 22.0, cy), (cx + 20.0, cy), 8.0);
+    plane.polygon(&[
+        (cx + 2.0, cy - 3.0),
+        (cx - 8.0, cy - 22.0),
+        (cx - 2.0, cy - 22.0),
+        (cx + 12.0, cy - 3.0),
+    ]);
+    plane.polygon(&[
+        (cx + 2.0, cy + 3.0),
+        (cx - 8.0, cy + 22.0),
+        (cx - 2.0, cy + 22.0),
+        (cx + 12.0, cy + 3.0),
+    ]);
+    plane.polygon(&[
+        (cx - 16.0, cy - 2.0),
+        (cx - 22.0, cy - 11.0),
+        (cx - 18.0, cy - 11.0),
+        (cx - 10.0, cy - 2.0),
+    ]);
+    plane.polygon(&[
+        (cx - 16.0, cy + 2.0),
+        (cx - 22.0, cy + 11.0),
+        (cx - 18.0, cy + 11.0),
+        (cx - 10.0, cy + 2.0),
+    ]);
+    canvas.fill_path(&plane, WHITE, 1.0);
 }
 
 /// A banner over an app floats in its own small window (the app is not
@@ -1999,15 +2251,16 @@ mod tests {
 
     #[test]
     fn launcher_tiles_have_separate_hit_regions() {
-        let browser = app_icon_rect(0);
-        let system = app_icon_rect(1);
-        let (bx, by) = browser.center();
-        let (sx, sy) = system.center();
-        assert_eq!(launcher_app_at(bx as i16, by as i16), Some(AppId::Browser));
-        assert_eq!(launcher_app_at(sx as i16, sy as i16), Some(AppId::System));
+        for (index, app) in LAUNCHER_APPS.into_iter().enumerate() {
+            let (x, y) = app_icon_rect(index).center();
+            assert_eq!(launcher_app_at(x as i16, y as i16), Some(app));
+        }
+        let (_, by) = app_icon_rect(0).center();
         assert_eq!(launcher_app_at(540, 1200), None);
+        // Between the middle two icons, and past the dock's ends.
         assert_eq!(launcher_app_at(540, by as i16), None);
-        assert_eq!(launcher_app_at(1000, by as i16), None);
+        assert_eq!(launcher_app_at(1070, by as i16), None);
+        assert_eq!(launcher_app_at(10, by as i16), None);
     }
 
     #[test]
@@ -2044,6 +2297,12 @@ mod tests {
             battery_charging: true,
             alarm_set: true,
             dnd: true,
+            cellular: Cellular::Bars {
+                level: 3,
+                rat: Some("LTE"),
+            },
+            carrier: None,
+            call_pill: true,
         };
         draw_status_bar(&mut canvas, &status, Some(BLACK));
         let below = &canvas.pixels[(status_bar::HEIGHT as usize) * 1080..];
@@ -2099,6 +2358,9 @@ mod bench {
                 battery_charging: false,
                 alarm_set: false,
                 dnd: false,
+                cellular: Cellular::Hidden,
+                carrier: None,
+                call_pill: false,
             };
             let t = Instant::now();
             draw_status_bar(&mut canvas, &status, None);

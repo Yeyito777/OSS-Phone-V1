@@ -23,6 +23,8 @@ pub enum View {
     Launcher,
     System,
     Browser,
+    Phone,
+    Messages,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -30,14 +32,30 @@ pub enum View {
 pub enum AppId {
     System,
     Browser,
+    Phone,
+    Messages,
 }
 
 impl AppId {
+    pub const COUNT: usize = 4;
+    pub const ALL: [Self; Self::COUNT] = [Self::System, Self::Browser, Self::Phone, Self::Messages];
+
     pub fn from_view(view: View) -> Option<Self> {
         match view {
             View::System => Some(Self::System),
             View::Browser => Some(Self::Browser),
+            View::Phone => Some(Self::Phone),
+            View::Messages => Some(Self::Messages),
             View::Locked | View::Launcher => None,
+        }
+    }
+
+    pub fn view(self) -> View {
+        match self {
+            Self::System => View::System,
+            Self::Browser => View::Browser,
+            Self::Phone => View::Phone,
+            Self::Messages => View::Messages,
         }
     }
 
@@ -45,28 +63,26 @@ impl AppId {
         match self {
             Self::System => "System",
             Self::Browser => "Browser",
+            Self::Phone => "Phone",
+            Self::Messages => "Messages",
         }
     }
 
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "system" => Some(Self::System),
-            "browser" => Some(Self::Browser),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|app| app.cgroup_name() == value)
     }
 
     pub fn index(self) -> usize {
-        match self {
-            Self::System => 0,
-            Self::Browser => 1,
-        }
+        self as usize
     }
 
+    /// The app's id (`ctl`, notifications, its freezer cgroup).
     pub fn cgroup_name(self) -> &'static str {
         match self {
             Self::System => "system",
             Self::Browser => "browser",
+            Self::Phone => "phone",
+            Self::Messages => "messages",
         }
     }
 }
@@ -94,7 +110,7 @@ pub struct PublicAppState {
 
 impl View {
     pub fn is_app(self) -> bool {
-        matches!(self, Self::System | Self::Browser)
+        AppId::from_view(self).is_some()
     }
 }
 
@@ -158,6 +174,55 @@ pub struct PointerGesture {
     pub keyboard_initial_sent: bool,
     pub keyboard_repeat_uppercase: bool,
     pub keyboard_next_repeat_at: Option<Instant>,
+    /// The touch is a drag handed to the app in front (see `AppPointer`).
+    pub forwarding: bool,
+}
+
+/// What a tapped notification asked its app to show (`open.target`):
+/// handed over in Moon's state, where the app looks when it comes forward.
+#[derive(Debug, Clone)]
+pub struct OpenTarget {
+    pub app: AppId,
+    pub target: String,
+    pub serial: u64,
+    pub at: Instant,
+}
+
+impl OpenTarget {
+    pub fn new(app: AppId, target: String) -> Self {
+        static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self {
+            app,
+            target,
+            serial: SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            at: Instant::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicOpenTarget {
+    pub app: AppId,
+    pub target: String,
+    pub serial: u64,
+    pub age_ms: u64,
+}
+
+/// Pointer events for the app in front, sent through XTEST by the main
+/// loop. Moon's own apps (System, Phone, Messages) get drags as a held
+/// button so their lists scroll; taps reach every app on release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppPointer {
+    Press(i16, i16),
+    Motion(i16, i16),
+    Release(i16, i16),
+}
+
+impl View {
+    /// Moon's own apps take drags (the Browser keeps its own gestures).
+    pub fn takes_drags(self) -> bool {
+        matches!(self, Self::System | Self::Phone | Self::Messages)
+    }
 }
 
 #[derive(Debug)]
@@ -222,12 +287,19 @@ pub struct ShellState {
     pub alerts: crate::alerts::Alerts,
     /// Quick settings (control_centre.rs).
     pub control: crate::control_centre::ControlCentre,
+    /// Telephony status and the call screens (calls.rs).
+    pub calls: crate::calls::CallUi,
     /// Wallpaper and Auto-Lock (settings.rs); `settings_changed` asks the
     /// main loop to save and apply them.
     pub settings: crate::settings::Settings,
     pub settings_changed: bool,
     /// The last touch or key, for Auto-Lock.
     pub last_input: Instant,
+    /// The app shown before the current one (the bottom-edge swipe).
+    previous_app: Option<AppId>,
+    /// Drag events for the app in front, drained by the main loop.
+    pub app_pointer: Vec<AppPointer>,
+    pub open_target: Option<OpenTarget>,
     active_app_focused: bool,
     launch: Option<Launch>,
 }
@@ -259,6 +331,9 @@ pub struct PublicState {
     pub alerts: crate::alerts::PublicAlerts,
     pub settings: crate::settings::Settings,
     pub control_centre_open: bool,
+    pub telephony: crate::calls::PublicCalls,
+    /// The last notification target for an app (see `OpenTarget`).
+    pub open_target: Option<PublicOpenTarget>,
     /// Frame timing of the last finished animation (see `profile on`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub animation: Option<String>,
@@ -311,9 +386,13 @@ impl ShellState {
             shell_exposed: false,
             alerts: Default::default(),
             control: Default::default(),
+            calls: Default::default(),
             settings: Default::default(),
             settings_changed: false,
             last_input: Instant::now(),
+            previous_app: None,
+            app_pointer: Vec::new(),
+            open_target: None,
             active_app_focused: false,
             launch: None,
         }
@@ -338,11 +417,7 @@ impl ShellState {
             pin_digits: self.pin_input.len(),
             failed_attempts: self.failed_attempts,
             lockout_remaining_ms: remaining.as_millis().min(u64::MAX as u128) as u64,
-            current_app: match self.view {
-                View::System => Some("System"),
-                View::Browser => Some("Browser"),
-                View::Locked | View::Launcher => None,
-            },
+            current_app: AppId::from_view(self.view).map(AppId::display_name),
             volume: self.volume,
             battery_percent: self.battery_percent,
             wifi_connected: self.wifi_connected,
@@ -360,6 +435,13 @@ impl ShellState {
             alerts: self.alerts_public(),
             settings: self.settings.clone(),
             control_centre_open: self.control.open,
+            telephony: self.calls_public(),
+            open_target: self.open_target.as_ref().map(|open| PublicOpenTarget {
+                app: open.app,
+                target: open.target.clone(),
+                serial: open.serial,
+                age_ms: open.at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+            }),
             animation: None,
         }
     }
@@ -384,6 +466,7 @@ impl ShellState {
         self.cancel_app_launch();
         self.alerts_cancel_touch();
         self.control_cancel_touch();
+        self.call_cancel_touch();
         self.last_action = "lock".into();
         self.redraw = true;
     }
@@ -655,11 +738,7 @@ impl ShellState {
             launch.resumed = true;
             launch.window_mapped_at.get_or_insert_with(Instant::now);
         }
-        self.last_action = match app {
-            AppId::System => "system_resumed",
-            AppId::Browser => "browser_resumed",
-        }
-        .into();
+        self.last_action = format!("{}_resumed", app.cgroup_name());
         self.redraw = true;
     }
 
@@ -675,8 +754,8 @@ impl ShellState {
         self.begin_launch(AppId::System);
     }
 
-    pub fn launch_browser(&mut self) {
-        self.begin_launch(AppId::Browser);
+    pub fn open_app(&mut self, app: AppId) {
+        self.begin_launch(app);
     }
 
     fn begin_launch(&mut self, app: AppId) {
@@ -685,10 +764,7 @@ impl ShellState {
     }
 
     fn begin_launch_from(&mut self, app: AppId, origin: RectF, radius: f32) {
-        let view = match app {
-            AppId::System => View::System,
-            AppId::Browser => View::Browser,
-        };
+        let view = app.view();
         if self.screen_awake && self.view != View::Locked && self.view != view {
             let now = Instant::now();
             self.keyboard.hide();
@@ -697,6 +773,9 @@ impl ShellState {
             {
                 // Switching straight from another app: keep its snapshot.
                 self.pending_capture = Some(current);
+            }
+            if let Some(current) = AppId::from_view(self.view) {
+                self.previous_app = Some(current);
             }
             self.view = view;
             self.active_app_focused = false;
@@ -714,21 +793,22 @@ impl ShellState {
                 resumed: false,
                 window_mapped_at: None,
             });
-            self.last_action = match app {
-                AppId::System => "launch_system",
-                AppId::Browser => "launch_browser",
-            }
-            .into();
+            self.last_action = format!("launch_{}", app.cgroup_name());
             self.redraw = true;
         }
     }
 
-    /// Switches straight to the other app (bottom-edge horizontal swipe).
+    /// Switches straight to the previous app (bottom-edge horizontal
+    /// swipe).
     pub fn switch_app(&mut self) {
-        let other = match self.view {
-            View::System => AppId::Browser,
-            View::Browser => AppId::System,
-            View::Locked | View::Launcher => return,
+        let Some(current) = AppId::from_view(self.view) else {
+            return;
+        };
+        let other = match self.previous_app.filter(|app| *app != current) {
+            Some(app) => app,
+            // Before any switch: the System app and the Browser swap.
+            None if current == AppId::System => AppId::Browser,
+            None => AppId::System,
         };
         self.begin_launch(other);
         self.last_action = "swipe_switch_app".into();
@@ -964,11 +1044,7 @@ impl ShellState {
             && launch.window_mapped_at.is_none()
         {
             launch.window_mapped_at = Some(Instant::now());
-            self.last_action = match launch.app {
-                AppId::System => "system_window_warming",
-                AppId::Browser => "browser_window_warming",
-            }
-            .into();
+            self.last_action = format!("{}_window_warming", launch.app.cgroup_name());
             self.redraw = true;
         }
     }
@@ -980,7 +1056,8 @@ impl ShellState {
             Duration::ZERO
         } else {
             match launch.app {
-                AppId::System => SYSTEM_FIRST_PAINT_DELAY,
+                // Phone and Messages are the System app's binary.
+                AppId::System | AppId::Phone | AppId::Messages => SYSTEM_FIRST_PAINT_DELAY,
                 AppId::Browser => BROWSER_FIRST_PAINT_DELAY,
             }
         };
@@ -1012,11 +1089,7 @@ impl ShellState {
             return;
         };
         self.launch = None;
-        self.last_action = match launch.app {
-            AppId::System => "system_ready",
-            AppId::Browser => "browser_ready",
-        }
-        .into();
+        self.last_action = format!("{}_ready", launch.app.cgroup_name());
         self.redraw = true;
     }
 
@@ -1055,12 +1128,14 @@ impl ShellState {
             || unlocking
             || self.alerts_animating(now)
             || self.control.animating(now)
+            || self.calls_animating(now)
     }
 
     pub fn tick(&mut self) {
         let now = Instant::now();
         self.alerts_tick(now);
         self.control_tick(now);
+        self.calls_tick(now);
         if self.is_lockout_active() && self.view == View::Locked {
             // Repaint the "Try again in N s" countdown.
             self.redraw = true;
@@ -1280,7 +1355,7 @@ mod tests {
     #[test]
     fn browser_is_a_first_class_external_app() {
         let mut state = ShellState::new(false, 50);
-        state.launch_browser();
+        state.open_app(AppId::Browser);
         assert_eq!(state.view, View::Browser);
         assert_eq!(public(&state).current_app, Some("Browser"));
         assert!(state.view.is_app());
@@ -1319,7 +1394,7 @@ mod tests {
     #[test]
     fn resumed_app_reveals_without_waiting_for_first_paint() {
         let mut state = ShellState::new(false, 50);
-        state.launch_browser();
+        state.open_app(AppId::Browser);
         state.note_app_resumed(AppId::Browser);
         state.launch.as_mut().unwrap().card.spring.started -= Duration::from_secs(2);
         assert!(state.app_ready_to_reveal());
@@ -1536,7 +1611,7 @@ mod tests {
         state.set_active_app_focused(true);
         assert!(!state.active_app_focused());
 
-        state.launch_browser();
+        state.open_app(AppId::Browser);
         state.replace_managed_windows(vec![42]);
         assert!(!state.active_app_focused());
         state.set_active_app_focused(true);
@@ -1582,7 +1657,7 @@ mod tests {
         let mut state = ShellState::new(true, 50);
         state.managed_windows.push(42);
         assert!(!state.show_keyboard(KeyboardPurpose::Url));
-        state.launch_browser();
+        state.open_app(AppId::Browser);
         state.launch_system();
         assert_eq!(state.view, View::Locked);
         assert!(!state.keyboard.is_visible());

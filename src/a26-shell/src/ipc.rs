@@ -33,8 +33,7 @@ pub enum Command {
     ProfileBudget(u32),
     /// Diagnostics: log every composed frame's nodes.
     ProfileFrames(bool),
-    LaunchSystem,
-    LaunchBrowser,
+    Launch(AppId),
     KeyboardShow(KeyboardPurpose),
     KeyboardHide,
     SwipeUp,
@@ -206,9 +205,10 @@ fn parse_command(line: &str) -> Result<Command, String> {
             Command::PointerEnd(parse_i16(parts.next(), "x")?, parse_i16(parts.next(), "y")?)
         }
         "launch" => match parts.next() {
-            Some(value) if value.eq_ignore_ascii_case("system") => Command::LaunchSystem,
-            Some(value) if value.eq_ignore_ascii_case("browser") => Command::LaunchBrowser,
-            Some(_) => return Err("app must be System or Browser".into()),
+            Some(value) => match AppId::parse(&value.to_ascii_lowercase()) {
+                Some(app) => Command::Launch(app),
+                None => return Err("app must be System, Browser, Phone or Messages".into()),
+            },
             None => return Err("missing app noun".into()),
         },
         "keyboard" => match parts.next() {
