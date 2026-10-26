@@ -47,6 +47,10 @@ void gpu_target_fini(struct gpu *g, struct gpu_target *t);
 GLenum gpu_import_texture(struct gpu *g, int fd, uint32_t width, uint32_t height,
                           uint32_t pitch, uint32_t fourcc, EGLImageKHR *image,
                           GLuint *texture);
+/* The same, with the pixels `offset` bytes into the buffer. */
+GLenum gpu_import_texture_at(struct gpu *g, int fd, uint32_t width,
+                             uint32_t height, uint32_t pitch, uint32_t offset,
+                             uint32_t fourcc, EGLImageKHR *image, GLuint *texture);
 
 /* After the frame's draws: a native fence fd that signals when the GPU is
  * done (flushes), or -1 (then the frame was finished synchronously). */

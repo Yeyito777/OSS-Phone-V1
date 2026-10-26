@@ -191,10 +191,17 @@ void gpu_target_fini(struct gpu *g, struct gpu_target *t) {
 GLenum gpu_import_texture(struct gpu *g, int fd, uint32_t width, uint32_t height,
                           uint32_t pitch, uint32_t fourcc, EGLImageKHR *image,
                           GLuint *texture) {
+    return gpu_import_texture_at(g, fd, width, height, pitch, 0, fourcc, image,
+                                 texture);
+}
+
+GLenum gpu_import_texture_at(struct gpu *g, int fd, uint32_t width,
+                             uint32_t height, uint32_t pitch, uint32_t offset,
+                             uint32_t fourcc, EGLImageKHR *image, GLuint *texture) {
     EGLint attr[] = {EGL_WIDTH, (EGLint)width, EGL_HEIGHT, (EGLint)height,
                      EGL_LINUX_DRM_FOURCC_EXT, (EGLint)fourcc,
                      EGL_DMA_BUF_PLANE0_FD_EXT, fd,
-                     EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
+                     EGL_DMA_BUF_PLANE0_OFFSET_EXT, (EGLint)offset,
                      EGL_DMA_BUF_PLANE0_PITCH_EXT, (EGLint)pitch, EGL_NONE};
     *image = g->create_image(g->dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
                              NULL, attr);

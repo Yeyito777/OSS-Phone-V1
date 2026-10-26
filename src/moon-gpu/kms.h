@@ -63,6 +63,10 @@ void kms_close(struct kms *k);
 /* Imports a dmabuf as a framebuffer. */
 int kms_add_fb(struct kms *k, int dmabuf_fd, uint32_t width, uint32_t height,
                uint32_t pitch, uint32_t fourcc, uint32_t *fb_id);
+/* The same, with the pixels `offset` bytes into the buffer. */
+int kms_add_fb_offset(struct kms *k, int dmabuf_fd, uint32_t width,
+                      uint32_t height, uint32_t pitch, uint32_t offset,
+                      uint32_t fourcc, uint32_t *fb_id);
 void kms_rm_fb(struct kms *k, uint32_t fb_id);
 
 /* Finds which planes scale (TEST_ONLY with `fb`, a full-screen buffer). */

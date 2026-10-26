@@ -294,6 +294,12 @@ void kms_close(struct kms *k) {
 
 int kms_add_fb(struct kms *k, int dmabuf_fd, uint32_t width, uint32_t height,
                uint32_t pitch, uint32_t fourcc, uint32_t *fb_id) {
+    return kms_add_fb_offset(k, dmabuf_fd, width, height, pitch, 0, fourcc, fb_id);
+}
+
+int kms_add_fb_offset(struct kms *k, int dmabuf_fd, uint32_t width,
+                      uint32_t height, uint32_t pitch, uint32_t offset,
+                      uint32_t fourcc, uint32_t *fb_id) {
     struct drm_prime_handle ph = {.fd = dmabuf_fd};
     int r = xioctl(k->fd, DRM_IOCTL_PRIME_FD_TO_HANDLE, &ph);
     if (r) {
@@ -306,6 +312,7 @@ int kms_add_fb(struct kms *k, int dmabuf_fd, uint32_t width, uint32_t height,
         .pixel_format = fourcc,
         .handles = {ph.handle},
         .pitches = {pitch},
+        .offsets = {offset},
     };
     r = xioctl(k->fd, DRM_IOCTL_MODE_ADDFB2, &f);
     /* The framebuffer holds its own reference to the GEM object. */

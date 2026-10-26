@@ -324,6 +324,26 @@ blocking (otherwise its stray flip event offsets every later one and
 commits fail with EBUSY), and a fresh frame should be committed only after
 the previous one's flip event.
 
+## The protocol and its versions
+
+`src/moon-gpu/proto.h` is the reference. Moon (`gpu.rs`) says which version
+it speaks in `MG_HELLO`; the compositor accepts versions 2 to 3 and echoes
+the client's in `MG_WELCOME`, so a client never sees newer fields than it
+asked for.
+
+- **v2**: the protocol Moon speaks today.
+- **v3**: `mg_surface_shm` gains `offset`, the byte offset of the pixels in
+  the fd (a multiple of 4), for Wayland clients' buffers: a `wl_shm` buffer
+  lives inside a pool, and a dmabuf plane can start inside its buffer. For
+  a memfd the compositor maps from the page below the offset; for a dmabuf
+  the offset goes to the EGL import (`EGL_DMA_BUF_PLANE0_OFFSET_EXT`) and to
+  the KMS framebuffer (`offsets[0]`), so the buffer stays sampled in place
+  and plane-eligible. A v2 message simply ends before the field (24 bytes
+  instead of 28) and means offset 0.
+
+A v2 client works with a v3 compositor unchanged; a v3 client needs a v3
+compositor, so deploy the compositor before such a client.
+
 ## What is built (branch `gpu-compositor`)
 
 | Piece | Where |

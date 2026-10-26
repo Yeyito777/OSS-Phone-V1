@@ -98,8 +98,11 @@ struct surface {
     uint32_t fourcc;
     int opaque;
     int fd;          /* dmabuf, or -1 */
-    uint8_t *map;    /* CPU view: a memfd, or a cached dmabuf */
+    uint8_t *map;    /* CPU view: a memfd, or a cached dmabuf (at offset) */
     size_t map_len;
+    void *map_base;  /* the mapping itself, from the page below offset */
+    size_t map_base_len;
+    uint32_t offset; /* of the pixels in the fd (protocol v3) */
     int memfd;       /* GPU texture is a copy of map, refreshed on damage */
     struct texture tex;
     EGLImageKHR image;
@@ -160,6 +163,7 @@ struct comp {
     uint32_t last_seq;
     uint64_t path_counts[4];
     const char *flight_miss;
+    uint32_t client_version;
 };
 
 static void dmabuf_sync(int fd, uint64_t flags) {
@@ -205,8 +209,8 @@ static void release(struct comp *c, struct surface *s) {
         c->g.destroy_image(c->g.dpy, s->image);
     if (s->fb)
         kms_rm_fb(&c->k, s->fb);
-    if (s->map)
-        munmap(s->map, s->map_len);
+    if (s->map_base)
+        munmap(s->map_base, s->map_base_len);
     if (s->fd >= 0)
         close(s->fd);
     memset(s, 0, sizeof *s);
@@ -270,6 +274,27 @@ static void upload_rects(struct surface *s, const struct mg_rect *rects,
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 }
 
+/* Maps a surface's pixels: `s->offset` bytes into `fd`, from the page
+ * below (mmap offsets must be page-aligned). Writable when possible. */
+static int map_pixels(struct surface *s, int fd, int writable) {
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    size_t lead = s->offset % page;
+    s->map_len = (size_t)s->stride * s->height;
+    s->map_base_len = lead + s->map_len;
+    void *m = MAP_FAILED;
+    if (writable)
+        m = mmap(NULL, s->map_base_len, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
+                 (off_t)(s->offset - lead));
+    if (m == MAP_FAILED)
+        m = mmap(NULL, s->map_base_len, PROT_READ, MAP_SHARED, fd,
+                 (off_t)(s->offset - lead));
+    if (m == MAP_FAILED)
+        return -1;
+    s->map_base = m;
+    s->map = (uint8_t *)m + lead;
+    return 0;
+}
+
 /* Sets up a dmabuf-backed surface: CPU view, GPU texture, scanout. */
 static int adopt_dmabuf(struct comp *c, struct surface *s, int fd, int width,
                         int height, int stride, uint32_t fourcc, int opaque,
@@ -282,27 +307,23 @@ static int adopt_dmabuf(struct comp *c, struct surface *s, int fd, int width,
     s->opaque = opaque;
     s->map_len = (size_t)stride * height;
     if (need_map) {
-        s->map = mmap(NULL, s->map_len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        if (s->map == MAP_FAILED)
-            s->map = mmap(NULL, s->map_len, PROT_READ, MAP_SHARED, fd, 0);
-        if (s->map == MAP_FAILED) {
-            s->map = NULL;
+        if (map_pixels(s, fd, 1))
             return -1;
-        }
         s->cpu = (struct cpu_image){s->map, width, height, stride, opaque};
     }
     if (c->tier == TIER_GPU) {
-        s->tex.target = gpu_import_texture(&c->g, fd, (uint32_t)width,
-                                           (uint32_t)height, (uint32_t)stride,
-                                           fourcc, &s->image, &s->tex.id);
+        s->tex.target = gpu_import_texture_at(&c->g, fd, (uint32_t)width,
+                                              (uint32_t)height, (uint32_t)stride,
+                                              s->offset, fourcc, &s->image,
+                                              &s->tex.id);
         if (!s->tex.target)
             return -1;
         s->tex.width = width;
         s->tex.height = height;
         s->tex.opaque = opaque;
     }
-    if (kms_add_fb(&c->k, fd, (uint32_t)width, (uint32_t)height,
-                   (uint32_t)stride, fourcc, &s->fb))
+    if (kms_add_fb_offset(&c->k, fd, (uint32_t)width, (uint32_t)height,
+                          (uint32_t)stride, s->offset, fourcc, &s->fb))
         s->fb = 0; /* drawable, just not on a plane */
     return 0;
 }
@@ -482,11 +503,13 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
     case MG_HELLO: {
         NEED(struct mg_hello);
         const struct mg_hello *m = (const void *)body;
-        if (m->version != MG_PROTO_VERSION) {
-            LOG("client speaks version %u, not %u", m->version, MG_PROTO_VERSION);
+        if (m->version < MG_PROTO_MIN_VERSION || m->version > MG_PROTO_VERSION) {
+            LOG("client speaks version %u, not %u-%u", m->version,
+                MG_PROTO_MIN_VERSION, MG_PROTO_VERSION);
             drop_client(c, "version");
             return;
         }
+        c->client_version = m->version;
         /* A new client brings its own surfaces; the old ones may still be
          * on a plane until the flip in flight completes. */
         wait_flip(c);
@@ -494,7 +517,7 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
         uint64_t mhz = (uint64_t)c->k.mode.clock * 1000000ull /
                        ((uint64_t)c->k.mode.htotal * c->k.mode.vtotal);
         struct mg_welcome w = {
-            .version = MG_PROTO_VERSION,
+            .version = m->version,
             .width = (uint32_t)c->width,
             .height = (uint32_t)c->height,
             .refresh_mhz = (uint32_t)mhz,
@@ -513,19 +536,27 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
         break;
     }
     case MG_SURFACE_SHM: {
-        NEED(struct mg_surface_shm);
-        const struct mg_surface_shm *m = (const void *)body;
+        if (blen < MG_SURFACE_SHM_V2_SIZE) {
+            LOG("short message %u", h->type);
+            return;
+        }
+        /* v2 messages end before `offset`. */
+        struct mg_surface_shm shm = {0};
+        memcpy(&shm, body, blen < sizeof shm ? blen : sizeof shm);
+        const struct mg_surface_shm *m = &shm;
         uint32_t fourcc;
         int opaque;
         if (nfds < 1 || !m->id || m->id == MG_MIRROR_ID || !m->width ||
             !m->height || m->width > 8192 || m->height > 8192 ||
-            m->stride < m->width * 4 || surface_format(m->format, &fourcc, &opaque)) {
+            m->stride < m->width * 4 || (m->offset & 3) ||
+            surface_format(m->format, &fourcc, &opaque)) {
             LOG("bad surface %u", m->id);
             break;
         }
         struct surface *s = new_surface(c, m->id);
         if (!s)
             break;
+        s->offset = m->offset;
         if (m->flags & MG_SURFACE_DMABUF) {
             int fd = dup(fds[0]);
             if (adopt_dmabuf(c, s, fd, (int)m->width, (int)m->height,
@@ -542,11 +573,8 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
         s->fourcc = fourcc;
         s->opaque = opaque;
         s->memfd = 1;
-        s->map_len = (size_t)m->stride * m->height;
-        s->map = mmap(NULL, s->map_len, PROT_READ, MAP_SHARED, fds[0], 0);
-        if (s->map == MAP_FAILED) {
+        if (map_pixels(s, fds[0], 0)) {
             LOG("surface %u: mmap: %s", m->id, strerror(errno));
-            s->map = NULL;
             free_surface(c, s);
             break;
         }

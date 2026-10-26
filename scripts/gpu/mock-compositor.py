@@ -92,12 +92,15 @@ class Mock:
         body = msg[8:length]
         if kind == 1:  # HELLO
             refresh = 120000
-            self.send(64, struct.pack("<IIIIQII", 2, W, H, refresh, 8333333, 1, 0))
-            self.send(65, struct.pack("<IIIIII", 0, W, H, STRIDE, 1, 0), self.mirror_fd)
+            (version,) = struct.unpack_from("<I", body)
+            self.send(64, struct.pack("<IIIIQII", version, W, H, refresh, 8333333, 1, 0))
+            self.send(65, struct.pack("<IIIIIII", 0, W, H, STRIDE, 1, 0, 0), self.mirror_fd)
             self.say("hello")
         elif kind == 2:  # SURFACE_SHM
             sid, w, h, stride, fmt, flags = struct.unpack_from("<IIIIII", body)
-            mem = mmap.mmap(fds[0], stride * h, prot=mmap.PROT_READ)
+            offset = struct.unpack_from("<I", body, 24)[0] if len(body) >= 28 else 0  # v3
+            mem = mmap.mmap(fds[0], offset + stride * h, prot=mmap.PROT_READ)
+            mem = memoryview(mem)[offset:]
             self.surfaces[sid] = Surface(w, h, stride, fmt, mem)
             self.say(f"surface {sid} {w}x{h} fmt {fmt}")
         elif kind == 3:  # SURFACE_DAMAGE

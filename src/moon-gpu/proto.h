@@ -1,4 +1,4 @@
-/* moon-compositor's wire protocol (version 2).
+/* moon-compositor's wire protocol (version 3; versions 2 and 3 accepted).
  *
  * One client (Moon) on a SOCK_SEQPACKET Unix socket: every message is one
  * packet, a header followed by its body, little-endian, 4-byte aligned. File
@@ -14,7 +14,16 @@
 
 #include <stdint.h>
 
-#define MG_PROTO_VERSION 2
+/* The newest version this side speaks, and the oldest it still accepts.
+ * The client's MG_HELLO names the version it speaks; MG_WELCOME echoes it
+ * when accepted (a client must not use newer fields than it said).
+ *   v2: the October 2026 protocol.
+ *   v3: mg_surface_shm.offset, the byte offset of the pixels in the fd
+ *       (wl_shm buffers live inside a pool). Absent (v2 messages), it is 0.
+ * Compatibility: a v2 client works with a v3 compositor unchanged; a v3
+ * client needs a v3 compositor (deploy the compositor first). */
+#define MG_PROTO_VERSION 3
+#define MG_PROTO_MIN_VERSION 2
 #define MG_MIRROR_ID 0xffffffffu
 #define MG_MAX_PACKET (64 * 1024)
 
@@ -83,7 +92,13 @@ struct mg_surface_shm {
     uint32_t width, height, stride;
     uint32_t format;
     uint32_t flags;
+    /* v3: where the pixels start in the fd, in bytes (a multiple of 4; any
+     * value for a memfd, which the compositor maps from the page below; a
+     * dmabuf offset goes to the GPU import and the KMS framebuffer). A v2
+     * message ends before this field. */
+    uint32_t offset;
 };
+#define MG_SURFACE_SHM_V2_SIZE 24 /* bytes of mg_surface_shm in v2 */
 
 struct mg_damage {
     uint32_t id;     /* surface, or 0 for the mirror */
