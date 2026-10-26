@@ -1,0 +1,1314 @@
+[ 1100.164] flip serial 0 seq 118171 interval 25832.983 ms (vblanks 3114) planes 0.000 ms
+[ 1100.363] flip serial 30005 seq 118195 interval 199.126 ms (vblanks 24) gpu 5.060 ms: corner radius
+[ 1100.371] flip serial 30006 seq 118196 interval 8.275 ms (vblanks 1) gpu 4.792 ms: corner radius
+[ 1100.379] flip serial 30007 seq 118197 interval 8.311 ms (vblanks 1) gpu 3.468 ms: corner radius
+[ 1100.388] flip serial 30008 seq 118198 interval 8.275 ms (vblanks 1) gpu 3.902 ms: corner radius
+[ 1100.396] flip serial 30009 seq 118199 interval 8.298 ms (vblanks 1) gpu 2.845 ms: corner radius
+[ 1100.404] flip serial 30010 seq 118200 interval 8.297 ms (vblanks 1) gpu 3.433 ms: corner radius
+[ 1100.413] flip serial 30011 seq 118201 interval 8.298 ms (vblanks 1) gpu 2.897 ms: corner radius
+[ 1100.421] flip serial 30012 seq 118202 interval 8.302 ms (vblanks 1) gpu 4.094 ms: corner radius
+[ 1100.429] flip serial 30013 seq 118203 interval 8.289 ms (vblanks 1) gpu 3.286 ms: corner radius
+[ 1100.438] flip serial 30014 seq 118204 interval 8.297 ms (vblanks 1) gpu 3.703 ms: corner radius
+[ 1100.446] flip serial 30015 seq 118205 interval 8.293 ms (vblanks 1) gpu 3.296 ms: corner radius
+[ 1100.454] flip serial 30016 seq 118206 interval 8.297 ms (vblanks 1) gpu 4.661 ms: corner radius
+[ 1100.462] flip serial 30017 seq 118207 interval 8.296 ms (vblanks 1) gpu 3.387 ms: corner radius
+[ 1100.471] flip serial 30018 seq 118208 interval 8.294 ms (vblanks 1) gpu 4.053 ms: corner radius
+[ 1100.479] flip serial 30019 seq 118209 interval 8.297 ms (vblanks 1) gpu 3.332 ms: corner radius
+[ 1100.487] flip serial 30020 seq 118210 interval 8.294 ms (vblanks 1) gpu 3.318 ms: corner radius
+[ 1100.496] flip serial 30021 seq 118211 interval 8.298 ms (vblanks 1) gpu 3.379 ms: corner radius
+[ 1100.504] flip serial 30022 seq 118212 interval 8.299 ms (vblanks 1) gpu 4.015 ms: corner radius
+[ 1100.512] flip serial 30023 seq 118213 interval 8.292 ms (vblanks 1) gpu 3.165 ms: corner radius
+[ 1100.521] flip serial 30024 seq 118214 interval 8.295 ms (vblanks 1) gpu 3.240 ms: corner radius
+[ 1100.529] flip serial 30025 seq 118215 interval 8.294 ms (vblanks 1) gpu 3.242 ms: corner radius
+[ 1100.537] flip serial 30026 seq 118216 interval 8.303 ms (vblanks 1) gpu 3.148 ms: corner radius
+[ 1100.545] flip serial 30027 seq 118217 interval 8.298 ms (vblanks 1) gpu 3.600 ms: corner radius
+[ 1100.554] flip serial 30028 seq 118218 interval 8.287 ms (vblanks 1) gpu 3.384 ms: corner radius
+[ 1100.562] flip serial 30029 seq 118219 interval 8.300 ms (vblanks 1) gpu 3.579 ms: corner radius
+[ 1100.570] flip serial 30030 seq 118220 interval 8.293 ms (vblanks 1) gpu 3.392 ms: corner radius
+[ 1100.579] flip serial 30031 seq 118221 interval 8.300 ms (vblanks 1) gpu 4.066 ms: corner radius
+[ 1100.587] flip serial 30032 seq 118222 interval 8.290 ms (vblanks 1) gpu 3.452 ms: corner radius
+[ 1100.595] flip serial 30033 seq 118223 interval 8.293 ms (vblanks 1) gpu 3.491 ms: corner radius
+[ 1100.603] flip serial 30034 seq 118224 interval 8.300 ms (vblanks 1) gpu 3.318 ms: corner radius
+[ 1100.612] flip serial 30035 seq 118225 interval 8.296 ms (vblanks 1) gpu 4.226 ms: corner radius
+[ 1100.620] flip serial 30036 seq 118226 interval 8.299 ms (vblanks 1) gpu 3.560 ms: corner radius
+[ 1100.628] flip serial 30037 seq 118227 interval 8.292 ms (vblanks 1) gpu 4.766 ms: corner radius
+[ 1100.637] flip serial 30038 seq 118228 interval 8.299 ms (vblanks 1) gpu 3.498 ms: corner radius
+[ 1100.645] flip serial 30039 seq 118229 interval 8.293 ms (vblanks 1) gpu 3.323 ms: corner radius
+[ 1100.653] flip serial 30040 seq 118230 interval 8.297 ms (vblanks 1) gpu 3.831 ms: corner radius
+[ 1100.661] flip serial 30041 seq 118231 interval 8.295 ms (vblanks 1) gpu 3.548 ms: corner radius
+[ 1100.670] flip serial 30042 seq 118232 interval 8.295 ms (vblanks 1) gpu 3.357 ms: corner radius
+[ 1100.678] flip serial 30043 seq 118233 interval 8.301 ms (vblanks 1) gpu 4.044 ms: corner radius
+[ 1100.687] flip serial 30044 seq 118234 interval 8.290 ms (vblanks 1) gpu 3.385 ms: corner radius
+[ 1100.695] flip serial 30045 seq 118235 interval 8.299 ms (vblanks 1) gpu 4.493 ms: corner radius
+[ 1100.703] flip serial 30046 seq 118236 interval 8.294 ms (vblanks 1) gpu 3.591 ms: corner radius
+[ 1100.711] flip serial 30047 seq 118237 interval 8.296 ms (vblanks 1) gpu 3.362 ms: corner radius
+[ 1100.720] flip serial 30048 seq 118238 interval 8.298 ms (vblanks 1) gpu 4.224 ms: corner radius
+[ 1100.728] flip serial 30049 seq 118239 interval 8.306 ms (vblanks 1) gpu 3.461 ms: corner radius
+[ 1100.736] flip serial 30050 seq 118240 interval 8.286 ms (vblanks 1) gpu 3.325 ms: corner radius
+[ 1100.744] flip serial 30051 seq 118241 interval 8.294 ms (vblanks 1) gpu 3.751 ms: corner radius
+[ 1100.753] flip serial 30052 seq 118242 interval 8.295 ms (vblanks 1) gpu 3.446 ms: corner radius
+[ 1100.761] flip serial 30053 seq 118243 interval 8.302 ms (vblanks 1) gpu 3.343 ms: corner radius
+[ 1100.769] flip serial 30054 seq 118244 interval 8.288 ms (vblanks 1) gpu 3.352 ms: corner radius
+[ 1100.778] flip serial 30055 seq 118245 interval 8.300 ms (vblanks 1) gpu 4.689 ms: corner radius
+[ 1100.786] flip serial 30056 seq 118246 interval 8.290 ms (vblanks 1) gpu 3.378 ms: corner radius
+[ 1100.794] flip serial 30057 seq 118247 interval 8.299 ms (vblanks 1) gpu 4.754 ms: corner radius
+[ 1100.802] flip serial 30058 seq 118248 interval 8.299 ms (vblanks 1) gpu 3.404 ms: corner radius
+[ 1100.811] flip serial 30059 seq 118249 interval 8.291 ms (vblanks 1) gpu 3.225 ms: corner radius
+[ 1100.819] flip serial 30060 seq 118250 interval 8.296 ms (vblanks 1) gpu 3.305 ms: corner radius
+[ 1100.827] flip serial 30061 seq 118251 interval 8.296 ms (vblanks 1) gpu 3.340 ms: corner radius
+[ 1100.836] flip serial 30062 seq 118252 interval 8.296 ms (vblanks 1) gpu 4.416 ms: corner radius
+[ 1100.844] flip serial 30063 seq 118253 interval 8.295 ms (vblanks 1) gpu 3.438 ms: corner radius
+[ 1100.852] flip serial 30064 seq 118254 interval 8.297 ms (vblanks 1) gpu 3.806 ms: corner radius
+[ 1100.870] flip serial 30065 seq 118256 interval 16.776 ms (vblanks 2) planes 0.000 ms
+[ 1100.877] flip serial 0 seq 118257 interval 8.119 ms (vblanks 1) planes 0.000 ms
+[ 1101.383] flip serial 0 seq 118318 interval 506.049 ms (vblanks 61) planes 0.000 ms
+[ 1102.387] flip serial 0 seq 118439 interval 1004.000 ms (vblanks 121) planes 0.000 ms
+[ 1103.275] flip serial 30066 seq 118546 interval 887.418 ms (vblanks 107) gpu 5.238 ms: corner radius
+[ 1103.283] flip serial 30067 seq 118547 interval 8.296 ms (vblanks 1) gpu 4.347 ms: corner radius
+[ 1103.291] flip serial 30068 seq 118548 interval 8.297 ms (vblanks 1) gpu 4.186 ms: corner radius
+[ 1103.300] flip serial 30069 seq 118549 interval 8.294 ms (vblanks 1) gpu 3.103 ms: corner radius
+[ 1103.308] flip serial 30070 seq 118550 interval 8.299 ms (vblanks 1) gpu 3.098 ms: corner radius
+[ 1103.316] flip serial 30071 seq 118551 interval 8.298 ms (vblanks 1) gpu 3.112 ms: corner radius
+[ 1103.324] flip serial 30072 seq 118552 interval 8.301 ms (vblanks 1) gpu 3.553 ms: corner radius
+[ 1103.333] flip serial 30073 seq 118553 interval 8.290 ms (vblanks 1) gpu 3.291 ms: corner radius
+[ 1103.341] flip serial 30074 seq 118554 interval 8.291 ms (vblanks 1) gpu 3.295 ms: corner radius
+[ 1103.349] flip serial 30075 seq 118555 interval 8.298 ms (vblanks 1) gpu 4.102 ms: corner radius
+[ 1103.358] flip serial 30076 seq 118556 interval 8.295 ms (vblanks 1) gpu 3.253 ms: corner radius
+[ 1103.366] flip serial 30077 seq 118557 interval 8.315 ms (vblanks 1) gpu 4.650 ms: corner radius
+[ 1103.374] flip serial 30078 seq 118558 interval 8.282 ms (vblanks 1) gpu 5.300 ms: corner radius
+[ 1103.391] flip serial 30079 seq 118560 interval 16.632 ms (vblanks 2) gpu 4.770 ms: corner radius
+[ 1103.399] flip serial 30080 seq 118561 interval 8.250 ms (vblanks 1) gpu 3.377 ms: corner radius
+[ 1103.407] flip serial 30081 seq 118562 interval 8.298 ms (vblanks 1) gpu 3.149 ms: corner radius
+[ 1103.416] flip serial 30082 seq 118563 interval 8.300 ms (vblanks 1) gpu 3.111 ms: corner radius
+[ 1103.424] flip serial 30083 seq 118564 interval 8.290 ms (vblanks 1) gpu 3.299 ms: corner radius
+[ 1103.432] flip serial 30084 seq 118565 interval 8.296 ms (vblanks 1) gpu 3.041 ms: corner radius
+[ 1103.441] flip serial 30085 seq 118566 interval 8.304 ms (vblanks 1) gpu 3.266 ms: corner radius
+[ 1103.449] flip serial 30086 seq 118567 interval 8.294 ms (vblanks 1) gpu 3.319 ms: corner radius
+[ 1103.457] flip serial 30087 seq 118568 interval 8.292 ms (vblanks 1) gpu 3.521 ms: corner radius
+[ 1103.466] flip serial 30088 seq 118569 interval 8.292 ms (vblanks 1) gpu 4.271 ms: corner radius
+[ 1103.474] flip serial 30089 seq 118570 interval 8.298 ms (vblanks 1) gpu 3.048 ms: corner radius
+[ 1103.482] flip serial 30090 seq 118571 interval 8.297 ms (vblanks 1) gpu 3.429 ms: corner radius
+[ 1103.490] flip serial 30091 seq 118572 interval 8.297 ms (vblanks 1) gpu 3.181 ms: corner radius
+[ 1103.499] flip serial 30092 seq 118573 interval 8.292 ms (vblanks 1) gpu 4.591 ms: corner radius
+[ 1103.507] flip serial 30093 seq 118574 interval 8.294 ms (vblanks 1) gpu 3.332 ms: corner radius
+[ 1103.515] flip serial 30094 seq 118575 interval 8.303 ms (vblanks 1) gpu 4.419 ms: corner radius
+[ 1103.523] flip serial 30095 seq 118576 interval 8.289 ms (vblanks 1) gpu 3.448 ms: corner radius
+[ 1103.532] flip serial 30096 seq 118577 interval 8.297 ms (vblanks 1) gpu 3.873 ms: corner radius
+[ 1103.540] flip serial 30097 seq 118578 interval 8.299 ms (vblanks 1) gpu 3.461 ms: corner radius
+[ 1103.548] flip serial 30098 seq 118579 interval 8.297 ms (vblanks 1) gpu 4.715 ms: corner radius
+[ 1103.557] flip serial 30099 seq 118580 interval 8.295 ms (vblanks 1) gpu 3.156 ms: corner radius
+[ 1103.565] flip serial 30100 seq 118581 interval 8.293 ms (vblanks 1) gpu 3.317 ms: corner radius
+[ 1103.573] flip serial 30101 seq 118582 interval 8.298 ms (vblanks 1) gpu 3.298 ms: corner radius
+[ 1103.582] flip serial 30102 seq 118583 interval 8.292 ms (vblanks 1) gpu 3.267 ms: corner radius
+[ 1103.590] flip serial 30103 seq 118584 interval 8.299 ms (vblanks 1) gpu 4.235 ms: corner radius
+[ 1103.598] flip serial 30104 seq 118585 interval 8.295 ms (vblanks 1) gpu 3.006 ms: corner radius
+[ 1103.606] flip serial 30105 seq 118586 interval 8.295 ms (vblanks 1) gpu 2.801 ms: corner radius
+[ 1103.615] flip serial 30106 seq 118587 interval 8.300 ms (vblanks 1) gpu 3.682 ms: corner radius
+[ 1103.623] flip serial 30107 seq 118588 interval 8.287 ms (vblanks 1) gpu 2.965 ms: corner radius
+[ 1103.631] flip serial 30108 seq 118589 interval 8.298 ms (vblanks 1) gpu 3.253 ms: corner radius
+[ 1103.640] flip serial 30109 seq 118590 interval 8.302 ms (vblanks 1) gpu 2.988 ms: corner radius
+[ 1103.648] flip serial 30110 seq 118591 interval 8.291 ms (vblanks 1) gpu 3.166 ms: corner radius
+[ 1103.656] flip serial 30111 seq 118592 interval 8.294 ms (vblanks 1) gpu 2.767 ms: corner radius
+[ 1103.665] flip serial 30112 seq 118593 interval 8.301 ms (vblanks 1) gpu 3.119 ms: corner radius
+[ 1103.673] flip serial 30113 seq 118594 interval 8.290 ms (vblanks 1) gpu 2.968 ms: corner radius
+[ 1103.681] flip serial 30114 seq 118595 interval 8.301 ms (vblanks 1) gpu 3.157 ms: corner radius
+[ 1103.689] flip serial 30115 seq 118596 interval 8.291 ms (vblanks 1) gpu 2.779 ms: corner radius
+[ 1103.698] flip serial 30116 seq 118597 interval 8.307 ms (vblanks 1) gpu 2.646 ms: corner radius
+[ 1103.706] flip serial 30117 seq 118598 interval 8.289 ms (vblanks 1) gpu 2.856 ms: corner radius
+[ 1103.714] flip serial 30118 seq 118599 interval 8.302 ms (vblanks 1) gpu 2.570 ms: corner radius
+[ 1103.723] flip serial 30119 seq 118600 interval 8.285 ms (vblanks 1) gpu 2.871 ms: corner radius
+[ 1103.731] flip serial 30120 seq 118601 interval 8.299 ms (vblanks 1) gpu 3.667 ms: corner radius
+[ 1103.739] flip serial 30121 seq 118602 interval 8.288 ms (vblanks 1) gpu 2.611 ms: corner radius
+[ 1103.747] flip serial 30122 seq 118603 interval 8.301 ms (vblanks 1) gpu 2.532 ms: corner radius
+[ 1103.756] flip serial 30123 seq 118604 interval 8.296 ms (vblanks 1) gpu 2.807 ms: corner radius
+[ 1103.764] flip serial 30124 seq 118605 interval 8.294 ms (vblanks 1) gpu 2.723 ms: corner radius
+[ 1103.772] flip serial 30125 seq 118606 interval 8.297 ms (vblanks 1) gpu 3.782 ms: corner radius
+[ 1103.781] flip serial 30126 seq 118607 interval 8.294 ms (vblanks 1) gpu 2.647 ms: corner radius
+[ 1103.789] flip serial 30127 seq 118608 interval 8.298 ms (vblanks 1) gpu 3.585 ms: corner radius
+[ 1103.797] flip serial 30128 seq 118609 interval 8.294 ms (vblanks 1) gpu 2.733 ms: corner radius
+[ 1103.806] flip serial 30129 seq 118610 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1103.814] flip serial 30130 seq 118611 interval 8.306 ms (vblanks 1) planes 0.000 ms
+[ 1103.822] flip serial 30131 seq 118612 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1103.830] flip serial 30132 seq 118613 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1103.839] flip serial 30133 seq 118614 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1103.847] flip serial 30134 seq 118615 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1103.855] flip serial 30135 seq 118616 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1103.864] flip serial 30136 seq 118617 interval 8.326 ms (vblanks 1) planes 0.000 ms
+[ 1103.872] flip serial 30137 seq 118618 interval 8.270 ms (vblanks 1) planes 0.000 ms
+[ 1103.881] flip serial 30138 seq 118619 interval 8.318 ms (vblanks 1) planes 0.000 ms
+[ 1103.889] flip serial 30139 seq 118620 interval 8.270 ms (vblanks 1) planes 0.000 ms
+[ 1103.897] flip serial 30140 seq 118621 interval 8.328 ms (vblanks 1) planes 0.000 ms
+[ 1103.906] flip serial 30141 seq 118622 interval 8.435 ms (vblanks 1) planes 0.000 ms
+[ 1103.914] flip serial 30142 seq 118623 interval 8.718 ms (vblanks 1) planes 0.000 ms
+[ 1103.922] flip serial 30143 seq 118624 interval 7.712 ms (vblanks 1) planes 0.000 ms
+[ 1103.931] flip serial 30144 seq 118625 interval 8.437 ms (vblanks 1) planes 0.000 ms
+[ 1103.939] flip serial 30145 seq 118626 interval 8.367 ms (vblanks 1) planes 0.000 ms
+[ 1103.947] flip serial 30146 seq 118627 interval 8.275 ms (vblanks 1) planes 0.000 ms
+[ 1103.955] flip serial 30147 seq 118628 interval 8.116 ms (vblanks 1) planes 0.000 ms
+[ 1103.963] flip serial 30148 seq 118629 interval 8.430 ms (vblanks 1) planes 0.000 ms
+[ 1103.972] flip serial 30149 seq 118630 interval 8.465 ms (vblanks 1) planes 0.000 ms
+[ 1105.357] flip serial 30150 seq 118797 interval 1385.074 ms (vblanks 167) gpu 4.306 ms: corner radius
+[ 1105.365] flip serial 30151 seq 118798 interval 8.297 ms (vblanks 1) gpu 2.946 ms: corner radius
+[ 1105.374] flip serial 30152 seq 118799 interval 8.301 ms (vblanks 1) gpu 3.045 ms: corner radius
+[ 1105.382] flip serial 30153 seq 118800 interval 8.291 ms (vblanks 1) gpu 3.582 ms: corner radius
+[ 1105.390] flip serial 30154 seq 118801 interval 8.298 ms (vblanks 1) gpu 3.743 ms: corner radius
+[ 1105.398] flip serial 30155 seq 118802 interval 8.291 ms (vblanks 1) gpu 3.960 ms: corner radius
+[ 1105.407] flip serial 30156 seq 118803 interval 8.293 ms (vblanks 1) gpu 3.510 ms: corner radius
+[ 1105.415] flip serial 30157 seq 118804 interval 8.296 ms (vblanks 1) gpu 3.521 ms: corner radius
+[ 1105.423] flip serial 30158 seq 118805 interval 8.297 ms (vblanks 1) gpu 3.783 ms: corner radius
+[ 1105.431] flip serial 30159 seq 118806 interval 8.294 ms (vblanks 1) gpu 3.264 ms: corner radius
+[ 1105.440] flip serial 30160 seq 118807 interval 8.298 ms (vblanks 1) gpu 3.207 ms: corner radius
+[ 1105.448] flip serial 30161 seq 118808 interval 8.299 ms (vblanks 1) gpu 4.015 ms: corner radius
+[ 1105.456] flip serial 30162 seq 118809 interval 8.295 ms (vblanks 1) gpu 3.536 ms: corner radius
+[ 1105.465] flip serial 30163 seq 118810 interval 8.302 ms (vblanks 1) gpu 4.717 ms: corner radius
+[ 1105.473] flip serial 30164 seq 118811 interval 8.296 ms (vblanks 1) gpu 3.288 ms: corner radius
+[ 1105.481] flip serial 30165 seq 118812 interval 8.292 ms (vblanks 1) gpu 4.678 ms: corner radius
+[ 1105.490] flip serial 30166 seq 118813 interval 8.296 ms (vblanks 1) gpu 3.293 ms: corner radius
+[ 1105.498] flip serial 30167 seq 118814 interval 8.294 ms (vblanks 1) gpu 4.064 ms: corner radius
+[ 1105.506] flip serial 30168 seq 118815 interval 8.296 ms (vblanks 1) gpu 2.970 ms: corner radius
+[ 1105.515] flip serial 30169 seq 118816 interval 8.303 ms (vblanks 1) gpu 3.579 ms: corner radius
+[ 1105.523] flip serial 30170 seq 118817 interval 8.290 ms (vblanks 1) gpu 3.174 ms: corner radius
+[ 1105.531] flip serial 30171 seq 118818 interval 8.287 ms (vblanks 1) gpu 3.092 ms: corner radius
+[ 1105.539] flip serial 30172 seq 118819 interval 8.302 ms (vblanks 1) gpu 3.558 ms: corner radius
+[ 1105.548] flip serial 30173 seq 118820 interval 8.295 ms (vblanks 1) gpu 3.402 ms: corner radius
+[ 1105.556] flip serial 30174 seq 118821 interval 8.310 ms (vblanks 1) gpu 3.421 ms: corner radius
+[ 1105.564] flip serial 30175 seq 118822 interval 8.281 ms (vblanks 1) gpu 3.439 ms: corner radius
+[ 1105.573] flip serial 30176 seq 118823 interval 8.300 ms (vblanks 1) gpu 3.918 ms: corner radius
+[ 1105.581] flip serial 30177 seq 118824 interval 8.291 ms (vblanks 1) gpu 3.171 ms: corner radius
+[ 1105.589] flip serial 30178 seq 118825 interval 8.296 ms (vblanks 1) gpu 3.424 ms: corner radius
+[ 1105.597] flip serial 30179 seq 118826 interval 8.296 ms (vblanks 1) gpu 3.395 ms: corner radius
+[ 1105.606] flip serial 30180 seq 118827 interval 8.298 ms (vblanks 1) gpu 3.227 ms: corner radius
+[ 1105.614] flip serial 30181 seq 118828 interval 8.301 ms (vblanks 1) gpu 3.222 ms: corner radius
+[ 1105.622] flip serial 30182 seq 118829 interval 8.290 ms (vblanks 1) gpu 4.090 ms: corner radius
+[ 1105.631] flip serial 30183 seq 118830 interval 8.292 ms (vblanks 1) gpu 3.494 ms: corner radius
+[ 1105.639] flip serial 30184 seq 118831 interval 8.300 ms (vblanks 1) gpu 3.734 ms: corner radius
+[ 1105.647] flip serial 30185 seq 118832 interval 8.299 ms (vblanks 1) gpu 3.446 ms: corner radius
+[ 1105.656] flip serial 30186 seq 118833 interval 8.293 ms (vblanks 1) gpu 3.312 ms: corner radius
+[ 1105.664] flip serial 30187 seq 118834 interval 8.299 ms (vblanks 1) gpu 4.075 ms: corner radius
+[ 1105.672] flip serial 30188 seq 118835 interval 8.293 ms (vblanks 1) gpu 3.489 ms: corner radius
+[ 1105.680] flip serial 30189 seq 118836 interval 8.297 ms (vblanks 1) gpu 3.765 ms: corner radius
+[ 1105.689] flip serial 30190 seq 118837 interval 8.295 ms (vblanks 1) gpu 3.401 ms: corner radius
+[ 1105.697] flip serial 30191 seq 118838 interval 8.297 ms (vblanks 1) gpu 4.290 ms: corner radius
+[ 1105.705] flip serial 30192 seq 118839 interval 8.299 ms (vblanks 1) gpu 3.500 ms: corner radius
+[ 1105.714] flip serial 30193 seq 118840 interval 8.292 ms (vblanks 1) gpu 3.763 ms: corner radius
+[ 1105.722] flip serial 30194 seq 118841 interval 8.296 ms (vblanks 1) gpu 3.525 ms: corner radius
+[ 1105.730] flip serial 30195 seq 118842 interval 8.301 ms (vblanks 1) gpu 4.172 ms: corner radius
+[ 1105.738] flip serial 30196 seq 118843 interval 8.289 ms (vblanks 1) gpu 3.462 ms: corner radius
+[ 1105.747] flip serial 30197 seq 118844 interval 8.294 ms (vblanks 1) gpu 3.251 ms: corner radius
+[ 1105.755] flip serial 30198 seq 118845 interval 8.294 ms (vblanks 1) gpu 3.310 ms: corner radius
+[ 1105.763] flip serial 30199 seq 118846 interval 8.298 ms (vblanks 1) gpu 3.289 ms: corner radius
+[ 1105.772] flip serial 30200 seq 118847 interval 8.317 ms (vblanks 1) gpu 4.831 ms: corner radius
+[ 1105.780] flip serial 30201 seq 118848 interval 8.275 ms (vblanks 1) gpu 3.485 ms: corner radius
+[ 1105.788] flip serial 30202 seq 118849 interval 8.297 ms (vblanks 1) gpu 3.317 ms: corner radius
+[ 1105.797] flip serial 30203 seq 118850 interval 8.296 ms (vblanks 1) gpu 4.112 ms: corner radius
+[ 1105.805] flip serial 30204 seq 118851 interval 8.295 ms (vblanks 1) gpu 3.511 ms: corner radius
+[ 1105.813] flip serial 30205 seq 118852 interval 8.300 ms (vblanks 1) gpu 4.139 ms: corner radius
+[ 1105.821] flip serial 30206 seq 118853 interval 8.290 ms (vblanks 1) gpu 3.432 ms: corner radius
+[ 1105.830] flip serial 30207 seq 118854 interval 8.299 ms (vblanks 1) gpu 4.953 ms: corner radius
+[ 1105.838] flip serial 30208 seq 118855 interval 8.293 ms (vblanks 1) gpu 3.531 ms: corner radius
+[ 1105.846] flip serial 30209 seq 118856 interval 8.295 ms (vblanks 1) gpu 3.370 ms: corner radius
+[ 1105.863] flip serial 30210 seq 118858 interval 16.627 ms (vblanks 2) planes 0.000 ms
+[ 1105.871] flip serial 0 seq 118859 interval 8.268 ms (vblanks 1) planes 0.000 ms
+[ 1106.386] flip serial 0 seq 118921 interval 514.571 ms (vblanks 62) planes 0.000 ms
+[ 1107.372] flips by path: planes 12175, gpu 484, cpu 0
+[ 1107.373] flip serial 0 seq 119040 interval 986.965 ms (vblanks 119) planes 0.000 ms
+[ 1107.929] flip serial 30211 seq 119107 interval 555.807 ms (vblanks 67) gpu 3.640 ms: corner radius
+[ 1107.937] flip serial 30212 seq 119108 interval 8.301 ms (vblanks 1) gpu 4.711 ms: corner radius
+[ 1107.945] flip serial 30213 seq 119109 interval 8.290 ms (vblanks 1) gpu 3.283 ms: corner radius
+[ 1107.953] flip serial 30214 seq 119110 interval 8.300 ms (vblanks 1) gpu 3.499 ms: corner radius
+[ 1107.962] flip serial 30215 seq 119111 interval 8.296 ms (vblanks 1) gpu 4.605 ms: corner radius
+[ 1107.970] flip serial 30216 seq 119112 interval 8.293 ms (vblanks 1) gpu 3.293 ms: corner radius
+[ 1107.978] flip serial 30217 seq 119113 interval 8.296 ms (vblanks 1) gpu 4.531 ms: corner radius
+[ 1107.987] flip serial 30218 seq 119114 interval 8.294 ms (vblanks 1) gpu 3.336 ms: corner radius
+[ 1107.995] flip serial 30219 seq 119115 interval 8.301 ms (vblanks 1) gpu 4.585 ms: corner radius
+[ 1108.003] flip serial 30220 seq 119116 interval 8.293 ms (vblanks 1) gpu 3.386 ms: corner radius
+[ 1108.012] flip serial 30221 seq 119117 interval 8.291 ms (vblanks 1) gpu 3.481 ms: corner radius
+[ 1108.020] flip serial 30222 seq 119118 interval 8.296 ms (vblanks 1) gpu 4.537 ms: corner radius
+[ 1108.028] flip serial 30223 seq 119119 interval 8.296 ms (vblanks 1) gpu 3.205 ms: corner radius
+[ 1108.036] flip serial 30224 seq 119120 interval 8.301 ms (vblanks 1) gpu 4.487 ms: corner radius
+[ 1108.045] flip serial 30225 seq 119121 interval 8.298 ms (vblanks 1) gpu 3.198 ms: corner radius
+[ 1108.053] flip serial 30226 seq 119122 interval 8.291 ms (vblanks 1) gpu 3.528 ms: corner radius
+[ 1108.061] flip serial 30227 seq 119123 interval 8.304 ms (vblanks 1) gpu 4.592 ms: corner radius
+[ 1108.070] flip serial 30228 seq 119124 interval 8.290 ms (vblanks 1) gpu 3.264 ms: corner radius
+[ 1108.078] flip serial 30229 seq 119125 interval 8.307 ms (vblanks 1) gpu 3.282 ms: corner radius
+[ 1108.086] flip serial 30230 seq 119126 interval 8.283 ms (vblanks 1) gpu 4.471 ms: corner radius
+[ 1108.094] flip serial 30231 seq 119127 interval 8.302 ms (vblanks 1) gpu 3.209 ms: corner radius
+[ 1108.103] flip serial 30232 seq 119128 interval 8.291 ms (vblanks 1) gpu 3.395 ms: corner radius
+[ 1108.111] flip serial 30233 seq 119129 interval 8.304 ms (vblanks 1) gpu 4.402 ms: corner radius
+[ 1108.119] flip serial 30234 seq 119130 interval 8.292 ms (vblanks 1) gpu 3.190 ms: corner radius
+[ 1108.128] flip serial 30235 seq 119131 interval 8.329 ms (vblanks 1) gpu 3.383 ms: corner radius
+[ 1108.136] flip serial 30236 seq 119132 interval 8.262 ms (vblanks 1) gpu 4.818 ms: corner radius
+[ 1108.144] flip serial 30237 seq 119133 interval 8.287 ms (vblanks 1) gpu 3.375 ms: corner radius
+[ 1108.153] flip serial 30238 seq 119134 interval 8.300 ms (vblanks 1) gpu 4.080 ms: corner radius
+[ 1108.161] flip serial 30239 seq 119135 interval 8.292 ms (vblanks 1) gpu 3.319 ms: corner radius
+[ 1108.169] flip serial 30240 seq 119136 interval 8.301 ms (vblanks 1) gpu 3.949 ms: corner radius
+[ 1108.177] flip serial 30241 seq 119137 interval 8.296 ms (vblanks 1) gpu 3.357 ms: corner radius
+[ 1108.186] flip serial 30242 seq 119138 interval 8.295 ms (vblanks 1) gpu 4.674 ms: corner radius
+[ 1108.194] flip serial 30243 seq 119139 interval 8.293 ms (vblanks 1) gpu 3.322 ms: corner radius
+[ 1108.202] flip serial 30244 seq 119140 interval 8.308 ms (vblanks 1) gpu 3.782 ms: corner radius
+[ 1108.211] flip serial 30245 seq 119141 interval 8.284 ms (vblanks 1) gpu 3.354 ms: corner radius
+[ 1108.219] flip serial 30246 seq 119142 interval 8.298 ms (vblanks 1) gpu 4.167 ms: corner radius
+[ 1108.227] flip serial 30247 seq 119143 interval 8.299 ms (vblanks 1) gpu 3.319 ms: corner radius
+[ 1108.235] flip serial 30248 seq 119144 interval 8.294 ms (vblanks 1) gpu 4.650 ms: corner radius
+[ 1108.244] flip serial 30249 seq 119145 interval 8.302 ms (vblanks 1) gpu 3.315 ms: corner radius
+[ 1108.252] flip serial 30250 seq 119146 interval 8.291 ms (vblanks 1) gpu 3.882 ms: corner radius
+[ 1108.261] flip serial 30251 seq 119147 interval 8.297 ms (vblanks 1) gpu 3.379 ms: corner radius
+[ 1108.269] flip serial 30252 seq 119148 interval 8.289 ms (vblanks 1) gpu 4.318 ms: corner radius
+[ 1108.277] flip serial 30253 seq 119149 interval 8.297 ms (vblanks 1) gpu 3.943 ms: corner radius
+[ 1108.285] flip serial 30254 seq 119150 interval 8.291 ms (vblanks 1) gpu 3.824 ms: corner radius
+[ 1108.294] flip serial 30255 seq 119151 interval 8.297 ms (vblanks 1) gpu 4.218 ms: corner radius
+[ 1108.302] flip serial 30256 seq 119152 interval 8.298 ms (vblanks 1) gpu 3.421 ms: corner radius
+[ 1108.310] flip serial 30257 seq 119153 interval 8.295 ms (vblanks 1) gpu 3.901 ms: corner radius
+[ 1108.318] flip serial 30258 seq 119154 interval 8.301 ms (vblanks 1) gpu 3.278 ms: corner radius
+[ 1108.327] flip serial 30259 seq 119155 interval 8.295 ms (vblanks 1) gpu 3.989 ms: corner radius
+[ 1108.335] flip serial 30260 seq 119156 interval 8.301 ms (vblanks 1) gpu 3.301 ms: corner radius
+[ 1108.343] flip serial 30261 seq 119157 interval 8.287 ms (vblanks 1) gpu 3.377 ms: corner radius
+[ 1108.484] flip serial 30262 seq 119174 interval 141.024 ms (vblanks 17) gpu 5.294 ms: corner radius
+[ 1108.493] flip serial 30263 seq 119175 interval 8.303 ms (vblanks 1) gpu 3.934 ms: corner radius
+[ 1108.501] flip serial 30264 seq 119176 interval 8.295 ms (vblanks 1) gpu 3.547 ms: corner radius
+[ 1108.509] flip serial 30265 seq 119177 interval 8.290 ms (vblanks 1) gpu 3.411 ms: corner radius
+[ 1108.518] flip serial 30266 seq 119178 interval 8.301 ms (vblanks 1) gpu 3.889 ms: corner radius
+[ 1108.526] flip serial 30267 seq 119179 interval 8.298 ms (vblanks 1) gpu 3.476 ms: corner radius
+[ 1108.534] flip serial 30268 seq 119180 interval 8.301 ms (vblanks 1) gpu 3.470 ms: corner radius
+[ 1108.542] flip serial 30269 seq 119181 interval 8.283 ms (vblanks 1) gpu 4.415 ms: corner radius
+[ 1108.551] flip serial 30270 seq 119182 interval 8.301 ms (vblanks 1) gpu 3.422 ms: corner radius
+[ 1108.559] flip serial 30271 seq 119183 interval 8.295 ms (vblanks 1) gpu 4.297 ms: corner radius
+[ 1108.567] flip serial 30272 seq 119184 interval 8.292 ms (vblanks 1) gpu 3.423 ms: corner radius
+[ 1108.576] flip serial 30273 seq 119185 interval 8.310 ms (vblanks 1) gpu 3.902 ms: corner radius
+[ 1108.584] flip serial 30274 seq 119186 interval 8.288 ms (vblanks 1) gpu 3.315 ms: corner radius
+[ 1108.592] flip serial 30275 seq 119187 interval 8.298 ms (vblanks 1) gpu 3.585 ms: corner radius
+[ 1108.601] flip serial 30276 seq 119188 interval 8.287 ms (vblanks 1) gpu 4.237 ms: corner radius
+[ 1108.609] flip serial 30277 seq 119189 interval 8.299 ms (vblanks 1) gpu 3.403 ms: corner radius
+[ 1108.617] flip serial 30278 seq 119190 interval 8.301 ms (vblanks 1) gpu 3.296 ms: corner radius
+[ 1108.625] flip serial 30279 seq 119191 interval 8.296 ms (vblanks 1) gpu 3.712 ms: corner radius
+[ 1108.634] flip serial 30280 seq 119192 interval 8.287 ms (vblanks 1) gpu 3.356 ms: corner radius
+[ 1108.642] flip serial 30281 seq 119193 interval 8.296 ms (vblanks 1) gpu 3.948 ms: corner radius
+[ 1108.650] flip serial 30282 seq 119194 interval 8.295 ms (vblanks 1) gpu 3.975 ms: corner radius
+[ 1108.659] flip serial 30283 seq 119195 interval 8.295 ms (vblanks 1) gpu 3.979 ms: corner radius
+[ 1108.667] flip serial 30284 seq 119196 interval 8.296 ms (vblanks 1) gpu 4.190 ms: corner radius
+[ 1108.675] flip serial 30285 seq 119197 interval 8.303 ms (vblanks 1) gpu 3.362 ms: corner radius
+[ 1108.683] flip serial 30286 seq 119198 interval 8.292 ms (vblanks 1) gpu 3.557 ms: corner radius
+[ 1108.692] flip serial 30287 seq 119199 interval 8.296 ms (vblanks 1) gpu 4.465 ms: corner radius
+[ 1108.700] flip serial 30288 seq 119200 interval 8.299 ms (vblanks 1) gpu 3.333 ms: corner radius
+[ 1108.708] flip serial 30289 seq 119201 interval 8.299 ms (vblanks 1) gpu 3.503 ms: corner radius
+[ 1108.717] flip serial 30290 seq 119202 interval 8.294 ms (vblanks 1) gpu 3.646 ms: corner radius
+[ 1108.725] flip serial 30291 seq 119203 interval 8.293 ms (vblanks 1) gpu 3.988 ms: corner radius
+[ 1108.733] flip serial 30292 seq 119204 interval 8.308 ms (vblanks 1) gpu 3.303 ms: corner radius
+[ 1108.742] flip serial 30293 seq 119205 interval 8.282 ms (vblanks 1) gpu 4.331 ms: corner radius
+[ 1108.750] flip serial 30294 seq 119206 interval 8.292 ms (vblanks 1) gpu 3.347 ms: corner radius
+[ 1108.758] flip serial 30295 seq 119207 interval 8.310 ms (vblanks 1) gpu 3.439 ms: corner radius
+[ 1108.766] flip serial 30296 seq 119208 interval 8.290 ms (vblanks 1) gpu 3.516 ms: corner radius
+[ 1108.775] flip serial 30297 seq 119209 interval 8.288 ms (vblanks 1) gpu 3.561 ms: corner radius
+[ 1108.783] flip serial 30298 seq 119210 interval 8.294 ms (vblanks 1) gpu 3.633 ms: corner radius
+[ 1108.791] flip serial 30299 seq 119211 interval 8.297 ms (vblanks 1) gpu 4.491 ms: corner radius
+[ 1108.800] flip serial 30300 seq 119212 interval 8.300 ms (vblanks 1) gpu 3.464 ms: corner radius
+[ 1108.808] flip serial 30301 seq 119213 interval 8.298 ms (vblanks 1) gpu 3.283 ms: corner radius
+[ 1108.816] flip serial 30302 seq 119214 interval 8.294 ms (vblanks 1) gpu 3.441 ms: corner radius
+[ 1108.825] flip serial 30303 seq 119215 interval 8.299 ms (vblanks 1) gpu 3.703 ms: corner radius
+[ 1108.833] flip serial 30304 seq 119216 interval 8.287 ms (vblanks 1) gpu 4.796 ms: corner radius
+[ 1108.841] flip serial 30305 seq 119217 interval 8.306 ms (vblanks 1) gpu 4.129 ms: corner radius
+[ 1108.849] flip serial 30306 seq 119218 interval 8.297 ms (vblanks 1) gpu 3.546 ms: corner radius
+[ 1108.858] flip serial 30307 seq 119219 interval 8.298 ms (vblanks 1) gpu 4.071 ms: corner radius
+[ 1108.866] flip serial 30308 seq 119220 interval 8.293 ms (vblanks 1) gpu 3.462 ms: corner radius
+[ 1108.874] flip serial 30309 seq 119221 interval 8.285 ms (vblanks 1) gpu 4.819 ms: corner radius
+[ 1108.883] flip serial 30310 seq 119222 interval 8.305 ms (vblanks 1) gpu 3.329 ms: corner radius
+[ 1108.891] flip serial 30311 seq 119223 interval 8.296 ms (vblanks 1) gpu 3.449 ms: corner radius
+[ 1108.899] flip serial 30312 seq 119224 interval 8.291 ms (vblanks 1) gpu 4.388 ms: corner radius
+[ 1108.907] flip serial 30313 seq 119225 interval 8.296 ms (vblanks 1) gpu 3.787 ms: corner radius
+[ 1108.916] flip serial 30314 seq 119226 interval 8.301 ms (vblanks 1) gpu 3.802 ms: corner radius
+[ 1108.924] flip serial 30315 seq 119227 interval 8.290 ms (vblanks 1) gpu 3.594 ms: corner radius
+[ 1108.932] flip serial 30316 seq 119228 interval 8.302 ms (vblanks 1) gpu 4.363 ms: corner radius
+[ 1108.941] flip serial 30317 seq 119229 interval 8.286 ms (vblanks 1) gpu 3.347 ms: corner radius
+[ 1108.949] flip serial 30318 seq 119230 interval 8.299 ms (vblanks 1) gpu 3.484 ms: corner radius
+[ 1108.957] flip serial 30319 seq 119231 interval 8.299 ms (vblanks 1) gpu 3.327 ms: corner radius
+[ 1108.966] flip serial 30320 seq 119232 interval 8.296 ms (vblanks 1) gpu 3.704 ms: corner radius
+[ 1108.974] flip serial 30321 seq 119233 interval 8.294 ms (vblanks 1) gpu 4.706 ms: corner radius
+[ 1108.982] flip serial 30322 seq 119234 interval 8.297 ms (vblanks 1) gpu 3.770 ms: corner radius
+[ 1108.990] flip serial 30323 seq 119235 interval 8.300 ms (vblanks 1) gpu 3.765 ms: corner radius
+[ 1108.999] flip serial 30324 seq 119236 interval 8.292 ms (vblanks 1) gpu 3.278 ms: corner radius
+[ 1109.007] flip serial 30325 seq 119237 interval 8.299 ms (vblanks 1) gpu 4.230 ms: corner radius
+[ 1109.015] flip serial 30326 seq 119238 interval 8.292 ms (vblanks 1) gpu 3.436 ms: corner radius
+[ 1109.024] flip serial 30327 seq 119239 interval 8.295 ms (vblanks 1) gpu 4.306 ms: corner radius
+[ 1109.032] flip serial 30328 seq 119240 interval 8.291 ms (vblanks 1) gpu 4.196 ms: corner radius
+[ 1109.040] flip serial 30329 seq 119241 interval 8.308 ms (vblanks 1) gpu 3.428 ms: corner radius
+[ 1109.049] flip serial 30330 seq 119242 interval 8.295 ms (vblanks 1) gpu 3.604 ms: corner radius
+[ 1109.057] flip serial 30331 seq 119243 interval 8.286 ms (vblanks 1) gpu 3.576 ms: corner radius
+[ 1109.065] flip serial 30332 seq 119244 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1109.073] flip serial 30333 seq 119245 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1109.082] flip serial 30334 seq 119246 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1109.090] flip serial 30335 seq 119247 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1109.098] flip serial 30336 seq 119248 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1109.107] flip serial 30337 seq 119249 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1109.115] flip serial 30338 seq 119250 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1109.123] flip serial 30339 seq 119251 interval 8.289 ms (vblanks 1) planes 0.000 ms
+[ 1109.132] flip serial 30340 seq 119252 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1109.140] flip serial 30341 seq 119253 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1109.148] flip serial 30342 seq 119254 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1109.156] flip serial 30343 seq 119255 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1109.165] flip serial 30344 seq 119256 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1109.173] flip serial 30345 seq 119257 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1109.181] flip serial 30346 seq 119258 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1109.190] flip serial 30347 seq 119259 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1109.198] flip serial 30348 seq 119260 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1109.206] flip serial 30349 seq 119261 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1109.215] flip serial 30350 seq 119262 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1109.223] flip serial 30351 seq 119263 interval 8.276 ms (vblanks 1) planes 0.000 ms
+[ 1109.231] flip serial 30352 seq 119264 interval 8.312 ms (vblanks 1) planes 0.000 ms
+[ 1109.239] flip serial 30353 seq 119265 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1109.248] flip serial 30354 seq 119266 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1109.256] flip serial 30355 seq 119267 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1109.265] flip serial 30356 seq 119268 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1109.273] flip serial 30357 seq 119269 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1109.281] flip serial 30358 seq 119270 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1109.289] flip serial 30359 seq 119271 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1109.300] flip serial 30360 seq 119272 interval 8.349 ms (vblanks 1) planes 0.000 ms
+[ 1109.306] flip serial 30361 seq 119273 interval 8.239 ms (vblanks 1) planes 0.000 ms
+[ 1109.314] flip serial 30362 seq 119274 interval 8.289 ms (vblanks 1) planes 0.000 ms
+[ 1109.322] flip serial 30363 seq 119275 interval 8.289 ms (vblanks 1) planes 0.000 ms
+[ 1109.331] flip serial 30364 seq 119276 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1109.339] flip serial 30365 seq 119277 interval 8.289 ms (vblanks 1) planes 0.000 ms
+[ 1109.347] flip serial 30366 seq 119278 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1109.355] flip serial 30367 seq 119279 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1109.364] flip serial 30368 seq 119280 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1109.372] flip serial 30369 seq 119281 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1109.380] flip serial 30370 seq 119282 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1109.389] flip serial 30371 seq 119283 interval 8.303 ms (vblanks 1) planes 0.000 ms
+[ 1109.397] flip serial 30372 seq 119284 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1109.406] flip serial 30373 seq 119285 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1109.414] flip serial 30374 seq 119286 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1109.422] flip serial 30375 seq 119287 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1109.430] flip serial 30376 seq 119288 interval 8.278 ms (vblanks 1) planes 0.000 ms
+[ 1109.439] flip serial 30377 seq 119289 interval 8.309 ms (vblanks 1) planes 0.000 ms
+[ 1109.447] flip serial 30378 seq 119290 interval 8.285 ms (vblanks 1) planes 0.000 ms
+[ 1109.455] flip serial 30379 seq 119291 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1109.464] flip serial 30380 seq 119292 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1109.472] flip serial 30381 seq 119293 interval 8.319 ms (vblanks 1) planes 0.000 ms
+[ 1109.480] flip serial 30382 seq 119294 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1109.488] flip serial 30383 seq 119295 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1109.497] flip serial 30384 seq 119296 interval 8.311 ms (vblanks 1) planes 0.000 ms
+[ 1110.434] flip serial 30385 seq 119409 interval 937.409 ms (vblanks 113) planes 0.000 ms
+[ 1110.451] flip serial 30386 seq 119411 interval 16.594 ms (vblanks 2) planes 0.000 ms
+[ 1110.459] flip serial 30387 seq 119412 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1110.467] flip serial 30388 seq 119413 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1110.476] flip serial 30389 seq 119414 interval 8.332 ms (vblanks 1) planes 0.000 ms
+[ 1110.484] flip serial 30390 seq 119415 interval 8.262 ms (vblanks 1) planes 0.000 ms
+[ 1110.500] flip serial 30391 seq 119417 interval 16.596 ms (vblanks 2) planes 0.000 ms
+[ 1110.510] flip serial 30392 seq 119418 interval 8.324 ms (vblanks 1) planes 0.000 ms
+[ 1110.517] flip serial 30393 seq 119419 interval 8.269 ms (vblanks 1) planes 0.000 ms
+[ 1110.534] flip serial 30394 seq 119421 interval 16.609 ms (vblanks 2) planes 0.000 ms
+[ 1110.551] flip serial 30395 seq 119423 interval 16.803 ms (vblanks 2) planes 0.000 ms
+[ 1110.559] flip serial 30396 seq 119424 interval 8.077 ms (vblanks 1) planes 0.000 ms
+[ 1110.575] flip serial 30397 seq 119426 interval 16.607 ms (vblanks 2) planes 0.000 ms
+[ 1110.584] flip serial 30398 seq 119427 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1110.592] flip serial 30399 seq 119428 interval 8.269 ms (vblanks 1) planes 0.000 ms
+[ 1110.600] flip serial 30400 seq 119429 interval 8.286 ms (vblanks 1) planes 0.000 ms
+[ 1110.608] flip serial 30401 seq 119430 interval 8.316 ms (vblanks 1) planes 0.000 ms
+[ 1110.616] flip serial 30402 seq 119431 interval 8.275 ms (vblanks 1) planes 0.000 ms
+[ 1110.625] flip serial 30403 seq 119432 interval 8.316 ms (vblanks 1) planes 0.000 ms
+[ 1110.633] flip serial 30404 seq 119433 interval 8.274 ms (vblanks 1) planes 0.000 ms
+[ 1110.641] flip serial 30405 seq 119434 interval 8.314 ms (vblanks 1) planes 0.000 ms
+[ 1110.650] flip serial 30406 seq 119435 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1110.658] flip serial 30407 seq 119436 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1110.666] flip serial 30408 seq 119437 interval 8.318 ms (vblanks 1) planes 0.000 ms
+[ 1110.675] flip serial 30409 seq 119438 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1110.683] flip serial 30410 seq 119439 interval 8.269 ms (vblanks 1) planes 0.000 ms
+[ 1110.691] flip serial 30411 seq 119440 interval 8.333 ms (vblanks 1) planes 0.000 ms
+[ 1110.699] flip serial 30412 seq 119441 interval 8.269 ms (vblanks 1) planes 0.000 ms
+[ 1110.708] flip serial 30413 seq 119442 interval 8.289 ms (vblanks 1) planes 0.000 ms
+[ 1110.716] flip serial 30414 seq 119443 interval 8.325 ms (vblanks 1) planes 0.000 ms
+[ 1110.724] flip serial 30415 seq 119444 interval 8.275 ms (vblanks 1) planes 0.000 ms
+[ 1110.733] flip serial 30416 seq 119445 interval 8.315 ms (vblanks 1) planes 0.000 ms
+[ 1110.741] flip serial 30417 seq 119446 interval 8.270 ms (vblanks 1) planes 0.000 ms
+[ 1110.749] flip serial 30418 seq 119447 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1110.757] flip serial 30419 seq 119448 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1110.766] flip serial 30420 seq 119449 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1110.774] flip serial 30421 seq 119450 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1110.782] flip serial 30422 seq 119451 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1110.791] flip serial 30423 seq 119452 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1110.799] flip serial 30424 seq 119453 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1110.807] flip serial 30425 seq 119454 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1110.816] flip serial 30426 seq 119455 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1110.824] flip serial 30427 seq 119456 interval 8.316 ms (vblanks 1) planes 0.000 ms
+[ 1110.833] flip serial 30428 seq 119457 interval 8.497 ms (vblanks 1) planes 0.000 ms
+[ 1110.840] flip serial 30429 seq 119458 interval 8.088 ms (vblanks 1) planes 0.000 ms
+[ 1110.849] flip serial 30430 seq 119459 interval 8.321 ms (vblanks 1) planes 0.000 ms
+[ 1110.857] flip serial 30431 seq 119460 interval 8.276 ms (vblanks 1) planes 0.000 ms
+[ 1110.865] flip serial 30432 seq 119461 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1110.874] flip serial 30433 seq 119462 interval 8.277 ms (vblanks 1) planes 0.000 ms
+[ 1110.882] flip serial 30434 seq 119463 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1110.890] flip serial 30435 seq 119464 interval 8.326 ms (vblanks 1) planes 0.000 ms
+[ 1110.899] flip serial 30436 seq 119465 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1110.907] flip serial 30437 seq 119466 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1110.915] flip serial 30438 seq 119467 interval 8.306 ms (vblanks 1) planes 0.000 ms
+[ 1110.923] flip serial 30439 seq 119468 interval 8.285 ms (vblanks 1) planes 0.000 ms
+[ 1110.932] flip serial 30440 seq 119469 interval 8.311 ms (vblanks 1) planes 0.000 ms
+[ 1110.940] flip serial 30441 seq 119470 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1110.949] flip serial 30442 seq 119471 interval 8.312 ms (vblanks 1) planes 0.000 ms
+[ 1110.957] flip serial 30443 seq 119472 interval 8.278 ms (vblanks 1) planes 0.000 ms
+[ 1110.965] flip serial 30444 seq 119473 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1110.973] flip serial 30445 seq 119474 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1110.982] flip serial 30446 seq 119475 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1110.990] flip serial 30447 seq 119476 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1110.998] flip serial 30448 seq 119477 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1111.006] flip serial 30449 seq 119478 interval 8.285 ms (vblanks 1) planes 0.000 ms
+[ 1111.015] flip serial 30450 seq 119479 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1111.023] flip serial 30451 seq 119480 interval 8.289 ms (vblanks 1) planes 0.000 ms
+[ 1111.031] flip serial 30452 seq 119481 interval 8.278 ms (vblanks 1) planes 0.000 ms
+[ 1111.040] flip serial 30453 seq 119482 interval 8.321 ms (vblanks 1) planes 0.000 ms
+[ 1111.048] flip serial 30454 seq 119483 interval 8.311 ms (vblanks 1) planes 0.000 ms
+[ 1111.056] flip serial 30455 seq 119484 interval 8.261 ms (vblanks 1) planes 0.000 ms
+[ 1111.065] flip serial 30456 seq 119485 interval 8.324 ms (vblanks 1) planes 0.000 ms
+[ 1111.073] flip serial 30457 seq 119486 interval 8.267 ms (vblanks 1) planes 0.000 ms
+[ 1111.081] flip serial 30458 seq 119487 interval 8.314 ms (vblanks 1) planes 0.000 ms
+[ 1111.089] flip serial 30459 seq 119488 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1111.098] flip serial 30460 seq 119489 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1111.106] flip serial 30461 seq 119490 interval 8.526 ms (vblanks 1) planes 0.000 ms
+[ 1111.114] flip serial 30462 seq 119491 interval 8.065 ms (vblanks 1) planes 0.000 ms
+[ 1111.123] flip serial 30463 seq 119492 interval 8.309 ms (vblanks 1) planes 0.000 ms
+[ 1111.131] flip serial 30464 seq 119493 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1111.139] flip serial 30465 seq 119494 interval 8.316 ms (vblanks 1) planes 0.000 ms
+[ 1112.118] flip serial 30466 seq 119612 interval 978.882 ms (vblanks 118) planes 0.000 ms
+[ 1112.135] flip serial 30467 seq 119614 interval 16.622 ms (vblanks 2) planes 0.000 ms
+[ 1112.143] flip serial 30468 seq 119615 interval 8.272 ms (vblanks 1) planes 0.000 ms
+[ 1112.151] flip serial 30469 seq 119616 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1112.159] flip serial 30470 seq 119617 interval 8.280 ms (vblanks 1) planes 0.000 ms
+[ 1112.168] flip serial 30471 seq 119618 interval 8.285 ms (vblanks 1) planes 0.000 ms
+[ 1112.176] flip serial 30472 seq 119619 interval 8.310 ms (vblanks 1) planes 0.000 ms
+[ 1112.184] flip serial 30473 seq 119620 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1112.193] flip serial 30474 seq 119621 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1112.201] flip serial 30475 seq 119622 interval 8.318 ms (vblanks 1) planes 0.000 ms
+[ 1112.209] flip serial 30476 seq 119623 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1112.218] flip serial 30477 seq 119624 interval 8.358 ms (vblanks 1) planes 0.000 ms
+[ 1112.226] flip serial 30478 seq 119625 interval 8.233 ms (vblanks 1) planes 0.000 ms
+[ 1112.234] flip serial 30479 seq 119626 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1112.242] flip serial 30480 seq 119627 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1112.251] flip serial 30481 seq 119628 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1112.259] flip serial 30482 seq 119629 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1112.267] flip serial 30483 seq 119630 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1112.276] flip serial 30484 seq 119631 interval 8.322 ms (vblanks 1) planes 0.000 ms
+[ 1112.284] flip serial 30485 seq 119632 interval 8.272 ms (vblanks 1) planes 0.000 ms
+[ 1112.292] flip serial 30486 seq 119633 interval 8.317 ms (vblanks 1) planes 0.000 ms
+[ 1112.300] flip serial 30487 seq 119634 interval 8.284 ms (vblanks 1) planes 0.000 ms
+[ 1112.309] flip serial 30488 seq 119635 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1112.317] flip serial 30489 seq 119636 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1112.326] flip serial 30490 seq 119637 interval 8.354 ms (vblanks 1) planes 0.000 ms
+[ 1112.334] flip serial 30491 seq 119638 interval 8.236 ms (vblanks 1) planes 0.000 ms
+[ 1112.342] flip serial 30492 seq 119639 interval 8.370 ms (vblanks 1) planes 0.000 ms
+[ 1112.350] flip serial 30493 seq 119640 interval 8.222 ms (vblanks 1) planes 0.000 ms
+[ 1112.359] flip serial 30494 seq 119641 interval 8.320 ms (vblanks 1) planes 0.000 ms
+[ 1112.367] flip serial 30495 seq 119642 interval 8.271 ms (vblanks 1) planes 0.000 ms
+[ 1112.375] flip serial 30496 seq 119643 interval 8.327 ms (vblanks 1) planes 0.000 ms
+[ 1112.384] flip serial 30497 seq 119644 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1112.392] flip serial 30498 seq 119645 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1112.400] flip serial 30499 seq 119646 interval 8.277 ms (vblanks 1) planes 0.000 ms
+[ 1112.408] flip serial 30500 seq 119647 interval 8.371 ms (vblanks 1) planes 0.000 ms
+[ 1112.417] flip serial 30501 seq 119648 interval 8.217 ms (vblanks 1) planes 0.000 ms
+[ 1112.425] flip serial 30502 seq 119649 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1112.433] flip serial 30503 seq 119650 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1112.441] flip serial 30504 seq 119651 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1112.450] flip serial 30505 seq 119652 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1112.458] flip serial 30506 seq 119653 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1112.466] flip serial 30507 seq 119654 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1112.475] flip serial 30508 seq 119655 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1112.483] flip serial 30509 seq 119656 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1112.491] flip serial 30510 seq 119657 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1112.500] flip serial 30511 seq 119658 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1112.508] flip serial 30512 seq 119659 interval 8.312 ms (vblanks 1) planes 0.000 ms
+[ 1112.516] flip serial 30513 seq 119660 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1112.525] flip serial 30514 seq 119661 interval 8.321 ms (vblanks 1) planes 0.000 ms
+[ 1112.533] flip serial 30515 seq 119662 interval 8.289 ms (vblanks 1) planes 0.000 ms
+[ 1112.541] flip serial 30516 seq 119663 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1112.550] flip serial 30517 seq 119664 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1112.558] flip serial 30518 seq 119665 interval 8.275 ms (vblanks 1) planes 0.000 ms
+[ 1112.566] flip serial 30519 seq 119666 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1112.574] flip serial 30520 seq 119667 interval 8.317 ms (vblanks 1) planes 0.000 ms
+[ 1112.583] flip serial 30521 seq 119668 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1112.591] flip serial 30522 seq 119669 interval 8.275 ms (vblanks 1) planes 0.000 ms
+[ 1112.599] flip serial 30523 seq 119670 interval 8.325 ms (vblanks 1) planes 0.000 ms
+[ 1112.607] flip serial 30524 seq 119671 interval 8.273 ms (vblanks 1) planes 0.000 ms
+[ 1112.616] flip serial 30525 seq 119672 interval 8.286 ms (vblanks 1) planes 0.000 ms
+[ 1112.624] flip serial 30526 seq 119673 interval 8.317 ms (vblanks 1) planes 0.000 ms
+[ 1112.632] flip serial 30527 seq 119674 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1112.641] flip serial 30528 seq 119675 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1112.649] flip serial 30529 seq 119676 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1112.657] flip serial 30530 seq 119677 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1112.666] flip serial 30531 seq 119678 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1112.674] flip serial 30532 seq 119679 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1112.682] flip serial 30533 seq 119680 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1112.690] flip serial 30534 seq 119681 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1112.699] flip serial 30535 seq 119682 interval 8.329 ms (vblanks 1) planes 0.000 ms
+[ 1112.707] flip serial 30536 seq 119683 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1112.715] flip serial 30537 seq 119684 interval 8.275 ms (vblanks 1) planes 0.000 ms
+[ 1112.724] flip serial 30538 seq 119685 interval 8.322 ms (vblanks 1) planes 0.000 ms
+[ 1112.732] flip serial 30539 seq 119686 interval 8.277 ms (vblanks 1) planes 0.000 ms
+[ 1112.740] flip serial 30540 seq 119687 interval 8.329 ms (vblanks 1) planes 0.000 ms
+[ 1112.749] flip serial 30541 seq 119688 interval 8.278 ms (vblanks 1) planes 0.000 ms
+[ 1112.757] flip serial 30542 seq 119689 interval 8.306 ms (vblanks 1) planes 0.000 ms
+[ 1112.765] flip serial 30543 seq 119690 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1112.774] flip serial 30544 seq 119691 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1112.782] flip serial 30545 seq 119692 interval 8.262 ms (vblanks 1) planes 0.000 ms
+[ 1112.790] flip serial 30546 seq 119693 interval 8.322 ms (vblanks 1) planes 0.000 ms
+[ 1112.798] flip serial 30547 seq 119694 interval 8.270 ms (vblanks 1) planes 0.000 ms
+[ 1112.807] flip serial 30548 seq 119695 interval 8.323 ms (vblanks 1) planes 0.000 ms
+[ 1112.815] flip serial 30549 seq 119696 interval 8.268 ms (vblanks 1) planes 0.000 ms
+[ 1112.823] flip serial 30550 seq 119697 interval 8.314 ms (vblanks 1) planes 0.000 ms
+[ 1113.802] flip serial 30551 seq 119815 interval 978.885 ms (vblanks 118) planes 0.000 ms
+[ 1114.839] flip serial 30552 seq 119940 interval 1036.975 ms (vblanks 125) gpu 4.954 ms: corner radius
+[ 1114.847] flip serial 30553 seq 119941 interval 8.289 ms (vblanks 1) gpu 3.100 ms: corner radius
+[ 1114.856] flip serial 30554 seq 119942 interval 8.295 ms (vblanks 1) gpu 3.251 ms: corner radius
+[ 1114.864] flip serial 30555 seq 119943 interval 8.294 ms (vblanks 1) gpu 2.850 ms: corner radius
+[ 1114.872] flip serial 30556 seq 119944 interval 8.296 ms (vblanks 1) gpu 2.731 ms: corner radius
+[ 1114.881] flip serial 30557 seq 119945 interval 8.298 ms (vblanks 1) gpu 4.035 ms: corner radius
+[ 1114.889] flip serial 30558 seq 119946 interval 8.300 ms (vblanks 1) gpu 3.027 ms: corner radius
+[ 1114.897] flip serial 30559 seq 119947 interval 8.291 ms (vblanks 1) gpu 4.176 ms: corner radius
+[ 1114.905] flip serial 30560 seq 119948 interval 8.297 ms (vblanks 1) gpu 3.127 ms: corner radius
+[ 1114.914] flip serial 30561 seq 119949 interval 8.301 ms (vblanks 1) gpu 3.752 ms: corner radius
+[ 1114.922] flip serial 30562 seq 119950 interval 8.300 ms (vblanks 1) gpu 3.324 ms: corner radius
+[ 1114.930] flip serial 30563 seq 119951 interval 8.287 ms (vblanks 1) gpu 3.329 ms: corner radius
+[ 1114.939] flip serial 30564 seq 119952 interval 8.297 ms (vblanks 1) gpu 3.924 ms: corner radius
+[ 1114.947] flip serial 30565 seq 119953 interval 8.298 ms (vblanks 1) gpu 3.382 ms: corner radius
+[ 1114.955] flip serial 30566 seq 119954 interval 8.291 ms (vblanks 1) gpu 3.318 ms: corner radius
+[ 1114.963] flip serial 30567 seq 119955 interval 8.302 ms (vblanks 1) gpu 3.239 ms: corner radius
+[ 1114.972] flip serial 30568 seq 119956 interval 8.340 ms (vblanks 1) gpu 3.227 ms: corner radius
+[ 1114.980] flip serial 30569 seq 119957 interval 8.251 ms (vblanks 1) gpu 3.688 ms: corner radius
+[ 1114.988] flip serial 30570 seq 119958 interval 8.291 ms (vblanks 1) gpu 3.198 ms: corner radius
+[ 1114.997] flip serial 30571 seq 119959 interval 8.301 ms (vblanks 1) gpu 3.447 ms: corner radius
+[ 1115.005] flip serial 30572 seq 119960 interval 8.291 ms (vblanks 1) gpu 3.230 ms: corner radius
+[ 1115.013] flip serial 30573 seq 119961 interval 8.296 ms (vblanks 1) gpu 3.031 ms: corner radius
+[ 1115.022] flip serial 30574 seq 119962 interval 8.298 ms (vblanks 1) gpu 3.633 ms: corner radius
+[ 1115.030] flip serial 30575 seq 119963 interval 8.295 ms (vblanks 1) gpu 3.285 ms: corner radius
+[ 1115.038] flip serial 30576 seq 119964 interval 8.296 ms (vblanks 1) gpu 3.539 ms: corner radius
+[ 1115.047] flip serial 30577 seq 119965 interval 8.297 ms (vblanks 1) gpu 3.270 ms: corner radius
+[ 1115.055] flip serial 30578 seq 119966 interval 8.297 ms (vblanks 1) gpu 3.102 ms: corner radius
+[ 1115.063] flip serial 30579 seq 119967 interval 8.292 ms (vblanks 1) gpu 3.394 ms: corner radius
+[ 1115.071] flip serial 30580 seq 119968 interval 8.308 ms (vblanks 1) gpu 3.937 ms: corner radius
+[ 1115.079] flip serial 30581 seq 119969 interval 8.282 ms (vblanks 1) gpu 3.350 ms: corner radius
+[ 1115.088] flip serial 30582 seq 119970 interval 8.297 ms (vblanks 1) gpu 4.540 ms: corner radius
+[ 1115.096] flip serial 30583 seq 119971 interval 8.296 ms (vblanks 1) gpu 3.360 ms: corner radius
+[ 1115.104] flip serial 30584 seq 119972 interval 8.299 ms (vblanks 1) gpu 3.241 ms: corner radius
+[ 1115.113] flip serial 30585 seq 119973 interval 8.297 ms (vblanks 1) gpu 3.795 ms: corner radius
+[ 1115.121] flip serial 30586 seq 119974 interval 8.295 ms (vblanks 1) gpu 3.340 ms: corner radius
+[ 1115.129] flip serial 30587 seq 119975 interval 8.293 ms (vblanks 1) gpu 3.291 ms: corner radius
+[ 1115.138] flip serial 30588 seq 119976 interval 8.301 ms (vblanks 1) gpu 3.231 ms: corner radius
+[ 1115.146] flip serial 30589 seq 119977 interval 8.293 ms (vblanks 1) gpu 3.765 ms: corner radius
+[ 1115.154] flip serial 30590 seq 119978 interval 8.297 ms (vblanks 1) gpu 3.464 ms: corner radius
+[ 1115.162] flip serial 30591 seq 119979 interval 8.300 ms (vblanks 1) gpu 4.448 ms: corner radius
+[ 1115.171] flip serial 30592 seq 119980 interval 8.288 ms (vblanks 1) gpu 3.381 ms: corner radius
+[ 1115.179] flip serial 30593 seq 119981 interval 8.294 ms (vblanks 1) gpu 3.261 ms: corner radius
+[ 1115.187] flip serial 30594 seq 119982 interval 8.295 ms (vblanks 1) gpu 3.244 ms: corner radius
+[ 1115.196] flip serial 30595 seq 119983 interval 8.307 ms (vblanks 1) gpu 3.831 ms: corner radius
+[ 1115.204] flip serial 30596 seq 119984 interval 8.287 ms (vblanks 1) gpu 3.465 ms: corner radius
+[ 1115.212] flip serial 30597 seq 119985 interval 8.294 ms (vblanks 1) gpu 4.763 ms: corner radius
+[ 1115.221] flip serial 30598 seq 119986 interval 8.297 ms (vblanks 1) gpu 3.473 ms: corner radius
+[ 1115.229] flip serial 30599 seq 119987 interval 8.295 ms (vblanks 1) gpu 3.362 ms: corner radius
+[ 1115.237] flip serial 30600 seq 119988 interval 8.301 ms (vblanks 1) gpu 3.831 ms: corner radius
+[ 1115.245] flip serial 30601 seq 119989 interval 8.292 ms (vblanks 1) gpu 3.468 ms: corner radius
+[ 1115.254] flip serial 30602 seq 119990 interval 8.297 ms (vblanks 1) gpu 4.681 ms: corner radius
+[ 1115.262] flip serial 30603 seq 119991 interval 8.299 ms (vblanks 1) gpu 3.413 ms: corner radius
+[ 1115.270] flip serial 30604 seq 119992 interval 8.290 ms (vblanks 1) gpu 3.393 ms: corner radius
+[ 1115.279] flip serial 30605 seq 119993 interval 8.295 ms (vblanks 1) gpu 3.233 ms: corner radius
+[ 1115.287] flip serial 30606 seq 119994 interval 8.297 ms (vblanks 1) gpu 3.312 ms: corner radius
+[ 1115.295] flip serial 30607 seq 119995 interval 8.294 ms (vblanks 1) gpu 3.361 ms: corner radius
+[ 1115.304] flip serial 30608 seq 119996 interval 8.303 ms (vblanks 1) gpu 3.316 ms: corner radius
+[ 1115.312] flip serial 30609 seq 119997 interval 8.300 ms (vblanks 1) gpu 4.109 ms: corner radius
+[ 1115.320] flip serial 30610 seq 119998 interval 8.287 ms (vblanks 1) gpu 3.494 ms: corner radius
+[ 1115.328] flip serial 30611 seq 119999 interval 8.295 ms (vblanks 1) gpu 3.797 ms: corner radius
+[ 1115.346] flip serial 30612 seq 120001 interval 16.627 ms (vblanks 2) planes 0.000 ms
+[ 1115.353] flip serial 0 seq 120002 interval 8.261 ms (vblanks 1) planes 0.000 ms
+[ 1115.851] flip serial 0 seq 120062 interval 497.872 ms (vblanks 60) planes 0.000 ms
+[ 1116.864] flip serial 0 seq 120184 interval 1012.282 ms (vblanks 122) planes 0.000 ms
+[ 1117.707] flips by path: planes 12400, gpu 665, cpu 0
+[ 1117.734] flip serial 30613 seq 120289 interval 870.735 ms (vblanks 105) gpu 4.542 ms: corner radius
+[ 1117.742] flip serial 30614 seq 120290 interval 8.290 ms (vblanks 1) gpu 4.540 ms: corner radius
+[ 1117.751] flip serial 30615 seq 120291 interval 8.299 ms (vblanks 1) gpu 3.106 ms: corner radius
+[ 1117.759] flip serial 30616 seq 120292 interval 8.294 ms (vblanks 1) gpu 3.150 ms: corner radius
+[ 1117.767] flip serial 30617 seq 120293 interval 8.301 ms (vblanks 1) gpu 3.292 ms: corner radius
+[ 1117.776] flip serial 30618 seq 120294 interval 8.298 ms (vblanks 1) gpu 4.668 ms: corner radius
+[ 1117.784] flip serial 30619 seq 120295 interval 8.295 ms (vblanks 1) gpu 3.303 ms: corner radius
+[ 1117.792] flip serial 30620 seq 120296 interval 8.298 ms (vblanks 1) gpu 3.504 ms: corner radius
+[ 1117.800] flip serial 30621 seq 120297 interval 8.285 ms (vblanks 1) gpu 4.650 ms: corner radius
+[ 1117.809] flip serial 30622 seq 120298 interval 8.305 ms (vblanks 1) gpu 3.236 ms: corner radius
+[ 1117.817] flip serial 30623 seq 120299 interval 8.290 ms (vblanks 1) gpu 4.062 ms: corner radius
+[ 1117.825] flip serial 30624 seq 120300 interval 8.291 ms (vblanks 1) gpu 3.221 ms: corner radius
+[ 1117.834] flip serial 30625 seq 120301 interval 8.306 ms (vblanks 1) gpu 3.208 ms: corner radius
+[ 1117.842] flip serial 30626 seq 120302 interval 8.293 ms (vblanks 1) gpu 4.019 ms: corner radius
+[ 1117.850] flip serial 30627 seq 120303 interval 8.297 ms (vblanks 1) gpu 4.205 ms: corner radius
+[ 1117.859] flip serial 30628 seq 120304 interval 8.298 ms (vblanks 1) gpu 3.163 ms: corner radius
+[ 1117.867] flip serial 30629 seq 120305 interval 8.290 ms (vblanks 1) gpu 3.537 ms: corner radius
+[ 1117.875] flip serial 30630 seq 120306 interval 8.297 ms (vblanks 1) gpu 4.423 ms: corner radius
+[ 1117.883] flip serial 30631 seq 120307 interval 8.292 ms (vblanks 1) gpu 3.067 ms: corner radius
+[ 1117.892] flip serial 30632 seq 120308 interval 8.299 ms (vblanks 1) gpu 3.861 ms: corner radius
+[ 1117.900] flip serial 30633 seq 120309 interval 8.301 ms (vblanks 1) gpu 2.975 ms: corner radius
+[ 1117.908] flip serial 30634 seq 120310 interval 8.291 ms (vblanks 1) gpu 3.960 ms: corner radius
+[ 1117.917] flip serial 30635 seq 120311 interval 8.297 ms (vblanks 1) gpu 3.075 ms: corner radius
+[ 1117.925] flip serial 30636 seq 120312 interval 8.294 ms (vblanks 1) gpu 3.553 ms: corner radius
+[ 1117.942] flip serial 30637 seq 120314 interval 16.592 ms (vblanks 2) gpu 3.954 ms: corner radius
+[ 1117.950] flip serial 30638 seq 120315 interval 8.294 ms (vblanks 1) gpu 3.202 ms: corner radius
+[ 1117.958] flip serial 30639 seq 120316 interval 8.298 ms (vblanks 1) gpu 3.528 ms: corner radius
+[ 1117.966] flip serial 30640 seq 120317 interval 8.292 ms (vblanks 1) gpu 4.553 ms: corner radius
+[ 1117.975] flip serial 30641 seq 120318 interval 8.294 ms (vblanks 1) gpu 3.373 ms: corner radius
+[ 1117.983] flip serial 30642 seq 120319 interval 8.306 ms (vblanks 1) gpu 3.282 ms: corner radius
+[ 1117.991] flip serial 30643 seq 120320 interval 8.300 ms (vblanks 1) gpu 3.560 ms: corner radius
+[ 1118.000] flip serial 30644 seq 120321 interval 8.284 ms (vblanks 1) gpu 3.416 ms: corner radius
+[ 1118.008] flip serial 30645 seq 120322 interval 8.297 ms (vblanks 1) gpu 4.007 ms: corner radius
+[ 1118.016] flip serial 30646 seq 120323 interval 8.299 ms (vblanks 1) gpu 3.145 ms: corner radius
+[ 1118.025] flip serial 30647 seq 120324 interval 8.298 ms (vblanks 1) gpu 3.320 ms: corner radius
+[ 1118.033] flip serial 30648 seq 120325 interval 8.296 ms (vblanks 1) gpu 4.198 ms: corner radius
+[ 1118.041] flip serial 30649 seq 120326 interval 8.291 ms (vblanks 1) gpu 2.986 ms: corner radius
+[ 1118.049] flip serial 30650 seq 120327 interval 8.296 ms (vblanks 1) gpu 3.667 ms: corner radius
+[ 1118.058] flip serial 30651 seq 120328 interval 8.295 ms (vblanks 1) gpu 2.921 ms: corner radius
+[ 1118.066] flip serial 30652 seq 120329 interval 8.298 ms (vblanks 1) gpu 3.085 ms: corner radius
+[ 1118.074] flip serial 30653 seq 120330 interval 8.295 ms (vblanks 1) gpu 3.215 ms: corner radius
+[ 1118.083] flip serial 30654 seq 120331 interval 8.287 ms (vblanks 1) gpu 2.834 ms: corner radius
+[ 1118.091] flip serial 30655 seq 120332 interval 8.304 ms (vblanks 1) gpu 3.922 ms: corner radius
+[ 1118.099] flip serial 30656 seq 120333 interval 8.295 ms (vblanks 1) gpu 2.756 ms: corner radius
+[ 1118.107] flip serial 30657 seq 120334 interval 8.294 ms (vblanks 1) gpu 2.916 ms: corner radius
+[ 1118.116] flip serial 30658 seq 120335 interval 8.296 ms (vblanks 1) gpu 3.516 ms: corner radius
+[ 1118.124] flip serial 30659 seq 120336 interval 8.302 ms (vblanks 1) gpu 2.760 ms: corner radius
+[ 1118.132] flip serial 30660 seq 120337 interval 8.290 ms (vblanks 1) gpu 3.718 ms: corner radius
+[ 1118.141] flip serial 30661 seq 120338 interval 8.294 ms (vblanks 1) gpu 2.667 ms: corner radius
+[ 1118.149] flip serial 30662 seq 120339 interval 8.295 ms (vblanks 1) gpu 2.577 ms: corner radius
+[ 1118.157] flip serial 30663 seq 120340 interval 8.297 ms (vblanks 1) gpu 3.702 ms: corner radius
+[ 1118.166] flip serial 30664 seq 120341 interval 8.303 ms (vblanks 1) gpu 2.654 ms: corner radius
+[ 1118.174] flip serial 30665 seq 120342 interval 8.299 ms (vblanks 1) gpu 2.536 ms: corner radius
+[ 1118.182] flip serial 30666 seq 120343 interval 8.289 ms (vblanks 1) gpu 3.170 ms: corner radius
+[ 1118.191] flip serial 30667 seq 120344 interval 8.299 ms (vblanks 1) gpu 2.670 ms: corner radius
+[ 1118.199] flip serial 30668 seq 120345 interval 8.284 ms (vblanks 1) gpu 2.787 ms: corner radius
+[ 1118.207] flip serial 30669 seq 120346 interval 8.301 ms (vblanks 1) gpu 2.483 ms: corner radius
+[ 1118.215] flip serial 30670 seq 120347 interval 8.295 ms (vblanks 1) gpu 2.793 ms: corner radius
+[ 1118.224] flip serial 30671 seq 120348 interval 8.298 ms (vblanks 1) gpu 3.031 ms: corner radius
+[ 1118.232] flip serial 30672 seq 120349 interval 8.289 ms (vblanks 1) gpu 2.599 ms: corner radius
+[ 1118.240] flip serial 30673 seq 120350 interval 8.301 ms (vblanks 1) gpu 2.506 ms: corner radius
+[ 1118.249] flip serial 30674 seq 120351 interval 8.296 ms (vblanks 1) gpu 2.508 ms: corner radius
+[ 1118.257] flip serial 30675 seq 120352 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1118.265] flip serial 30676 seq 120353 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1118.273] flip serial 30677 seq 120354 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1118.282] flip serial 30678 seq 120355 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1118.290] flip serial 30679 seq 120356 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1118.298] flip serial 30680 seq 120357 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1118.307] flip serial 30681 seq 120358 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1118.315] flip serial 30682 seq 120359 interval 8.510 ms (vblanks 1) planes 0.000 ms
+[ 1118.324] flip serial 30683 seq 120360 interval 8.192 ms (vblanks 1) planes 0.000 ms
+[ 1118.332] flip serial 30684 seq 120361 interval 8.187 ms (vblanks 1) planes 0.000 ms
+[ 1118.340] flip serial 30685 seq 120362 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1118.348] flip serial 30686 seq 120363 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1118.357] flip serial 30687 seq 120364 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1118.365] flip serial 30688 seq 120365 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1118.373] flip serial 30689 seq 120366 interval 8.318 ms (vblanks 1) planes 0.000 ms
+[ 1118.382] flip serial 30690 seq 120367 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1118.390] flip serial 30691 seq 120368 interval 8.306 ms (vblanks 1) planes 0.000 ms
+[ 1118.398] flip serial 30692 seq 120369 interval 8.493 ms (vblanks 1) planes 0.000 ms
+[ 1118.407] flip serial 30693 seq 120370 interval 8.092 ms (vblanks 1) planes 0.000 ms
+[ 1118.415] flip serial 30694 seq 120371 interval 8.275 ms (vblanks 1) planes 0.000 ms
+[ 1118.423] flip serial 30695 seq 120372 interval 8.324 ms (vblanks 1) planes 0.000 ms
+[ 1119.800] flip serial 30696 seq 120538 interval 1377.080 ms (vblanks 166) gpu 4.521 ms: corner radius
+[ 1119.808] flip serial 30697 seq 120539 interval 8.291 ms (vblanks 1) gpu 2.739 ms: corner radius
+[ 1119.816] flip serial 30698 seq 120540 interval 8.296 ms (vblanks 1) gpu 4.041 ms: corner radius
+[ 1119.825] flip serial 30699 seq 120541 interval 8.300 ms (vblanks 1) gpu 2.926 ms: corner radius
+[ 1119.833] flip serial 30700 seq 120542 interval 8.290 ms (vblanks 1) gpu 3.570 ms: corner radius
+[ 1119.841] flip serial 30701 seq 120543 interval 8.312 ms (vblanks 1) gpu 3.006 ms: corner radius
+[ 1119.850] flip serial 30702 seq 120544 interval 8.277 ms (vblanks 1) gpu 4.065 ms: corner radius
+[ 1119.858] flip serial 30703 seq 120545 interval 8.296 ms (vblanks 1) gpu 2.937 ms: corner radius
+[ 1119.866] flip serial 30704 seq 120546 interval 8.299 ms (vblanks 1) gpu 3.747 ms: corner radius
+[ 1119.874] flip serial 30705 seq 120547 interval 8.303 ms (vblanks 1) gpu 3.163 ms: corner radius
+[ 1119.883] flip serial 30706 seq 120548 interval 8.292 ms (vblanks 1) gpu 3.152 ms: corner radius
+[ 1119.891] flip serial 30707 seq 120549 interval 8.288 ms (vblanks 1) gpu 3.547 ms: corner radius
+[ 1119.899] flip serial 30708 seq 120550 interval 8.303 ms (vblanks 1) gpu 4.697 ms: corner radius
+[ 1119.908] flip serial 30709 seq 120551 interval 8.294 ms (vblanks 1) gpu 3.342 ms: corner radius
+[ 1119.916] flip serial 30710 seq 120552 interval 8.297 ms (vblanks 1) gpu 4.730 ms: corner radius
+[ 1119.924] flip serial 30711 seq 120553 interval 8.300 ms (vblanks 1) gpu 3.325 ms: corner radius
+[ 1119.933] flip serial 30712 seq 120554 interval 8.292 ms (vblanks 1) gpu 3.533 ms: corner radius
+[ 1119.941] flip serial 30713 seq 120555 interval 8.295 ms (vblanks 1) gpu 3.329 ms: corner radius
+[ 1119.949] flip serial 30714 seq 120556 interval 8.297 ms (vblanks 1) gpu 3.279 ms: corner radius
+[ 1119.957] flip serial 30715 seq 120557 interval 8.294 ms (vblanks 1) gpu 4.340 ms: corner radius
+[ 1119.966] flip serial 30716 seq 120558 interval 8.294 ms (vblanks 1) gpu 3.163 ms: corner radius
+[ 1119.974] flip serial 30717 seq 120559 interval 8.300 ms (vblanks 1) gpu 4.577 ms: corner radius
+[ 1119.982] flip serial 30718 seq 120560 interval 8.291 ms (vblanks 1) gpu 3.230 ms: corner radius
+[ 1119.991] flip serial 30719 seq 120561 interval 8.299 ms (vblanks 1) gpu 4.463 ms: corner radius
+[ 1119.999] flip serial 30720 seq 120562 interval 8.299 ms (vblanks 1) gpu 3.355 ms: corner radius
+[ 1120.007] flip serial 30721 seq 120563 interval 8.289 ms (vblanks 1) gpu 3.465 ms: corner radius
+[ 1120.015] flip serial 30722 seq 120564 interval 8.296 ms (vblanks 1) gpu 3.168 ms: corner radius
+[ 1120.024] flip serial 30723 seq 120565 interval 8.298 ms (vblanks 1) gpu 3.125 ms: corner radius
+[ 1120.032] flip serial 30724 seq 120566 interval 8.295 ms (vblanks 1) gpu 3.751 ms: corner radius
+[ 1120.040] flip serial 30725 seq 120567 interval 8.294 ms (vblanks 1) gpu 3.314 ms: corner radius
+[ 1120.049] flip serial 30726 seq 120568 interval 8.300 ms (vblanks 1) gpu 3.244 ms: corner radius
+[ 1120.057] flip serial 30727 seq 120569 interval 8.299 ms (vblanks 1) gpu 4.076 ms: corner radius
+[ 1120.065] flip serial 30728 seq 120570 interval 8.296 ms (vblanks 1) gpu 3.353 ms: corner radius
+[ 1120.074] flip serial 30729 seq 120571 interval 8.292 ms (vblanks 1) gpu 4.698 ms: corner radius
+[ 1120.082] flip serial 30730 seq 120572 interval 8.294 ms (vblanks 1) gpu 3.358 ms: corner radius
+[ 1120.090] flip serial 30731 seq 120573 interval 8.297 ms (vblanks 1) gpu 4.727 ms: corner radius
+[ 1120.098] flip serial 30732 seq 120574 interval 8.293 ms (vblanks 1) gpu 3.728 ms: corner radius
+[ 1120.107] flip serial 30733 seq 120575 interval 8.305 ms (vblanks 1) gpu 3.718 ms: corner radius
+[ 1120.115] flip serial 30734 seq 120576 interval 8.288 ms (vblanks 1) gpu 3.374 ms: corner radius
+[ 1120.124] flip serial 30735 seq 120577 interval 8.298 ms (vblanks 1) gpu 4.588 ms: corner radius
+[ 1120.132] flip serial 30736 seq 120578 interval 8.300 ms (vblanks 1) gpu 3.438 ms: corner radius
+[ 1120.140] flip serial 30737 seq 120579 interval 8.287 ms (vblanks 1) gpu 4.218 ms: corner radius
+[ 1120.148] flip serial 30738 seq 120580 interval 8.296 ms (vblanks 1) gpu 3.403 ms: corner radius
+[ 1120.157] flip serial 30739 seq 120581 interval 8.305 ms (vblanks 1) gpu 4.256 ms: corner radius
+[ 1120.165] flip serial 30740 seq 120582 interval 8.293 ms (vblanks 1) gpu 3.456 ms: corner radius
+[ 1120.173] flip serial 30741 seq 120583 interval 8.295 ms (vblanks 1) gpu 4.673 ms: corner radius
+[ 1120.181] flip serial 30742 seq 120584 interval 8.291 ms (vblanks 1) gpu 3.392 ms: corner radius
+[ 1120.190] flip serial 30743 seq 120585 interval 8.298 ms (vblanks 1) gpu 3.297 ms: corner radius
+[ 1120.198] flip serial 30744 seq 120586 interval 8.296 ms (vblanks 1) gpu 4.150 ms: corner radius
+[ 1120.206] flip serial 30745 seq 120587 interval 8.303 ms (vblanks 1) gpu 3.420 ms: corner radius
+[ 1120.215] flip serial 30746 seq 120588 interval 8.293 ms (vblanks 1) gpu 3.321 ms: corner radius
+[ 1120.223] flip serial 30747 seq 120589 interval 8.291 ms (vblanks 1) gpu 4.717 ms: corner radius
+[ 1120.231] flip serial 30748 seq 120590 interval 8.300 ms (vblanks 1) gpu 3.468 ms: corner radius
+[ 1120.240] flip serial 30749 seq 120591 interval 8.298 ms (vblanks 1) gpu 3.264 ms: corner radius
+[ 1120.248] flip serial 30750 seq 120592 interval 8.288 ms (vblanks 1) gpu 4.268 ms: corner radius
+[ 1120.256] flip serial 30751 seq 120593 interval 8.295 ms (vblanks 1) gpu 3.407 ms: corner radius
+[ 1120.264] flip serial 30752 seq 120594 interval 8.295 ms (vblanks 1) gpu 4.091 ms: corner radius
+[ 1120.273] flip serial 30753 seq 120595 interval 8.304 ms (vblanks 1) gpu 3.412 ms: corner radius
+[ 1120.281] flip serial 30754 seq 120596 interval 8.299 ms (vblanks 1) gpu 3.743 ms: corner radius
+[ 1120.289] flip serial 30755 seq 120597 interval 8.285 ms (vblanks 1) gpu 3.375 ms: corner radius
+[ 1120.307] flip serial 30756 seq 120599 interval 16.593 ms (vblanks 2) planes 0.000 ms
+[ 1120.314] flip serial 0 seq 120600 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1120.821] flip serial 0 seq 120661 interval 506.058 ms (vblanks 61) planes 0.000 ms
+[ 1121.825] flip serial 0 seq 120782 interval 1003.788 ms (vblanks 121) planes 0.000 ms
+[ 1122.371] flip serial 30757 seq 120848 interval 547.503 ms (vblanks 66) gpu 4.820 ms: corner radius
+[ 1122.380] flip serial 30758 seq 120849 interval 8.303 ms (vblanks 1) gpu 4.670 ms: corner radius
+[ 1122.388] flip serial 30759 seq 120850 interval 8.292 ms (vblanks 1) gpu 3.552 ms: corner radius
+[ 1122.396] flip serial 30760 seq 120851 interval 8.295 ms (vblanks 1) gpu 3.631 ms: corner radius
+[ 1122.405] flip serial 30761 seq 120852 interval 8.298 ms (vblanks 1) gpu 4.153 ms: corner radius
+[ 1122.413] flip serial 30762 seq 120853 interval 8.293 ms (vblanks 1) gpu 3.214 ms: corner radius
+[ 1122.421] flip serial 30763 seq 120854 interval 8.298 ms (vblanks 1) gpu 3.970 ms: corner radius
+[ 1122.430] flip serial 30764 seq 120855 interval 8.296 ms (vblanks 1) gpu 3.299 ms: corner radius
+[ 1122.438] flip serial 30765 seq 120856 interval 8.299 ms (vblanks 1) gpu 3.318 ms: corner radius
+[ 1122.446] flip serial 30766 seq 120857 interval 8.288 ms (vblanks 1) gpu 3.230 ms: corner radius
+[ 1122.454] flip serial 30767 seq 120858 interval 8.300 ms (vblanks 1) gpu 3.990 ms: corner radius
+[ 1122.463] flip serial 30768 seq 120859 interval 8.294 ms (vblanks 1) gpu 3.192 ms: corner radius
+[ 1122.471] flip serial 30769 seq 120860 interval 8.294 ms (vblanks 1) gpu 3.408 ms: corner radius
+[ 1122.479] flip serial 30770 seq 120861 interval 8.301 ms (vblanks 1) gpu 4.445 ms: corner radius
+[ 1122.488] flip serial 30771 seq 120862 interval 8.298 ms (vblanks 1) gpu 3.204 ms: corner radius
+[ 1122.496] flip serial 30772 seq 120863 interval 8.295 ms (vblanks 1) gpu 3.961 ms: corner radius
+[ 1122.504] flip serial 30773 seq 120864 interval 8.294 ms (vblanks 1) gpu 3.160 ms: corner radius
+[ 1122.513] flip serial 30774 seq 120865 interval 8.301 ms (vblanks 1) gpu 4.095 ms: corner radius
+[ 1122.521] flip serial 30775 seq 120866 interval 8.294 ms (vblanks 1) gpu 3.124 ms: corner radius
+[ 1122.529] flip serial 30776 seq 120867 interval 8.291 ms (vblanks 1) gpu 3.778 ms: corner radius
+[ 1122.537] flip serial 30777 seq 120868 interval 8.305 ms (vblanks 1) gpu 3.124 ms: corner radius
+[ 1122.546] flip serial 30778 seq 120869 interval 8.292 ms (vblanks 1) gpu 3.240 ms: corner radius
+[ 1122.554] flip serial 30779 seq 120870 interval 8.292 ms (vblanks 1) gpu 3.096 ms: corner radius
+[ 1122.562] flip serial 30780 seq 120871 interval 8.295 ms (vblanks 1) gpu 4.395 ms: corner radius
+[ 1122.571] flip serial 30781 seq 120872 interval 8.295 ms (vblanks 1) gpu 3.099 ms: corner radius
+[ 1122.587] flip serial 30782 seq 120874 interval 16.590 ms (vblanks 2) gpu 4.676 ms: corner radius
+[ 1122.596] flip serial 30783 seq 120875 interval 8.301 ms (vblanks 1) gpu 3.652 ms: corner radius
+[ 1122.604] flip serial 30784 seq 120876 interval 8.291 ms (vblanks 1) gpu 3.547 ms: corner radius
+[ 1122.612] flip serial 30785 seq 120877 interval 8.288 ms (vblanks 1) gpu 4.927 ms: corner radius
+[ 1122.620] flip serial 30786 seq 120878 interval 8.315 ms (vblanks 1) gpu 3.694 ms: corner radius
+[ 1122.629] flip serial 30787 seq 120879 interval 8.301 ms (vblanks 1) gpu 3.383 ms: corner radius
+[ 1122.637] flip serial 30788 seq 120880 interval 8.284 ms (vblanks 1) gpu 3.563 ms: corner radius
+[ 1122.645] flip serial 30789 seq 120881 interval 8.286 ms (vblanks 1) gpu 4.483 ms: corner radius
+[ 1122.654] flip serial 30790 seq 120882 interval 8.303 ms (vblanks 1) gpu 3.675 ms: corner radius
+[ 1122.662] flip serial 30791 seq 120883 interval 8.293 ms (vblanks 1) gpu 4.147 ms: corner radius
+[ 1122.670] flip serial 30792 seq 120884 interval 8.306 ms (vblanks 1) gpu 4.107 ms: corner radius
+[ 1122.678] flip serial 30793 seq 120885 interval 8.280 ms (vblanks 1) gpu 3.727 ms: corner radius
+[ 1122.687] flip serial 30794 seq 120886 interval 8.305 ms (vblanks 1) gpu 3.377 ms: corner radius
+[ 1122.695] flip serial 30795 seq 120887 interval 8.299 ms (vblanks 1) gpu 3.882 ms: corner radius
+[ 1122.703] flip serial 30796 seq 120888 interval 8.311 ms (vblanks 1) gpu 4.393 ms: corner radius
+[ 1122.712] flip serial 30797 seq 120889 interval 8.270 ms (vblanks 1) gpu 3.737 ms: corner radius
+[ 1122.720] flip serial 30798 seq 120890 interval 8.301 ms (vblanks 1) gpu 4.282 ms: corner radius
+[ 1122.728] flip serial 30799 seq 120891 interval 8.309 ms (vblanks 1) gpu 3.457 ms: corner radius
+[ 1122.736] flip serial 30800 seq 120892 interval 8.278 ms (vblanks 1) gpu 3.538 ms: corner radius
+[ 1122.745] flip serial 30801 seq 120893 interval 8.293 ms (vblanks 1) gpu 3.289 ms: corner radius
+[ 1122.753] flip serial 30802 seq 120894 interval 8.302 ms (vblanks 1) gpu 3.312 ms: corner radius
+[ 1122.761] flip serial 30803 seq 120895 interval 8.298 ms (vblanks 1) gpu 3.431 ms: corner radius
+[ 1122.770] flip serial 30804 seq 120896 interval 8.287 ms (vblanks 1) gpu 4.611 ms: corner radius
+[ 1122.778] flip serial 30805 seq 120897 interval 8.303 ms (vblanks 1) gpu 3.438 ms: corner radius
+[ 1122.786] flip serial 30806 seq 120898 interval 8.295 ms (vblanks 1) gpu 4.402 ms: corner radius
+[ 1122.795] flip serial 30807 seq 120899 interval 8.290 ms (vblanks 1) gpu 3.326 ms: corner radius
+[ 1122.927] flip serial 30808 seq 120915 interval 132.734 ms (vblanks 16) gpu 4.479 ms: corner radius
+[ 1122.936] flip serial 30809 seq 120916 interval 8.295 ms (vblanks 1) gpu 3.565 ms: corner radius
+[ 1122.944] flip serial 30810 seq 120917 interval 8.299 ms (vblanks 1) gpu 3.341 ms: corner radius
+[ 1122.952] flip serial 30811 seq 120918 interval 8.304 ms (vblanks 1) gpu 3.266 ms: corner radius
+[ 1122.960] flip serial 30812 seq 120919 interval 8.290 ms (vblanks 1) gpu 4.867 ms: corner radius
+[ 1122.969] flip serial 30813 seq 120920 interval 8.295 ms (vblanks 1) gpu 3.435 ms: corner radius
+[ 1122.977] flip serial 30814 seq 120921 interval 8.299 ms (vblanks 1) gpu 3.279 ms: corner radius
+[ 1122.985] flip serial 30815 seq 120922 interval 8.290 ms (vblanks 1) gpu 3.689 ms: corner radius
+[ 1122.994] flip serial 30816 seq 120923 interval 8.297 ms (vblanks 1) gpu 4.163 ms: corner radius
+[ 1123.002] flip serial 30817 seq 120924 interval 8.301 ms (vblanks 1) gpu 3.259 ms: corner radius
+[ 1123.010] flip serial 30818 seq 120925 interval 8.293 ms (vblanks 1) gpu 3.518 ms: corner radius
+[ 1123.019] flip serial 30819 seq 120926 interval 8.301 ms (vblanks 1) gpu 3.595 ms: corner radius
+[ 1123.027] flip serial 30820 seq 120927 interval 8.289 ms (vblanks 1) gpu 3.624 ms: corner radius
+[ 1123.035] flip serial 30821 seq 120928 interval 8.297 ms (vblanks 1) gpu 3.655 ms: corner radius
+[ 1123.043] flip serial 30822 seq 120929 interval 8.289 ms (vblanks 1) gpu 3.562 ms: corner radius
+[ 1123.052] flip serial 30823 seq 120930 interval 8.295 ms (vblanks 1) gpu 4.093 ms: corner radius
+[ 1123.060] flip serial 30824 seq 120931 interval 8.305 ms (vblanks 1) gpu 3.419 ms: corner radius
+[ 1123.068] flip serial 30825 seq 120932 interval 8.296 ms (vblanks 1) gpu 4.460 ms: corner radius
+[ 1123.077] flip serial 30826 seq 120933 interval 8.291 ms (vblanks 1) gpu 4.674 ms: corner radius
+[ 1123.085] flip serial 30827 seq 120934 interval 8.299 ms (vblanks 1) gpu 3.291 ms: corner radius
+[ 1123.093] flip serial 30828 seq 120935 interval 8.302 ms (vblanks 1) gpu 3.427 ms: corner radius
+[ 1123.101] flip serial 30829 seq 120936 interval 8.281 ms (vblanks 1) gpu 3.339 ms: corner radius
+[ 1123.110] flip serial 30830 seq 120937 interval 8.298 ms (vblanks 1) gpu 3.620 ms: corner radius
+[ 1123.118] flip serial 30831 seq 120938 interval 8.296 ms (vblanks 1) gpu 3.596 ms: corner radius
+[ 1123.126] flip serial 30832 seq 120939 interval 8.298 ms (vblanks 1) gpu 4.882 ms: corner radius
+[ 1123.135] flip serial 30833 seq 120940 interval 8.293 ms (vblanks 1) gpu 4.191 ms: corner radius
+[ 1123.143] flip serial 30834 seq 120941 interval 8.307 ms (vblanks 1) gpu 3.301 ms: corner radius
+[ 1123.151] flip serial 30835 seq 120942 interval 8.290 ms (vblanks 1) gpu 4.176 ms: corner radius
+[ 1123.160] flip serial 30836 seq 120943 interval 8.296 ms (vblanks 1) gpu 4.065 ms: corner radius
+[ 1123.168] flip serial 30837 seq 120944 interval 8.290 ms (vblanks 1) gpu 3.326 ms: corner radius
+[ 1123.176] flip serial 30838 seq 120945 interval 8.296 ms (vblanks 1) gpu 3.561 ms: corner radius
+[ 1123.184] flip serial 30839 seq 120946 interval 8.302 ms (vblanks 1) gpu 5.003 ms: corner radius
+[ 1123.193] flip serial 30840 seq 120947 interval 8.293 ms (vblanks 1) gpu 4.214 ms: corner radius
+[ 1123.201] flip serial 30841 seq 120948 interval 8.298 ms (vblanks 1) gpu 3.772 ms: corner radius
+[ 1123.209] flip serial 30842 seq 120949 interval 8.299 ms (vblanks 1) gpu 3.262 ms: corner radius
+[ 1123.218] flip serial 30843 seq 120950 interval 8.298 ms (vblanks 1) gpu 3.639 ms: corner radius
+[ 1123.226] flip serial 30844 seq 120951 interval 8.284 ms (vblanks 1) gpu 5.642 ms: corner radius
+[ 1123.234] flip serial 30845 seq 120952 interval 8.303 ms (vblanks 1) gpu 3.358 ms: corner radius
+[ 1123.243] flip serial 30846 seq 120953 interval 8.294 ms (vblanks 1) gpu 3.669 ms: corner radius
+[ 1123.251] flip serial 30847 seq 120954 interval 8.298 ms (vblanks 1) gpu 4.432 ms: corner radius
+[ 1123.259] flip serial 30848 seq 120955 interval 8.294 ms (vblanks 1) gpu 3.290 ms: corner radius
+[ 1123.267] flip serial 30849 seq 120956 interval 8.298 ms (vblanks 1) gpu 3.769 ms: corner radius
+[ 1123.276] flip serial 30850 seq 120957 interval 8.294 ms (vblanks 1) gpu 4.401 ms: corner radius
+[ 1123.284] flip serial 30851 seq 120958 interval 8.292 ms (vblanks 1) gpu 4.669 ms: corner radius
+[ 1123.292] flip serial 30852 seq 120959 interval 8.303 ms (vblanks 1) gpu 3.278 ms: corner radius
+[ 1123.301] flip serial 30853 seq 120960 interval 8.289 ms (vblanks 1) gpu 4.127 ms: corner radius
+[ 1123.309] flip serial 30854 seq 120961 interval 8.297 ms (vblanks 1) gpu 3.345 ms: corner radius
+[ 1123.317] flip serial 30855 seq 120962 interval 8.296 ms (vblanks 1) gpu 4.492 ms: corner radius
+[ 1123.325] flip serial 30856 seq 120963 interval 8.294 ms (vblanks 1) gpu 4.168 ms: corner radius
+[ 1123.334] flip serial 30857 seq 120964 interval 8.303 ms (vblanks 1) gpu 3.374 ms: corner radius
+[ 1123.342] flip serial 30858 seq 120965 interval 8.292 ms (vblanks 1) gpu 4.247 ms: corner radius
+[ 1123.350] flip serial 30859 seq 120966 interval 8.296 ms (vblanks 1) gpu 3.326 ms: corner radius
+[ 1123.359] flip serial 30860 seq 120967 interval 8.301 ms (vblanks 1) gpu 3.260 ms: corner radius
+[ 1123.367] flip serial 30861 seq 120968 interval 8.291 ms (vblanks 1) gpu 4.280 ms: corner radius
+[ 1123.375] flip serial 30862 seq 120969 interval 8.289 ms (vblanks 1) gpu 3.390 ms: corner radius
+[ 1123.384] flip serial 30863 seq 120970 interval 8.301 ms (vblanks 1) gpu 4.069 ms: corner radius
+[ 1123.392] flip serial 30864 seq 120971 interval 8.297 ms (vblanks 1) gpu 3.468 ms: corner radius
+[ 1123.400] flip serial 30865 seq 120972 interval 8.290 ms (vblanks 1) gpu 3.520 ms: corner radius
+[ 1123.409] flip serial 30866 seq 120973 interval 8.304 ms (vblanks 1) gpu 3.652 ms: corner radius
+[ 1123.417] flip serial 30867 seq 120974 interval 8.294 ms (vblanks 1) gpu 4.578 ms: corner radius
+[ 1123.425] flip serial 30868 seq 120975 interval 8.298 ms (vblanks 1) gpu 3.348 ms: corner radius
+[ 1123.433] flip serial 30869 seq 120976 interval 8.287 ms (vblanks 1) gpu 4.712 ms: corner radius
+[ 1123.442] flip serial 30870 seq 120977 interval 8.304 ms (vblanks 1) gpu 3.315 ms: corner radius
+[ 1123.450] flip serial 30871 seq 120978 interval 8.287 ms (vblanks 1) gpu 3.576 ms: corner radius
+[ 1123.458] flip serial 30872 seq 120979 interval 8.304 ms (vblanks 1) gpu 3.339 ms: corner radius
+[ 1123.467] flip serial 30873 seq 120980 interval 8.296 ms (vblanks 1) gpu 3.488 ms: corner radius
+[ 1123.475] flip serial 30874 seq 120981 interval 8.304 ms (vblanks 1) gpu 3.666 ms: corner radius
+[ 1123.483] flip serial 30875 seq 120982 interval 8.280 ms (vblanks 1) gpu 3.554 ms: corner radius
+[ 1123.491] flip serial 30876 seq 120983 interval 8.302 ms (vblanks 1) gpu 4.474 ms: corner radius
+[ 1123.500] flip serial 30877 seq 120984 interval 8.327 ms (vblanks 1) gpu 3.254 ms: corner radius
+[ 1123.508] flip serial 30878 seq 120985 interval 8.262 ms (vblanks 1) planes 0.000 ms
+[ 1123.516] flip serial 30879 seq 120986 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1123.525] flip serial 30880 seq 120987 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1123.533] flip serial 30881 seq 120988 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1123.541] flip serial 30882 seq 120989 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1123.550] flip serial 30883 seq 120990 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1123.558] flip serial 30884 seq 120991 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1123.566] flip serial 30885 seq 120992 interval 8.303 ms (vblanks 1) planes 0.000 ms
+[ 1123.575] flip serial 30886 seq 120993 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1123.583] flip serial 30887 seq 120994 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1123.591] flip serial 30888 seq 120995 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1123.600] flip serial 30889 seq 120996 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1123.608] flip serial 30890 seq 120997 interval 8.266 ms (vblanks 1) planes 0.000 ms
+[ 1123.616] flip serial 30891 seq 120998 interval 8.337 ms (vblanks 1) planes 0.000 ms
+[ 1123.624] flip serial 30892 seq 120999 interval 8.266 ms (vblanks 1) planes 0.000 ms
+[ 1123.633] flip serial 30893 seq 121000 interval 8.284 ms (vblanks 1) planes 0.000 ms
+[ 1123.641] flip serial 30894 seq 121001 interval 8.328 ms (vblanks 1) planes 0.000 ms
+[ 1123.649] flip serial 30895 seq 121002 interval 8.280 ms (vblanks 1) planes 0.000 ms
+[ 1123.657] flip serial 30896 seq 121003 interval 8.278 ms (vblanks 1) planes 0.000 ms
+[ 1123.666] flip serial 30897 seq 121004 interval 8.320 ms (vblanks 1) planes 0.000 ms
+[ 1123.674] flip serial 30898 seq 121005 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1123.682] flip serial 30899 seq 121006 interval 8.285 ms (vblanks 1) planes 0.000 ms
+[ 1123.691] flip serial 30900 seq 121007 interval 8.312 ms (vblanks 1) planes 0.000 ms
+[ 1123.699] flip serial 30901 seq 121008 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1123.707] flip serial 30902 seq 121009 interval 8.277 ms (vblanks 1) planes 0.000 ms
+[ 1123.716] flip serial 30903 seq 121010 interval 8.321 ms (vblanks 1) planes 0.000 ms
+[ 1123.724] flip serial 30904 seq 121011 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1123.732] flip serial 30905 seq 121012 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1123.741] flip serial 30906 seq 121013 interval 8.327 ms (vblanks 1) planes 0.000 ms
+[ 1123.749] flip serial 30907 seq 121014 interval 8.266 ms (vblanks 1) planes 0.000 ms
+[ 1123.757] flip serial 30908 seq 121015 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1123.765] flip serial 30909 seq 121016 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1123.773] flip serial 30910 seq 121017 interval 8.303 ms (vblanks 1) planes 0.000 ms
+[ 1123.782] flip serial 30911 seq 121018 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1123.790] flip serial 30912 seq 121019 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1123.798] flip serial 30913 seq 121020 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1123.807] flip serial 30914 seq 121021 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1123.815] flip serial 30915 seq 121022 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1123.823] flip serial 30916 seq 121023 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1123.832] flip serial 30917 seq 121024 interval 8.315 ms (vblanks 1) planes 0.000 ms
+[ 1123.840] flip serial 30918 seq 121025 interval 8.326 ms (vblanks 1) planes 0.000 ms
+[ 1123.848] flip serial 30919 seq 121026 interval 8.251 ms (vblanks 1) planes 0.000 ms
+[ 1123.857] flip serial 30920 seq 121027 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1123.865] flip serial 30921 seq 121028 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1123.873] flip serial 30922 seq 121029 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1123.882] flip serial 30923 seq 121030 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1123.890] flip serial 30924 seq 121031 interval 8.286 ms (vblanks 1) planes 0.000 ms
+[ 1123.898] flip serial 30925 seq 121032 interval 8.327 ms (vblanks 1) planes 0.000 ms
+[ 1123.906] flip serial 30926 seq 121033 interval 8.274 ms (vblanks 1) planes 0.000 ms
+[ 1123.915] flip serial 30927 seq 121034 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1123.923] flip serial 30928 seq 121035 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1123.931] flip serial 30929 seq 121036 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1123.939] flip serial 30930 seq 121037 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1124.869] flip serial 30931 seq 121149 interval 929.124 ms (vblanks 112) planes 0.000 ms
+[ 1124.885] flip serial 30932 seq 121151 interval 16.591 ms (vblanks 2) planes 0.000 ms
+[ 1124.894] flip serial 30933 seq 121152 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1124.902] flip serial 30934 seq 121153 interval 8.276 ms (vblanks 1) planes 0.000 ms
+[ 1124.910] flip serial 30935 seq 121154 interval 8.311 ms (vblanks 1) planes 0.000 ms
+[ 1124.918] flip serial 30936 seq 121155 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1124.927] flip serial 30937 seq 121156 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1124.935] flip serial 30938 seq 121157 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1124.943] flip serial 30939 seq 121158 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1124.952] flip serial 30940 seq 121159 interval 8.306 ms (vblanks 1) planes 0.000 ms
+[ 1124.960] flip serial 30941 seq 121160 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1124.968] flip serial 30942 seq 121161 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1124.976] flip serial 30943 seq 121162 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1124.985] flip serial 30944 seq 121163 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1124.993] flip serial 30945 seq 121164 interval 8.286 ms (vblanks 1) planes 0.000 ms
+[ 1125.001] flip serial 30946 seq 121165 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1125.010] flip serial 30947 seq 121166 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1125.018] flip serial 30948 seq 121167 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1125.026] flip serial 30949 seq 121168 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1125.035] flip serial 30950 seq 121169 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1125.043] flip serial 30951 seq 121170 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1125.051] flip serial 30952 seq 121171 interval 8.314 ms (vblanks 1) planes 0.000 ms
+[ 1125.059] flip serial 30953 seq 121172 interval 8.277 ms (vblanks 1) planes 0.000 ms
+[ 1125.068] flip serial 30954 seq 121173 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1125.076] flip serial 30955 seq 121174 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1125.085] flip serial 30956 seq 121175 interval 8.315 ms (vblanks 1) planes 0.000 ms
+[ 1125.093] flip serial 30957 seq 121176 interval 8.276 ms (vblanks 1) planes 0.000 ms
+[ 1125.101] flip serial 30958 seq 121177 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1125.109] flip serial 30959 seq 121178 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1125.117] flip serial 30960 seq 121179 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1125.126] flip serial 30961 seq 121180 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1125.134] flip serial 30962 seq 121181 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1125.142] flip serial 30963 seq 121182 interval 8.276 ms (vblanks 1) planes 0.000 ms
+[ 1125.151] flip serial 30964 seq 121183 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1125.159] flip serial 30965 seq 121184 interval 8.314 ms (vblanks 1) planes 0.000 ms
+[ 1125.167] flip serial 30966 seq 121185 interval 8.278 ms (vblanks 1) planes 0.000 ms
+[ 1125.176] flip serial 30967 seq 121186 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1125.184] flip serial 30968 seq 121187 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1125.192] flip serial 30969 seq 121188 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1125.200] flip serial 30970 seq 121189 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1125.209] flip serial 30971 seq 121190 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1125.217] flip serial 30972 seq 121191 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1125.225] flip serial 30973 seq 121192 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1125.234] flip serial 30974 seq 121193 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1125.242] flip serial 30975 seq 121194 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1125.250] flip serial 30976 seq 121195 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1125.259] flip serial 30977 seq 121196 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1125.267] flip serial 30978 seq 121197 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1125.275] flip serial 30979 seq 121198 interval 8.285 ms (vblanks 1) planes 0.000 ms
+[ 1125.283] flip serial 30980 seq 121199 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1125.292] flip serial 30981 seq 121200 interval 8.309 ms (vblanks 1) planes 0.000 ms
+[ 1125.300] flip serial 30982 seq 121201 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1125.308] flip serial 30983 seq 121202 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1125.316] flip serial 30984 seq 121203 interval 8.277 ms (vblanks 1) planes 0.000 ms
+[ 1125.325] flip serial 30985 seq 121204 interval 8.323 ms (vblanks 1) planes 0.000 ms
+[ 1125.333] flip serial 30986 seq 121205 interval 8.269 ms (vblanks 1) planes 0.000 ms
+[ 1125.342] flip serial 30987 seq 121206 interval 8.316 ms (vblanks 1) planes 0.000 ms
+[ 1125.350] flip serial 30988 seq 121207 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1125.358] flip serial 30989 seq 121208 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1125.366] flip serial 30990 seq 121209 interval 8.316 ms (vblanks 1) planes 0.000 ms
+[ 1125.375] flip serial 30991 seq 121210 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1125.383] flip serial 30992 seq 121211 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1125.391] flip serial 30993 seq 121212 interval 8.310 ms (vblanks 1) planes 0.000 ms
+[ 1125.399] flip serial 30994 seq 121213 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1125.408] flip serial 30995 seq 121214 interval 8.318 ms (vblanks 1) planes 0.000 ms
+[ 1125.416] flip serial 30996 seq 121215 interval 8.273 ms (vblanks 1) planes 0.000 ms
+[ 1125.424] flip serial 30997 seq 121216 interval 8.325 ms (vblanks 1) planes 0.000 ms
+[ 1125.433] flip serial 30998 seq 121217 interval 8.266 ms (vblanks 1) planes 0.000 ms
+[ 1125.441] flip serial 30999 seq 121218 interval 8.316 ms (vblanks 1) planes 0.000 ms
+[ 1125.449] flip serial 31000 seq 121219 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1125.458] flip serial 31001 seq 121220 interval 8.278 ms (vblanks 1) planes 0.000 ms
+[ 1125.466] flip serial 31002 seq 121221 interval 8.310 ms (vblanks 1) planes 0.000 ms
+[ 1125.474] flip serial 31003 seq 121222 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1125.482] flip serial 31004 seq 121223 interval 8.277 ms (vblanks 1) planes 0.000 ms
+[ 1125.491] flip serial 31005 seq 121224 interval 8.311 ms (vblanks 1) planes 0.000 ms
+[ 1125.499] flip serial 31006 seq 121225 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1125.507] flip serial 31007 seq 121226 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1125.516] flip serial 31008 seq 121227 interval 8.280 ms (vblanks 1) planes 0.000 ms
+[ 1125.524] flip serial 31009 seq 121228 interval 8.303 ms (vblanks 1) planes 0.000 ms
+[ 1125.532] flip serial 31010 seq 121229 interval 8.303 ms (vblanks 1) planes 0.000 ms
+[ 1125.540] flip serial 31011 seq 121230 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1125.549] flip serial 31012 seq 121231 interval 8.326 ms (vblanks 1) planes 0.000 ms
+[ 1125.557] flip serial 31013 seq 121232 interval 8.266 ms (vblanks 1) planes 0.000 ms
+[ 1125.565] flip serial 31014 seq 121233 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1125.574] flip serial 31015 seq 121234 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1126.553] flip serial 31016 seq 121352 interval 978.893 ms (vblanks 118) planes 0.000 ms
+[ 1126.569] flip serial 31017 seq 121354 interval 16.593 ms (vblanks 2) planes 0.000 ms
+[ 1126.578] flip serial 31018 seq 121355 interval 8.323 ms (vblanks 1) planes 0.000 ms
+[ 1126.586] flip serial 31019 seq 121356 interval 8.270 ms (vblanks 1) planes 0.000 ms
+[ 1126.594] flip serial 31020 seq 121357 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1126.602] flip serial 31021 seq 121358 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1126.611] flip serial 31022 seq 121359 interval 8.319 ms (vblanks 1) planes 0.000 ms
+[ 1126.619] flip serial 31023 seq 121360 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1126.627] flip serial 31024 seq 121361 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1126.636] flip serial 31025 seq 121362 interval 8.358 ms (vblanks 1) planes 0.000 ms
+[ 1126.644] flip serial 31026 seq 121363 interval 8.246 ms (vblanks 1) planes 0.000 ms
+[ 1126.652] flip serial 31027 seq 121364 interval 8.328 ms (vblanks 1) planes 0.000 ms
+[ 1126.661] flip serial 31028 seq 121365 interval 8.275 ms (vblanks 1) planes 0.000 ms
+[ 1126.669] flip serial 31029 seq 121366 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1126.677] flip serial 31030 seq 121367 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1126.685] flip serial 31031 seq 121368 interval 8.269 ms (vblanks 1) planes 0.000 ms
+[ 1126.694] flip serial 31032 seq 121369 interval 8.320 ms (vblanks 1) planes 0.000 ms
+[ 1126.702] flip serial 31033 seq 121370 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1126.710] flip serial 31034 seq 121371 interval 8.280 ms (vblanks 1) planes 0.000 ms
+[ 1126.719] flip serial 31035 seq 121372 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1126.727] flip serial 31036 seq 121373 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1126.735] flip serial 31037 seq 121374 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1126.743] flip serial 31038 seq 121375 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1126.752] flip serial 31039 seq 121376 interval 8.278 ms (vblanks 1) planes 0.000 ms
+[ 1126.760] flip serial 31040 seq 121377 interval 8.319 ms (vblanks 1) planes 0.000 ms
+[ 1126.768] flip serial 31041 seq 121378 interval 8.270 ms (vblanks 1) planes 0.000 ms
+[ 1126.777] flip serial 31042 seq 121379 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1126.785] flip serial 31043 seq 121380 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1126.793] flip serial 31044 seq 121381 interval 8.271 ms (vblanks 1) planes 0.000 ms
+[ 1126.801] flip serial 31045 seq 121382 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1126.810] flip serial 31046 seq 121383 interval 8.316 ms (vblanks 1) planes 0.000 ms
+[ 1126.818] flip serial 31047 seq 121384 interval 8.274 ms (vblanks 1) planes 0.000 ms
+[ 1126.826] flip serial 31048 seq 121385 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1126.835] flip serial 31049 seq 121386 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1126.843] flip serial 31050 seq 121387 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1126.851] flip serial 31051 seq 121388 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1126.860] flip serial 31052 seq 121389 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1126.868] flip serial 31053 seq 121390 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1126.876] flip serial 31054 seq 121391 interval 8.324 ms (vblanks 1) planes 0.000 ms
+[ 1126.884] flip serial 31055 seq 121392 interval 8.267 ms (vblanks 1) planes 0.000 ms
+[ 1126.893] flip serial 31056 seq 121393 interval 8.285 ms (vblanks 1) planes 0.000 ms
+[ 1126.901] flip serial 31057 seq 121394 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1126.909] flip serial 31058 seq 121395 interval 8.303 ms (vblanks 1) planes 0.000 ms
+[ 1126.918] flip serial 31059 seq 121396 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1126.926] flip serial 31060 seq 121397 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1126.934] flip serial 31061 seq 121398 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1126.942] flip serial 31062 seq 121399 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1126.951] flip serial 31063 seq 121400 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1126.959] flip serial 31064 seq 121401 interval 8.276 ms (vblanks 1) planes 0.000 ms
+[ 1126.967] flip serial 31065 seq 121402 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1126.976] flip serial 31066 seq 121403 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1126.984] flip serial 31067 seq 121404 interval 8.334 ms (vblanks 1) planes 0.000 ms
+[ 1126.992] flip serial 31068 seq 121405 interval 8.276 ms (vblanks 1) planes 0.000 ms
+[ 1127.001] flip serial 31069 seq 121406 interval 8.314 ms (vblanks 1) planes 0.000 ms
+[ 1127.009] flip serial 31070 seq 121407 interval 8.272 ms (vblanks 1) planes 0.000 ms
+[ 1127.017] flip serial 31071 seq 121408 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1127.026] flip serial 31072 seq 121409 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1127.034] flip serial 31073 seq 121410 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1127.042] flip serial 31074 seq 121411 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1127.050] flip serial 31075 seq 121412 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1127.059] flip serial 31076 seq 121413 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1127.067] flip serial 31077 seq 121414 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1127.075] flip serial 31078 seq 121415 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1127.084] flip serial 31079 seq 121416 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1127.092] flip serial 31080 seq 121417 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1127.100] flip serial 31081 seq 121418 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1127.108] flip serial 31082 seq 121419 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1127.117] flip serial 31083 seq 121420 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1127.125] flip serial 31084 seq 121421 interval 8.312 ms (vblanks 1) planes 0.000 ms
+[ 1127.133] flip serial 31085 seq 121422 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1127.142] flip serial 31086 seq 121423 interval 8.278 ms (vblanks 1) planes 0.000 ms
+[ 1127.150] flip serial 31087 seq 121424 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1127.158] flip serial 31088 seq 121425 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1127.167] flip serial 31089 seq 121426 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1127.175] flip serial 31090 seq 121427 interval 8.272 ms (vblanks 1) planes 0.000 ms
+[ 1127.183] flip serial 31091 seq 121428 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1127.191] flip serial 31092 seq 121429 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1127.200] flip serial 31093 seq 121430 interval 8.306 ms (vblanks 1) planes 0.000 ms
+[ 1127.208] flip serial 31094 seq 121431 interval 8.324 ms (vblanks 1) planes 0.000 ms
+[ 1127.216] flip serial 31095 seq 121432 interval 8.262 ms (vblanks 1) planes 0.000 ms
+[ 1127.225] flip serial 31096 seq 121433 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1127.233] flip serial 31097 seq 121434 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1127.241] flip serial 31098 seq 121435 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1127.249] flip serial 31099 seq 121436 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1127.258] flip serial 31100 seq 121437 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1128.238] flips by path: planes 12648, gpu 908, cpu 0
+[ 1128.245] flip serial 31101 seq 121556 interval 987.204 ms (vblanks 119) planes 0.000 ms
+[ 1129.290] flip serial 31102 seq 121682 interval 1045.274 ms (vblanks 126) planes 0.000 ms
+[ 1130.833] flip serial 31103 seq 121868 interval 1543.015 ms (vblanks 186) planes 0.000 ms
+[ 1130.842] flip serial 31104 seq 121869 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1130.850] flip serial 31105 seq 121870 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1130.858] flip serial 31106 seq 121871 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1130.866] flip serial 31107 seq 121872 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1130.875] flip serial 31108 seq 121873 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1130.883] flip serial 31109 seq 121874 interval 8.312 ms (vblanks 1) planes 0.000 ms
+[ 1130.891] flip serial 31110 seq 121875 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1130.900] flip serial 31111 seq 121876 interval 8.324 ms (vblanks 1) planes 0.000 ms
+[ 1130.908] flip serial 31112 seq 121877 interval 8.250 ms (vblanks 1) planes 0.000 ms
+[ 1130.916] flip serial 31113 seq 121878 interval 8.303 ms (vblanks 1) planes 0.000 ms
+[ 1130.925] flip serial 31114 seq 121879 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1130.933] flip serial 31115 seq 121880 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1130.941] flip serial 31116 seq 121881 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1130.949] flip serial 31117 seq 121882 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1130.958] flip serial 31118 seq 121883 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1130.966] flip serial 31119 seq 121884 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1130.974] flip serial 31120 seq 121885 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1130.983] flip serial 31121 seq 121886 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1130.999] flip serial 31122 seq 121888 interval 16.583 ms (vblanks 2) planes 0.000 ms
+[ 1131.190] flip serial 31123 seq 121911 interval 190.805 ms (vblanks 23) planes 0.000 ms
+[ 1131.207] flip serial 31124 seq 121913 interval 16.593 ms (vblanks 2) planes 0.000 ms
+[ 1131.215] flip serial 31125 seq 121914 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1131.223] flip serial 31126 seq 121915 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1131.232] flip serial 31127 seq 121916 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1131.240] flip serial 31128 seq 121917 interval 8.303 ms (vblanks 1) planes 0.000 ms
+[ 1131.248] flip serial 31129 seq 121918 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1131.256] flip serial 31130 seq 121919 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1131.265] flip serial 31131 seq 121920 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1131.273] flip serial 31132 seq 121921 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1131.281] flip serial 31133 seq 121922 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1131.290] flip serial 31134 seq 121923 interval 8.310 ms (vblanks 1) planes 0.000 ms
+[ 1131.298] flip serial 31135 seq 121924 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1131.306] flip serial 31136 seq 121925 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1131.314] flip serial 31137 seq 121926 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1131.323] flip serial 31138 seq 121927 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1131.331] flip serial 31139 seq 121928 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1131.339] flip serial 31140 seq 121929 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1131.348] flip serial 31141 seq 121930 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1131.357] flip serial 31142 seq 121931 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1131.364] flip serial 31143 seq 121932 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1131.373] flip serial 31144 seq 121933 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1131.381] flip serial 31145 seq 121934 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1131.389] flip serial 31146 seq 121935 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1131.398] flip serial 31147 seq 121936 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1131.406] flip serial 31148 seq 121937 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1131.423] flip serial 31149 seq 121939 interval 16.598 ms (vblanks 2) planes 0.000 ms
+[ 1131.439] flip serial 31150 seq 121941 interval 16.580 ms (vblanks 2) planes 0.000 ms
+[ 1131.456] flip serial 31151 seq 121943 interval 16.595 ms (vblanks 2) planes 0.000 ms
+[ 1131.480] flip serial 31152 seq 121946 interval 24.871 ms (vblanks 3) planes 0.000 ms
+[ 1131.514] flip serial 31153 seq 121950 interval 33.184 ms (vblanks 4) planes 0.000 ms
+[ 1133.065] flip serial 31154 seq 122137 interval 1551.314 ms (vblanks 187) planes 0.000 ms
+[ 1133.081] flip serial 31155 seq 122139 interval 16.590 ms (vblanks 2) planes 0.000 ms
+[ 1133.090] flip serial 31156 seq 122140 interval 8.323 ms (vblanks 1) planes 0.000 ms
+[ 1133.098] flip serial 31157 seq 122141 interval 8.278 ms (vblanks 1) planes 0.000 ms
+[ 1133.106] flip serial 31158 seq 122142 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1133.115] flip serial 31159 seq 122143 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1133.123] flip serial 31160 seq 122144 interval 8.413 ms (vblanks 1) planes 0.000 ms
+[ 1133.131] flip serial 31161 seq 122145 interval 8.172 ms (vblanks 1) planes 0.000 ms
+[ 1133.140] flip serial 31162 seq 122146 interval 8.280 ms (vblanks 1) planes 0.000 ms
+[ 1133.148] flip serial 31163 seq 122147 interval 8.321 ms (vblanks 1) planes 0.000 ms
+[ 1133.156] flip serial 31164 seq 122148 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1133.165] flip serial 31165 seq 122149 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1133.174] flip serial 31166 seq 122150 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1133.181] flip serial 31167 seq 122151 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1133.190] flip serial 31168 seq 122152 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1133.198] flip serial 31169 seq 122153 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1133.206] flip serial 31170 seq 122154 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1133.363] flip serial 31171 seq 122173 interval 157.607 ms (vblanks 19) planes 0.000 ms
+[ 1133.372] flip serial 31172 seq 122174 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1133.388] flip serial 31173 seq 122176 interval 16.590 ms (vblanks 2) planes 0.000 ms
+[ 1133.397] flip serial 31174 seq 122177 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1133.405] flip serial 31175 seq 122178 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1133.413] flip serial 31176 seq 122179 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1133.422] flip serial 31177 seq 122180 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1133.430] flip serial 31178 seq 122181 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1133.438] flip serial 31179 seq 122182 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1133.447] flip serial 31180 seq 122183 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1133.455] flip serial 31181 seq 122184 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1133.463] flip serial 31182 seq 122185 interval 8.306 ms (vblanks 1) planes 0.000 ms
+[ 1133.472] flip serial 31183 seq 122186 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1133.480] flip serial 31184 seq 122187 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1133.488] flip serial 31185 seq 122188 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1133.497] flip serial 31186 seq 122189 interval 8.324 ms (vblanks 1) planes 0.000 ms
+[ 1133.505] flip serial 31187 seq 122190 interval 8.267 ms (vblanks 1) planes 0.000 ms
+[ 1133.513] flip serial 31188 seq 122191 interval 8.315 ms (vblanks 1) planes 0.000 ms
+[ 1133.521] flip serial 31189 seq 122192 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1133.530] flip serial 31190 seq 122193 interval 8.280 ms (vblanks 1) planes 0.000 ms
+[ 1133.538] flip serial 31191 seq 122194 interval 8.325 ms (vblanks 1) planes 0.000 ms
+[ 1133.546] flip serial 31192 seq 122195 interval 8.267 ms (vblanks 1) planes 0.000 ms
+[ 1133.555] flip serial 31193 seq 122196 interval 8.324 ms (vblanks 1) planes 0.000 ms
+[ 1133.563] flip serial 31194 seq 122197 interval 8.270 ms (vblanks 1) planes 0.000 ms
+[ 1133.571] flip serial 31195 seq 122198 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1133.579] flip serial 31196 seq 122199 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1133.588] flip serial 31197 seq 122200 interval 8.315 ms (vblanks 1) planes 0.000 ms
+[ 1133.604] flip serial 31198 seq 122202 interval 16.596 ms (vblanks 2) planes 0.000 ms
+[ 1133.621] flip serial 31199 seq 122204 interval 16.589 ms (vblanks 2) planes 0.000 ms
+[ 1133.638] flip serial 31200 seq 122206 interval 16.592 ms (vblanks 2) planes 0.000 ms
+[ 1133.662] flip serial 31201 seq 122209 interval 24.876 ms (vblanks 3) planes 0.000 ms
+[ 1133.696] flip serial 31202 seq 122213 interval 33.185 ms (vblanks 4) planes 0.000 ms
+[ 1135.230] flip serial 31203 seq 122398 interval 1534.714 ms (vblanks 185) planes 0.000 ms
+[ 1135.247] flip serial 31204 seq 122400 interval 16.607 ms (vblanks 2) planes 0.000 ms
+[ 1135.255] flip serial 31205 seq 122401 interval 8.275 ms (vblanks 1) planes 0.000 ms
+[ 1135.263] flip serial 31206 seq 122402 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1135.272] flip serial 31207 seq 122403 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1135.280] flip serial 31208 seq 122404 interval 8.314 ms (vblanks 1) planes 0.000 ms
+[ 1135.288] flip serial 31209 seq 122405 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1135.297] flip serial 31210 seq 122406 interval 8.277 ms (vblanks 1) planes 0.000 ms
+[ 1135.305] flip serial 31211 seq 122407 interval 8.316 ms (vblanks 1) planes 0.000 ms
+[ 1135.313] flip serial 31212 seq 122408 interval 8.277 ms (vblanks 1) planes 0.000 ms
+[ 1135.322] flip serial 31213 seq 122409 interval 8.320 ms (vblanks 1) planes 0.000 ms
+[ 1135.330] flip serial 31214 seq 122410 interval 8.273 ms (vblanks 1) planes 0.000 ms
+[ 1135.338] flip serial 31215 seq 122411 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1135.346] flip serial 31216 seq 122412 interval 8.311 ms (vblanks 1) planes 0.000 ms
+[ 1135.355] flip serial 31217 seq 122413 interval 8.306 ms (vblanks 1) planes 0.000 ms
+[ 1135.363] flip serial 31218 seq 122414 interval 8.270 ms (vblanks 1) planes 0.000 ms
+[ 1135.371] flip serial 31219 seq 122415 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1135.380] flip serial 31220 seq 122416 interval 8.309 ms (vblanks 1) planes 0.000 ms
+[ 1135.388] flip serial 31221 seq 122417 interval 8.284 ms (vblanks 1) planes 0.000 ms
+[ 1135.396] flip serial 31222 seq 122418 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1135.404] flip serial 31223 seq 122419 interval 8.349 ms (vblanks 1) planes 0.000 ms
+[ 1135.413] flip serial 31224 seq 122420 interval 8.244 ms (vblanks 1) planes 0.000 ms
+[ 1135.595] flip serial 31225 seq 122442 interval 182.498 ms (vblanks 22) planes 0.000 ms
+[ 1135.603] flip serial 31226 seq 122443 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1135.620] flip serial 31227 seq 122445 interval 16.615 ms (vblanks 2) planes 0.000 ms
+[ 1135.628] flip serial 31228 seq 122446 interval 8.270 ms (vblanks 1) planes 0.000 ms
+[ 1135.636] flip serial 31229 seq 122447 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1135.645] flip serial 31230 seq 122448 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1135.653] flip serial 31231 seq 122449 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1135.662] flip serial 31232 seq 122450 interval 8.306 ms (vblanks 1) planes 0.000 ms
+[ 1135.670] flip serial 31233 seq 122451 interval 8.286 ms (vblanks 1) planes 0.000 ms
+[ 1135.678] flip serial 31234 seq 122452 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1135.687] flip serial 31235 seq 122453 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1135.695] flip serial 31236 seq 122454 interval 8.310 ms (vblanks 1) planes 0.000 ms
+[ 1135.703] flip serial 31237 seq 122455 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1135.711] flip serial 31238 seq 122456 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1135.720] flip serial 31239 seq 122457 interval 8.312 ms (vblanks 1) planes 0.000 ms
+[ 1135.728] flip serial 31240 seq 122458 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1135.736] flip serial 31241 seq 122459 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1135.744] flip serial 31242 seq 122460 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1135.753] flip serial 31243 seq 122461 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1135.761] flip serial 31244 seq 122462 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1135.770] flip serial 31245 seq 122463 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1135.778] flip serial 31246 seq 122464 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1135.786] flip serial 31247 seq 122465 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1135.794] flip serial 31248 seq 122466 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1135.803] flip serial 31249 seq 122467 interval 8.271 ms (vblanks 1) planes 0.000 ms
+[ 1135.819] flip serial 31250 seq 122469 interval 16.607 ms (vblanks 2) planes 0.000 ms
+[ 1135.827] flip serial 31251 seq 122470 interval 8.282 ms (vblanks 1) planes 0.000 ms
+[ 1135.844] flip serial 31252 seq 122472 interval 16.590 ms (vblanks 2) planes 0.000 ms
+[ 1135.861] flip serial 31253 seq 122474 interval 16.590 ms (vblanks 2) planes 0.000 ms
+[ 1135.886] flip serial 31254 seq 122477 interval 24.902 ms (vblanks 3) planes 0.000 ms
+[ 1135.927] flip serial 31255 seq 122482 interval 41.463 ms (vblanks 5) planes 0.000 ms
+[ 1137.478] flip serial 31256 seq 122669 interval 1551.315 ms (vblanks 187) planes 0.000 ms
+[ 1137.503] flip serial 31257 seq 122672 interval 24.913 ms (vblanks 3) planes 0.000 ms
+[ 1137.512] flip serial 31258 seq 122673 interval 8.270 ms (vblanks 1) planes 0.000 ms
+[ 1137.520] flip serial 31259 seq 122674 interval 8.309 ms (vblanks 1) planes 0.000 ms
+[ 1137.528] flip serial 31260 seq 122675 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1137.536] flip serial 31261 seq 122676 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1137.545] flip serial 31262 seq 122677 interval 8.331 ms (vblanks 1) planes 0.000 ms
+[ 1137.553] flip serial 31263 seq 122678 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1137.561] flip serial 31264 seq 122679 interval 8.277 ms (vblanks 1) planes 0.000 ms
+[ 1137.570] flip serial 31265 seq 122680 interval 8.306 ms (vblanks 1) planes 0.000 ms
+[ 1137.578] flip serial 31266 seq 122681 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1137.586] flip serial 31267 seq 122682 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1137.594] flip serial 31268 seq 122683 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1137.603] flip serial 31269 seq 122684 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1137.611] flip serial 31270 seq 122685 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1137.619] flip serial 31271 seq 122686 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1137.777] flip serial 31272 seq 122705 interval 157.622 ms (vblanks 19) planes 0.000 ms
+[ 1137.785] flip serial 31273 seq 122706 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1137.810] flip serial 31274 seq 122709 interval 24.892 ms (vblanks 3) planes 0.000 ms
+[ 1137.818] flip serial 31275 seq 122710 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1137.827] flip serial 31276 seq 122711 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1137.835] flip serial 31277 seq 122712 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1137.843] flip serial 31278 seq 122713 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1137.852] flip serial 31279 seq 122714 interval 8.286 ms (vblanks 1) planes 0.000 ms
+[ 1137.860] flip serial 31280 seq 122715 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1137.868] flip serial 31281 seq 122716 interval 8.286 ms (vblanks 1) planes 0.000 ms
+[ 1137.877] flip serial 31282 seq 122717 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1137.885] flip serial 31283 seq 122718 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1137.893] flip serial 31284 seq 122719 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1137.901] flip serial 31285 seq 122720 interval 8.277 ms (vblanks 1) planes 0.000 ms
+[ 1137.910] flip serial 31286 seq 122721 interval 8.316 ms (vblanks 1) planes 0.000 ms
+[ 1137.918] flip serial 31287 seq 122722 interval 8.276 ms (vblanks 1) planes 0.000 ms
+[ 1137.926] flip serial 31288 seq 122723 interval 8.309 ms (vblanks 1) planes 0.000 ms
+[ 1137.934] flip serial 31289 seq 122724 interval 8.283 ms (vblanks 1) planes 0.000 ms
+[ 1137.943] flip serial 31290 seq 122725 interval 8.311 ms (vblanks 1) planes 0.000 ms
+[ 1137.951] flip serial 31291 seq 122726 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1137.960] flip serial 31292 seq 122727 interval 8.311 ms (vblanks 1) planes 0.000 ms
+[ 1137.968] flip serial 31293 seq 122728 interval 8.280 ms (vblanks 1) planes 0.000 ms
+[ 1137.976] flip serial 31294 seq 122729 interval 8.314 ms (vblanks 1) planes 0.000 ms
+[ 1137.984] flip serial 31295 seq 122730 interval 8.320 ms (vblanks 1) planes 0.000 ms
+[ 1137.993] flip serial 31296 seq 122731 interval 8.565 ms (vblanks 1) planes 0.000 ms
+[ 1138.009] flip serial 31297 seq 122733 interval 16.291 ms (vblanks 2) planes 0.000 ms
+[ 1138.018] flip serial 31298 seq 122734 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1138.034] flip serial 31299 seq 122736 interval 16.589 ms (vblanks 2) planes 0.000 ms
+[ 1138.051] flip serial 31300 seq 122738 interval 16.598 ms (vblanks 2) planes 0.000 ms
+[ 1138.076] flip serial 31301 seq 122741 interval 24.893 ms (vblanks 3) planes 0.000 ms
+[ 1138.117] flip serial 31302 seq 122746 interval 41.453 ms (vblanks 5) planes 0.000 ms

@@ -1,7 +1,8 @@
 # GPU compositing for Moon: research, design and migration plan
 
-Status: research, an on-device proof of concept, and an integration built
-and tested off-device, awaiting the phone (October 2026). Device: SM-A266M,
+Status: research, an on-device proof of concept, and an integration
+verified on the phone behind `GPU_COMPOSITOR` (off by default) (October
+2026). Device: SM-A266M,
 A266MUBU1AYB8, OSS kernel (5.10.223, GKI KMI), Moon direct boot. Companion
 study: `notes/wayland/DESIGN.md` on `wayland-experiment` (the Wayland
 agent's measurements of planes, CPU composition and stock compositors).
@@ -330,34 +331,80 @@ the previous one's flip event.
 | Headless Xorg configuration and the dummy driver | `scripts/gpu/xorg/20-a26-gpu.conf`, `scripts/gpu/install.sh` |
 | Off-device test: Moon in GPU mode on Xvfb against a protocol stand-in | `scripts/gpu/mock-run.sh`, `scripts/gpu/mock-compositor.py` |
 
-Verified off-device (whale, Xvfb, the stand-in compositor): Moon connects,
-uploads its layers, and the lock and home screens and the unlock animation
-arrive frame by frame, paced by presentation events; an app (xev) in front
-is shown through the X mirror; the switcher shows the app's snapshot, at
-rest through its card copy. The stand-in also applies the compositor's
-plane rules to every frame Moon sends; for injected gestures (the same
-paths as `scripts/gpu/gestures.sh`) it predicts which frames skip drawing:
+Verified off-device first (whale, Xvfb, the stand-in compositor): Moon
+connects, uploads its layers, and the lock and home screens and the unlock
+animation arrive frame by frame, paced by presentation events; an app (xev)
+in front is shown through the X mirror; the switcher shows the app's
+snapshot, at rest through its card copy. The CPU tier's renderer was
+checked on whale (rounded, scaled, translucent and dimmed nodes; 4.9 ms for
+a heavy frame on four x86 threads).
 
-| Animation | Frames on planes | Why the others need drawing |
+### On the phone (2026-10-26, main f0b6332 plus this branch)
+
+Both display paths were measured in one session with the same Moon build
+and the same injected 120 Hz touches (`scripts/gpu/gestures.sh`,
+`scripts/gpu/transitions.sh`); numbers are Moon's own per-animation
+summaries (back-to-back flip intervals from vblank timestamps). Raw output
+in `notes/gpu/round/`.
+
+GPU mode came up on the first boot: the compositor was ready 108 ms after
+it started (EGL, buffers, the X mirror, the scaler probe found DPP 61, 75
+and 103), and Moon was ready at 22 s of uptime, as on the software path.
+
+| Transition (two runs each) | Software path (XRender) | GPU mode |
 | --- | --- | --- |
-| Unlock (keypad cascades out, home fades in) | 36 of 36 | |
-| Switcher scroll | 85 of 85 | |
-| Lock screen drag to the keypad | 53 of 53 | |
-| Slow swipe up and hold into the switcher | 52 of 172 | the card's corner radius changes with its scale |
-| Swipe up out of an app | 21 of 82 | the same |
-| Launch and resume zooms | 0 of 61 each | the zooming card is a rounded fill (launch) or a snapshot with a changing radius |
+| Launch from home | 59-60 frames, 0 missed, mean 8.30 ms | 61-62 frames, 0 missed, mean 8.30 |
+| Swipe up out of an app | 53 frames, 3 missed, **10 paced at 60 Hz**, mean 10.37 | 82-83 frames, 0-1 missed, mean 8.30-8.40 |
+| Slow swipe up into the switcher | 60-61 frames, 0-1 missed | 63-64 frames, 0 missed |
+| Switcher scroll | 78-84 frames, 1-2 missed | 81-85 frames, 0 missed |
+| Switcher back | 72-86 frames, 0-4 missed, **10 at 60 Hz** in one run | 85 frames, 0 missed |
+| Lock screen drag to the keypad | 38 frames, 0-1 missed | 53 frames, 0 missed |
+| Keypad back to the clock | 64 frames, 2 missed | 47-49 frames, 0 missed |
+| Banner in, over home | 38-39 frames, 0 missed | 44-45 frames, 0 missed |
+| Banner out | 16-17 frames, 0 missed | 42-43 frames, 0-1 missed |
+| Notification centre in / out | 88-90 frames, 0 missed | 87-90 frames, 0 missed |
+| Banner over an app | 58-59 frames, 1-2 missed | 60 frames, 0 missed |
+| Ringing screen from screen-off | not measurable as an animation (frames during panel power-up) | same; once lit, frames every 16.6 ms on both paths while Moon ramps the backlight |
 
-So the GPU draws the zooms and the gesture's middle; everything at a
-steady scale goes to the planes. The CPU tier's renderer was checked on whale
-(rounded, scaled, translucent and dimmed nodes; 4.9 ms for a heavy frame on
-four x86 threads). On the phone: pending.
+Over all gesture runs in GPU mode: about 900 frames with 1 missed vblank.
+The software path's frames fit 120 Hz most of the time but fall to 60 Hz
+for the heaviest moments (swipe-out, switcher back), and its animations
+show fewer distinct frames because it limits redraw.
+
+- **The GPU clock floor matters.** At a 507 MHz floor the GPU drew Moon's
+  frames in 5-6 ms (full-screen layers sampled from linear buffers) and 1-4
+  of every 80 frames missed; at 702 MHz, 3.8 ms on average and none. The
+  floor is now 702 MHz while frames flow, released 150 ms after.
+- **Planes take half the frames.** In the final runs 704 of 1311 gesture
+  flips went straight to planes; every GPU-drawn one was a card whose corner
+  radius changes with its scale. In the notification transitions planes took
+  a third; the rest had a dimmed layer above the bottom or a layer under
+  64x16.
+- **Found and fixed on the device:** the kernel rejected plane commits with
+  `ENOSPC` when a node's source reached a fraction of a pixel past its
+  buffer (Moon's card nodes do), and a 1:1 layer must be exactly 1:1 on a
+  non-scaling plane. With the source snapped and clamped, a switcher-scroll
+  loop went from 40 % to 97 % planes.
+
+Battery (on battery via slate mode, 60 s each, same session, brightness
+128; `notes/gpu/round/drain.txt`):
+
+| Scenario | Software path | GPU mode |
+| --- | --- | --- |
+| Home screen, idle | 220 mA, CPU 1 % | 218 mA, CPU 2 % |
+| Switcher scrolling continuously | 443 mA, CPU 15 % | 337 mA, CPU 10 % (GPU-drawn); **273 mA, CPU 7 %** (planes) |
+| Screen off | 37 mA, CPU 1 % | **46 mA, CPU 2 %** (under investigation) |
+
+Fallback, on the phone: killing the compositor twice restarted it within a
+second and Moon reconnected and re-sent its layers both times; the third
+kill made the session give up on GPU mode for the boot, run Xorg on the
+panel again and restart Moon, which answered 14 s after the kill, with no
+reboot. A reboot with `GPU_COMPOSITOR=0` returned the plain software path.
 
 ## Migration plan
 
-1. **On the phone, opt-in** (this branch): measure the switcher, home
-   gesture, launch zoom, lock fades and an app scrolling through the mirror
-   on each tier; screen off/on; a compositor kill (restart, then in-place
-   fallback). Merge with `GPU_COMPOSITOR` off by default.
+1. **On the phone, opt-in** (done, above): merged with `GPU_COMPOSITOR`
+   off by default. Open: the screen-off drain in GPU mode.
 2. **Default on** once a week of daily use shows no regressions; the
    software session remains the fallback.
 3. **Fewer copies and more planes:** double-buffer the X mirror (no

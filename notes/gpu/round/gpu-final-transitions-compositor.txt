@@ -1,0 +1,908 @@
+[ 1154.120] flip serial 31336 seq 124675 interval 2828.625 ms (vblanks 341) planes 0.000 ms
+[ 1154.128] flip serial 31337 seq 124676 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1154.136] flip serial 31338 seq 124677 interval 8.295 ms (vblanks 1) gpu 4.893 ms: too small
+[ 1154.144] flip serial 31339 seq 124678 interval 8.401 ms (vblanks 1) planes 0.000 ms
+[ 1154.153] flip serial 31340 seq 124679 interval 8.202 ms (vblanks 1) planes 0.000 ms
+[ 1154.161] flip serial 31341 seq 124680 interval 8.438 ms (vblanks 1) planes 0.000 ms
+[ 1154.169] flip serial 31342 seq 124681 interval 8.236 ms (vblanks 1) planes 0.000 ms
+[ 1154.178] flip serial 31343 seq 124682 interval 8.373 ms (vblanks 1) planes 0.000 ms
+[ 1154.186] flip serial 31344 seq 124683 interval 8.223 ms (vblanks 1) planes 0.000 ms
+[ 1154.194] flip serial 31345 seq 124684 interval 8.223 ms (vblanks 1) planes 0.000 ms
+[ 1154.203] flip serial 31346 seq 124685 interval 8.576 ms (vblanks 1) planes 0.000 ms
+[ 1154.211] flip serial 31347 seq 124686 interval 8.186 ms (vblanks 1) planes 0.000 ms
+[ 1154.219] flip serial 31348 seq 124687 interval 8.362 ms (vblanks 1) planes 0.000 ms
+[ 1154.227] flip serial 31349 seq 124688 interval 8.132 ms (vblanks 1) planes 0.000 ms
+[ 1154.236] flip serial 31350 seq 124689 interval 8.204 ms (vblanks 1) planes 0.000 ms
+[ 1154.244] flip serial 31351 seq 124690 interval 8.426 ms (vblanks 1) planes 0.000 ms
+[ 1154.252] flip serial 31352 seq 124691 interval 8.163 ms (vblanks 1) planes 0.000 ms
+[ 1154.260] flip serial 31353 seq 124692 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1154.269] flip serial 31354 seq 124693 interval 8.459 ms (vblanks 1) planes 0.000 ms
+[ 1154.277] flip serial 31355 seq 124694 interval 8.145 ms (vblanks 1) planes 0.000 ms
+[ 1154.286] flip serial 31356 seq 124695 interval 8.460 ms (vblanks 1) planes 0.000 ms
+[ 1154.294] flip serial 31357 seq 124696 interval 8.126 ms (vblanks 1) planes 0.000 ms
+[ 1154.302] flip serial 31358 seq 124697 interval 8.303 ms (vblanks 1) planes 0.000 ms
+[ 1154.310] flip serial 31359 seq 124698 interval 8.357 ms (vblanks 1) planes 0.000 ms
+[ 1154.319] flip serial 31360 seq 124699 interval 8.432 ms (vblanks 1) planes 0.000 ms
+[ 1154.327] flip serial 31361 seq 124700 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1154.335] flip serial 31362 seq 124701 interval 8.098 ms (vblanks 1) planes 0.000 ms
+[ 1154.344] flip serial 31363 seq 124702 interval 8.604 ms (vblanks 1) planes 0.000 ms
+[ 1154.352] flip serial 31364 seq 124703 interval 7.986 ms (vblanks 1) planes 0.000 ms
+[ 1154.360] flip serial 31365 seq 124704 interval 8.381 ms (vblanks 1) planes 0.000 ms
+[ 1154.368] flip serial 31366 seq 124705 interval 8.203 ms (vblanks 1) planes 0.000 ms
+[ 1154.377] flip serial 31367 seq 124706 interval 8.390 ms (vblanks 1) planes 0.000 ms
+[ 1154.385] flip serial 31368 seq 124707 interval 8.359 ms (vblanks 1) planes 0.000 ms
+[ 1154.394] flip serial 31369 seq 124708 interval 8.447 ms (vblanks 1) planes 0.000 ms
+[ 1154.402] flip serial 31370 seq 124709 interval 7.997 ms (vblanks 1) planes 0.000 ms
+[ 1154.410] flip serial 31371 seq 124710 interval 8.472 ms (vblanks 1) planes 0.000 ms
+[ 1154.426] flip serial 31372 seq 124712 interval 16.503 ms (vblanks 2) planes 0.000 ms
+[ 1154.460] flip serial 31373 seq 124716 interval 33.169 ms (vblanks 4) planes 0.000 ms
+[ 1154.493] flip serial 31374 seq 124720 interval 33.123 ms (vblanks 4) planes 0.000 ms
+[ 1154.518] flip serial 31375 seq 124723 interval 24.861 ms (vblanks 3) planes 0.000 ms
+[ 1154.543] flip serial 31376 seq 124726 interval 24.906 ms (vblanks 3) planes 0.000 ms
+[ 1154.567] flip serial 31377 seq 124729 interval 24.865 ms (vblanks 3) planes 0.000 ms
+[ 1154.602] flip serial 31378 seq 124733 interval 33.770 ms (vblanks 4) planes 0.000 ms
+[ 1154.650] flip serial 31379 seq 124739 interval 49.186 ms (vblanks 6) planes 0.000 ms
+[ 1159.113] flip serial 31380 seq 125277 interval 4463.123 ms (vblanks 538) planes 0.000 ms
+[ 1159.122] flip serial 31381 seq 125278 interval 8.518 ms (vblanks 1) planes 0.000 ms
+[ 1159.130] flip serial 31382 seq 125279 interval 8.105 ms (vblanks 1) planes 0.000 ms
+[ 1159.139] flip serial 31383 seq 125280 interval 8.289 ms (vblanks 1) planes 0.000 ms
+[ 1159.147] flip serial 31384 seq 125281 interval 8.272 ms (vblanks 1) planes 0.000 ms
+[ 1159.155] flip serial 31385 seq 125282 interval 8.315 ms (vblanks 1) planes 0.000 ms
+[ 1159.163] flip serial 31386 seq 125283 interval 8.275 ms (vblanks 1) planes 0.000 ms
+[ 1159.172] flip serial 31387 seq 125284 interval 8.641 ms (vblanks 1) planes 0.000 ms
+[ 1159.180] flip serial 31388 seq 125285 interval 8.078 ms (vblanks 1) planes 0.000 ms
+[ 1159.189] flip serial 31389 seq 125286 interval 8.244 ms (vblanks 1) planes 0.000 ms
+[ 1159.197] flip serial 31390 seq 125287 interval 8.244 ms (vblanks 1) planes 0.000 ms
+[ 1159.205] flip serial 31391 seq 125288 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1159.214] flip serial 31392 seq 125289 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1159.222] flip serial 31393 seq 125290 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1159.230] flip serial 31394 seq 125291 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1159.238] flip serial 31395 seq 125292 interval 8.272 ms (vblanks 1) planes 0.000 ms
+[ 1159.247] flip serial 31396 seq 125293 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1159.255] flip serial 31397 seq 125294 interval 8.329 ms (vblanks 1) planes 0.000 ms
+[ 1159.263] flip serial 31398 seq 125295 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1159.271] flip serial 31399 seq 125296 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1159.280] flip serial 31400 seq 125297 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1159.289] flip serial 31401 seq 125298 interval 8.286 ms (vblanks 1) planes 0.000 ms
+[ 1159.297] flip serial 31402 seq 125299 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1159.313] flip serial 31403 seq 125301 interval 16.570 ms (vblanks 2) gpu 8.245 ms: too small
+[ 1159.321] flip serial 31404 seq 125302 interval 8.291 ms (vblanks 1) gpu 3.061 ms: too small
+[ 1159.329] flip serial 31405 seq 125303 interval 8.302 ms (vblanks 1) gpu 3.140 ms: too small
+[ 1159.337] flip serial 31406 seq 125304 interval 8.296 ms (vblanks 1) gpu 3.107 ms: too small
+[ 1159.346] flip serial 31407 seq 125305 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1159.354] flip serial 31408 seq 125306 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1159.362] flip serial 31409 seq 125307 interval 8.291 ms (vblanks 1) planes 0.000 ms
+[ 1159.371] flip serial 31410 seq 125308 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1159.379] flip serial 31411 seq 125309 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1159.387] flip serial 31412 seq 125310 interval 8.400 ms (vblanks 1) planes 0.000 ms
+[ 1159.396] flip serial 31413 seq 125311 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1159.404] flip serial 31414 seq 125312 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1159.412] flip serial 31415 seq 125313 interval 8.316 ms (vblanks 1) planes 0.000 ms
+[ 1159.420] flip serial 31416 seq 125314 interval 8.168 ms (vblanks 1) planes 0.000 ms
+[ 1159.438] flip serial 31417 seq 125316 interval 16.602 ms (vblanks 2) planes 0.000 ms
+[ 1159.446] flip serial 31418 seq 125317 interval 8.289 ms (vblanks 1) planes 0.000 ms
+[ 1159.470] flip serial 31419 seq 125320 interval 24.890 ms (vblanks 3) planes 0.000 ms
+[ 1159.495] flip serial 31420 seq 125323 interval 24.873 ms (vblanks 3) planes 0.000 ms
+[ 1159.562] flip serial 31421 seq 125331 interval 66.367 ms (vblanks 8) planes 0.000 ms
+[ 1159.603] flip serial 31422 seq 125336 interval 41.499 ms (vblanks 5) planes 0.000 ms
+[ 1160.155] flips by path: planes 12967, gpu 913, cpu 0
+[ 1160.159] flip serial 0 seq 125403 interval 555.797 ms (vblanks 67) planes 0.000 ms
+[ 1160.930] flip serial 31423 seq 125496 interval 771.512 ms (vblanks 93) gpu 5.449 ms: dim above the bottom
+[ 1160.939] flip serial 31424 seq 125497 interval 8.303 ms (vblanks 1) gpu 3.296 ms: dim above the bottom
+[ 1160.947] flip serial 31425 seq 125498 interval 8.296 ms (vblanks 1) gpu 2.961 ms: dim above the bottom
+[ 1160.955] flip serial 31426 seq 125499 interval 8.294 ms (vblanks 1) gpu 3.078 ms: dim above the bottom
+[ 1160.963] flip serial 31427 seq 125500 interval 8.300 ms (vblanks 1) gpu 3.007 ms: dim above the bottom
+[ 1160.972] flip serial 31428 seq 125501 interval 8.291 ms (vblanks 1) gpu 3.114 ms: dim above the bottom
+[ 1160.980] flip serial 31429 seq 125502 interval 8.297 ms (vblanks 1) gpu 2.701 ms: dim above the bottom
+[ 1160.988] flip serial 31430 seq 125503 interval 8.295 ms (vblanks 1) gpu 3.153 ms: dim above the bottom
+[ 1160.997] flip serial 31431 seq 125504 interval 8.324 ms (vblanks 1) gpu 3.394 ms: dim above the bottom
+[ 1161.005] flip serial 31432 seq 125505 interval 8.273 ms (vblanks 1) gpu 3.185 ms: dim above the bottom
+[ 1161.013] flip serial 31433 seq 125506 interval 8.292 ms (vblanks 1) gpu 3.530 ms: dim above the bottom
+[ 1161.022] flip serial 31434 seq 125507 interval 8.287 ms (vblanks 1) gpu 2.855 ms: dim above the bottom
+[ 1161.030] flip serial 31435 seq 125508 interval 8.299 ms (vblanks 1) gpu 3.598 ms: dim above the bottom
+[ 1161.038] flip serial 31436 seq 125509 interval 8.310 ms (vblanks 1) gpu 2.757 ms: dim above the bottom
+[ 1161.046] flip serial 31437 seq 125510 interval 8.279 ms (vblanks 1) gpu 2.793 ms: dim above the bottom
+[ 1161.055] flip serial 31438 seq 125511 interval 8.307 ms (vblanks 1) gpu 2.833 ms: dim above the bottom
+[ 1161.063] flip serial 31439 seq 125512 interval 8.295 ms (vblanks 1) gpu 3.578 ms: dim above the bottom
+[ 1161.071] flip serial 31440 seq 125513 interval 8.291 ms (vblanks 1) gpu 3.748 ms: dim above the bottom
+[ 1161.080] flip serial 31441 seq 125514 interval 8.299 ms (vblanks 1) gpu 3.279 ms: dim above the bottom
+[ 1161.088] flip serial 31442 seq 125515 interval 8.293 ms (vblanks 1) gpu 3.290 ms: dim above the bottom
+[ 1161.096] flip serial 31443 seq 125516 interval 8.296 ms (vblanks 1) gpu 3.232 ms: dim above the bottom
+[ 1161.104] flip serial 31444 seq 125517 interval 8.297 ms (vblanks 1) gpu 3.142 ms: dim above the bottom
+[ 1161.113] flip serial 31445 seq 125518 interval 8.293 ms (vblanks 1) gpu 3.212 ms: dim above the bottom
+[ 1161.121] flip serial 31446 seq 125519 interval 8.292 ms (vblanks 1) gpu 3.691 ms: dim above the bottom
+[ 1161.129] flip serial 31447 seq 125520 interval 8.304 ms (vblanks 1) gpu 3.038 ms: dim above the bottom
+[ 1161.138] flip serial 31448 seq 125521 interval 8.291 ms (vblanks 1) gpu 3.306 ms: dim above the bottom
+[ 1161.146] flip serial 31449 seq 125522 interval 8.297 ms (vblanks 1) gpu 3.191 ms: dim above the bottom
+[ 1161.154] flip serial 31450 seq 125523 interval 8.305 ms (vblanks 1) gpu 3.223 ms: dim above the bottom
+[ 1161.162] flip serial 31451 seq 125524 interval 8.283 ms (vblanks 1) gpu 4.139 ms: dim above the bottom
+[ 1161.171] flip serial 31452 seq 125525 interval 8.300 ms (vblanks 1) gpu 4.109 ms: dim above the bottom
+[ 1161.179] flip serial 31453 seq 125526 interval 8.291 ms (vblanks 1) gpu 3.060 ms: dim above the bottom
+[ 1161.187] flip serial 31454 seq 125527 interval 8.305 ms (vblanks 1) gpu 3.119 ms: dim above the bottom
+[ 1161.196] flip serial 31455 seq 125528 interval 8.292 ms (vblanks 1) gpu 3.166 ms: dim above the bottom
+[ 1161.204] flip serial 31456 seq 125529 interval 8.295 ms (vblanks 1) gpu 3.292 ms: dim above the bottom
+[ 1161.212] flip serial 31457 seq 125530 interval 8.314 ms (vblanks 1) gpu 3.304 ms: dim above the bottom
+[ 1161.221] flip serial 31458 seq 125531 interval 8.278 ms (vblanks 1) gpu 2.969 ms: dim above the bottom
+[ 1161.254] flip serial 31459 seq 125535 interval 33.184 ms (vblanks 4) gpu 3.702 ms: dim above the bottom
+[ 1161.262] flip serial 31460 seq 125536 interval 8.288 ms (vblanks 1) gpu 3.282 ms: dim above the bottom
+[ 1161.270] flip serial 31461 seq 125537 interval 8.329 ms (vblanks 1) gpu 3.456 ms: dim above the bottom
+[ 1161.279] flip serial 31462 seq 125538 interval 8.264 ms (vblanks 1) gpu 3.394 ms: dim above the bottom
+[ 1161.287] flip serial 31463 seq 125539 interval 8.296 ms (vblanks 1) gpu 3.523 ms: dim above the bottom
+[ 1161.295] flip serial 31464 seq 125540 interval 8.296 ms (vblanks 1) gpu 3.242 ms: dim above the bottom
+[ 1161.304] flip serial 31465 seq 125541 interval 8.305 ms (vblanks 1) gpu 3.833 ms: dim above the bottom
+[ 1161.312] flip serial 31466 seq 125542 interval 8.289 ms (vblanks 1) gpu 3.536 ms: dim above the bottom
+[ 1161.320] flip serial 31467 seq 125543 interval 8.297 ms (vblanks 1) gpu 3.447 ms: dim above the bottom
+[ 1161.328] flip serial 31468 seq 125544 interval 8.294 ms (vblanks 1) gpu 3.593 ms: dim above the bottom
+[ 1161.337] flip serial 31469 seq 125545 interval 8.297 ms (vblanks 1) gpu 3.245 ms: dim above the bottom
+[ 1161.345] flip serial 31470 seq 125546 interval 8.298 ms (vblanks 1) gpu 3.489 ms: dim above the bottom
+[ 1161.353] flip serial 31471 seq 125547 interval 8.298 ms (vblanks 1) gpu 3.663 ms: dim above the bottom
+[ 1161.362] flip serial 31472 seq 125548 interval 8.291 ms (vblanks 1) gpu 3.742 ms: dim above the bottom
+[ 1161.370] flip serial 31473 seq 125549 interval 8.303 ms (vblanks 1) gpu 3.284 ms: dim above the bottom
+[ 1161.378] flip serial 31474 seq 125550 interval 8.293 ms (vblanks 1) gpu 4.258 ms: dim above the bottom
+[ 1161.387] flip serial 31475 seq 125551 interval 8.294 ms (vblanks 1) gpu 3.453 ms: dim above the bottom
+[ 1161.395] flip serial 31476 seq 125552 interval 8.293 ms (vblanks 1) gpu 3.685 ms: dim above the bottom
+[ 1161.403] flip serial 31477 seq 125553 interval 8.303 ms (vblanks 1) gpu 4.779 ms: dim above the bottom
+[ 1161.411] flip serial 31478 seq 125554 interval 8.289 ms (vblanks 1) gpu 3.372 ms: dim above the bottom
+[ 1161.420] flip serial 31479 seq 125555 interval 8.295 ms (vblanks 1) gpu 4.296 ms: dim above the bottom
+[ 1161.428] flip serial 31480 seq 125556 interval 8.299 ms (vblanks 1) gpu 3.453 ms: dim above the bottom
+[ 1161.436] flip serial 31481 seq 125557 interval 8.297 ms (vblanks 1) gpu 3.240 ms: dim above the bottom
+[ 1161.445] flip serial 31482 seq 125558 interval 8.304 ms (vblanks 1) gpu 3.770 ms: dim above the bottom
+[ 1161.453] flip serial 31483 seq 125559 interval 8.289 ms (vblanks 1) gpu 3.604 ms: dim above the bottom
+[ 1161.461] flip serial 31484 seq 125560 interval 8.292 ms (vblanks 1) gpu 4.094 ms: dim above the bottom
+[ 1161.469] flip serial 31485 seq 125561 interval 8.295 ms (vblanks 1) gpu 3.669 ms: dim above the bottom
+[ 1161.478] flip serial 31486 seq 125562 interval 8.317 ms (vblanks 1) gpu 4.150 ms: dim above the bottom
+[ 1161.486] flip serial 31487 seq 125563 interval 8.280 ms (vblanks 1) gpu 3.387 ms: dim above the bottom
+[ 1161.494] flip serial 31488 seq 125564 interval 8.290 ms (vblanks 1) gpu 3.545 ms: dim above the bottom
+[ 1161.503] flip serial 31489 seq 125565 interval 8.294 ms (vblanks 1) gpu 3.544 ms: dim above the bottom
+[ 1161.511] flip serial 31490 seq 125566 interval 8.301 ms (vblanks 1) gpu 4.211 ms: dim above the bottom
+[ 1161.519] flip serial 31491 seq 125567 interval 8.300 ms (vblanks 1) gpu 3.578 ms: dim above the bottom
+[ 1161.528] flip serial 31492 seq 125568 interval 8.296 ms (vblanks 1) gpu 5.526 ms: dim above the bottom
+[ 1161.536] flip serial 31493 seq 125569 interval 8.285 ms (vblanks 1) gpu 3.367 ms: dim above the bottom
+[ 1161.544] flip serial 31494 seq 125570 interval 8.300 ms (vblanks 1) gpu 4.235 ms: dim above the bottom
+[ 1161.552] flip serial 31495 seq 125571 interval 8.290 ms (vblanks 1) gpu 3.529 ms: dim above the bottom
+[ 1161.561] flip serial 31496 seq 125572 interval 8.292 ms (vblanks 1) gpu 3.301 ms: dim above the bottom
+[ 1161.569] flip serial 31497 seq 125573 interval 8.302 ms (vblanks 1) gpu 3.279 ms: dim above the bottom
+[ 1161.577] flip serial 31498 seq 125574 interval 8.298 ms (vblanks 1) gpu 4.178 ms: dim above the bottom
+[ 1161.586] flip serial 31499 seq 125575 interval 8.293 ms (vblanks 1) gpu 3.512 ms: dim above the bottom
+[ 1161.594] flip serial 31500 seq 125576 interval 8.303 ms (vblanks 1) gpu 3.330 ms: dim above the bottom
+[ 1161.602] flip serial 31501 seq 125577 interval 8.296 ms (vblanks 1) gpu 3.756 ms: dim above the bottom
+[ 1161.611] flip serial 31502 seq 125578 interval 8.296 ms (vblanks 1) gpu 3.614 ms: dim above the bottom
+[ 1161.619] flip serial 31503 seq 125579 interval 8.287 ms (vblanks 1) gpu 3.699 ms: dim above the bottom
+[ 1161.627] flip serial 31504 seq 125580 interval 8.298 ms (vblanks 1) gpu 4.655 ms: dim above the bottom
+[ 1161.635] flip serial 31505 seq 125581 interval 8.291 ms (vblanks 1) gpu 3.332 ms: dim above the bottom
+[ 1161.652] flip serial 31506 seq 125583 interval 16.594 ms (vblanks 2) gpu 3.527 ms: dim above the bottom
+[ 1161.660] flip serial 31507 seq 125584 interval 8.304 ms (vblanks 1) gpu 4.169 ms: dim above the bottom
+[ 1161.677] flip serial 31508 seq 125586 interval 16.593 ms (vblanks 2) gpu 5.299 ms: dim above the bottom
+[ 1161.702] flip serial 31509 seq 125589 interval 24.888 ms (vblanks 3) gpu 3.780 ms: dim above the bottom
+[ 1161.735] flip serial 31510 seq 125593 interval 33.182 ms (vblanks 4) gpu 3.855 ms: dim above the bottom
+[ 1161.818] flip serial 31511 seq 125603 interval 82.960 ms (vblanks 10) gpu 6.934 ms: dim above the bottom
+[ 1162.092] flip serial 31512 seq 125636 interval 273.748 ms (vblanks 33) gpu 4.879 ms: dim above the bottom
+[ 1162.100] flip serial 31513 seq 125637 interval 8.294 ms (vblanks 1) gpu 4.292 ms: dim above the bottom
+[ 1162.108] flip serial 31514 seq 125638 interval 8.300 ms (vblanks 1) gpu 3.363 ms: dim above the bottom
+[ 1162.117] flip serial 31515 seq 125639 interval 8.298 ms (vblanks 1) gpu 3.213 ms: dim above the bottom
+[ 1162.125] flip serial 31516 seq 125640 interval 8.294 ms (vblanks 1) gpu 3.234 ms: dim above the bottom
+[ 1162.133] flip serial 31517 seq 125641 interval 8.316 ms (vblanks 1) gpu 3.934 ms: dim above the bottom
+[ 1162.141] flip serial 31518 seq 125642 interval 8.279 ms (vblanks 1) gpu 3.319 ms: dim above the bottom
+[ 1162.150] flip serial 31519 seq 125643 interval 8.288 ms (vblanks 1) gpu 3.286 ms: dim above the bottom
+[ 1162.158] flip serial 31520 seq 125644 interval 8.315 ms (vblanks 1) gpu 3.326 ms: dim above the bottom
+[ 1162.166] flip serial 31521 seq 125645 interval 8.281 ms (vblanks 1) gpu 3.912 ms: dim above the bottom
+[ 1162.175] flip serial 31522 seq 125646 interval 8.304 ms (vblanks 1) gpu 3.043 ms: dim above the bottom
+[ 1162.183] flip serial 31523 seq 125647 interval 8.289 ms (vblanks 1) gpu 3.376 ms: dim above the bottom
+[ 1162.191] flip serial 31524 seq 125648 interval 8.291 ms (vblanks 1) gpu 3.215 ms: dim above the bottom
+[ 1162.200] flip serial 31525 seq 125649 interval 8.306 ms (vblanks 1) gpu 3.282 ms: dim above the bottom
+[ 1162.208] flip serial 31526 seq 125650 interval 8.292 ms (vblanks 1) gpu 2.856 ms: dim above the bottom
+[ 1162.216] flip serial 31527 seq 125651 interval 8.292 ms (vblanks 1) gpu 3.339 ms: dim above the bottom
+[ 1162.224] flip serial 31528 seq 125652 interval 8.299 ms (vblanks 1) gpu 3.285 ms: dim above the bottom
+[ 1162.233] flip serial 31529 seq 125653 interval 8.294 ms (vblanks 1) gpu 2.913 ms: dim above the bottom
+[ 1162.241] flip serial 31530 seq 125654 interval 8.302 ms (vblanks 1) gpu 3.285 ms: dim above the bottom
+[ 1162.249] flip serial 31531 seq 125655 interval 8.293 ms (vblanks 1) gpu 2.977 ms: dim above the bottom
+[ 1162.258] flip serial 31532 seq 125656 interval 8.298 ms (vblanks 1) gpu 3.671 ms: dim above the bottom
+[ 1162.266] flip serial 31533 seq 125657 interval 8.291 ms (vblanks 1) gpu 2.884 ms: dim above the bottom
+[ 1162.274] flip serial 31534 seq 125658 interval 8.303 ms (vblanks 1) gpu 3.009 ms: dim above the bottom
+[ 1162.282] flip serial 31535 seq 125659 interval 8.284 ms (vblanks 1) gpu 3.064 ms: dim above the bottom
+[ 1162.291] flip serial 31536 seq 125660 interval 8.296 ms (vblanks 1) gpu 3.107 ms: dim above the bottom
+[ 1162.299] flip serial 31537 seq 125661 interval 8.295 ms (vblanks 1) gpu 3.099 ms: dim above the bottom
+[ 1162.307] flip serial 31538 seq 125662 interval 8.298 ms (vblanks 1) gpu 3.101 ms: dim above the bottom
+[ 1162.316] flip serial 31539 seq 125663 interval 8.294 ms (vblanks 1) gpu 3.060 ms: dim above the bottom
+[ 1162.324] flip serial 31540 seq 125664 interval 8.299 ms (vblanks 1) gpu 3.935 ms: dim above the bottom
+[ 1162.332] flip serial 31541 seq 125665 interval 8.302 ms (vblanks 1) gpu 2.769 ms: dim above the bottom
+[ 1162.341] flip serial 31542 seq 125666 interval 8.304 ms (vblanks 1) gpu 3.081 ms: dim above the bottom
+[ 1162.349] flip serial 31543 seq 125667 interval 8.285 ms (vblanks 1) gpu 3.521 ms: dim above the bottom
+[ 1162.357] flip serial 31544 seq 125668 interval 8.292 ms (vblanks 1) gpu 3.087 ms: dim above the bottom
+[ 1162.365] flip serial 31545 seq 125669 interval 8.291 ms (vblanks 1) gpu 3.060 ms: dim above the bottom
+[ 1162.374] flip serial 31546 seq 125670 interval 8.296 ms (vblanks 1) gpu 3.498 ms: dim above the bottom
+[ 1162.382] flip serial 31547 seq 125671 interval 8.300 ms (vblanks 1) gpu 2.750 ms: dim above the bottom
+[ 1162.390] flip serial 31548 seq 125672 interval 8.305 ms (vblanks 1) gpu 3.592 ms: dim above the bottom
+[ 1162.399] flip serial 31549 seq 125673 interval 8.290 ms (vblanks 1) gpu 2.917 ms: dim above the bottom
+[ 1162.407] flip serial 31550 seq 125674 interval 8.292 ms (vblanks 1) gpu 2.910 ms: dim above the bottom
+[ 1162.415] flip serial 31551 seq 125675 interval 8.308 ms (vblanks 1) gpu 2.950 ms: dim above the bottom
+[ 1162.423] flip serial 31552 seq 125676 interval 8.279 ms (vblanks 1) gpu 2.712 ms: dim above the bottom
+[ 1162.432] flip serial 31553 seq 125677 interval 8.306 ms (vblanks 1) gpu 3.762 ms: dim above the bottom
+[ 1162.440] flip serial 31554 seq 125678 interval 8.290 ms (vblanks 1) gpu 2.879 ms: dim above the bottom
+[ 1162.448] flip serial 31555 seq 125679 interval 8.301 ms (vblanks 1) gpu 3.742 ms: dim above the bottom
+[ 1162.457] flip serial 31556 seq 125680 interval 8.300 ms (vblanks 1) gpu 2.671 ms: dim above the bottom
+[ 1162.465] flip serial 31557 seq 125681 interval 8.291 ms (vblanks 1) gpu 2.567 ms: dim above the bottom
+[ 1162.473] flip serial 31558 seq 125682 interval 8.296 ms (vblanks 1) gpu 3.006 ms: dim above the bottom
+[ 1162.482] flip serial 31559 seq 125683 interval 8.290 ms (vblanks 1) gpu 2.640 ms: dim above the bottom
+[ 1162.490] flip serial 31560 seq 125684 interval 8.302 ms (vblanks 1) gpu 3.641 ms: dim above the bottom
+[ 1162.498] flip serial 31561 seq 125685 interval 8.291 ms (vblanks 1) gpu 2.649 ms: dim above the bottom
+[ 1162.506] flip serial 31562 seq 125686 interval 8.298 ms (vblanks 1) gpu 3.676 ms: dim above the bottom
+[ 1162.515] flip serial 31563 seq 125687 interval 8.287 ms (vblanks 1) gpu 2.532 ms: dim above the bottom
+[ 1162.523] flip serial 31564 seq 125688 interval 8.308 ms (vblanks 1) gpu 3.052 ms: dim above the bottom
+[ 1162.531] flip serial 31565 seq 125689 interval 8.297 ms (vblanks 1) gpu 2.529 ms: dim above the bottom
+[ 1162.540] flip serial 31566 seq 125690 interval 8.294 ms (vblanks 1) gpu 2.754 ms: dim above the bottom
+[ 1162.548] flip serial 31567 seq 125691 interval 8.297 ms (vblanks 1) gpu 2.787 ms: dim above the bottom
+[ 1162.556] flip serial 31568 seq 125692 interval 8.291 ms (vblanks 1) gpu 2.760 ms: dim above the bottom
+[ 1162.564] flip serial 31569 seq 125693 interval 8.302 ms (vblanks 1) gpu 3.310 ms: dim above the bottom
+[ 1162.573] flip serial 31570 seq 125694 interval 8.292 ms (vblanks 1) gpu 3.640 ms: dim above the bottom
+[ 1162.581] flip serial 31571 seq 125695 interval 8.287 ms (vblanks 1) gpu 2.514 ms: dim above the bottom
+[ 1162.589] flip serial 31572 seq 125696 interval 8.312 ms (vblanks 1) gpu 3.510 ms: dim above the bottom
+[ 1162.598] flip serial 31573 seq 125697 interval 8.284 ms (vblanks 1) gpu 2.679 ms: dim above the bottom
+[ 1162.606] flip serial 31574 seq 125698 interval 8.299 ms (vblanks 1) gpu 2.424 ms: dim above the bottom
+[ 1162.614] flip serial 31575 seq 125699 interval 8.292 ms (vblanks 1) gpu 2.844 ms: dim above the bottom
+[ 1162.623] flip serial 31576 seq 125700 interval 8.296 ms (vblanks 1) gpu 2.389 ms: dim above the bottom
+[ 1162.631] flip serial 31577 seq 125701 interval 8.304 ms (vblanks 1) gpu 3.742 ms: dim above the bottom
+[ 1162.639] flip serial 31578 seq 125702 interval 8.283 ms (vblanks 1) gpu 2.475 ms: dim above the bottom
+[ 1162.648] flip serial 31579 seq 125703 interval 8.305 ms (vblanks 1) gpu 2.872 ms: dim above the bottom
+[ 1162.656] flip serial 31580 seq 125704 interval 8.284 ms (vblanks 1) gpu 2.549 ms: dim above the bottom
+[ 1162.664] flip serial 31581 seq 125705 interval 8.309 ms (vblanks 1) gpu 2.922 ms: dim above the bottom
+[ 1162.672] flip serial 31582 seq 125706 interval 8.289 ms (vblanks 1) gpu 2.499 ms: dim above the bottom
+[ 1162.681] flip serial 31583 seq 125707 interval 8.300 ms (vblanks 1) gpu 3.471 ms: dim above the bottom
+[ 1162.689] flip serial 31584 seq 125708 interval 8.291 ms (vblanks 1) gpu 2.461 ms: dim above the bottom
+[ 1162.697] flip serial 31585 seq 125709 interval 8.299 ms (vblanks 1) gpu 2.421 ms: dim above the bottom
+[ 1162.706] flip serial 31586 seq 125710 interval 8.295 ms (vblanks 1) gpu 2.357 ms: too small
+[ 1162.714] flip serial 31587 seq 125711 interval 8.300 ms (vblanks 1) gpu 3.419 ms: too small
+[ 1162.722] flip serial 31588 seq 125712 interval 8.285 ms (vblanks 1) gpu 2.510 ms: too small
+[ 1162.730] flip serial 31589 seq 125713 interval 8.301 ms (vblanks 1) gpu 2.388 ms: too small
+[ 1162.739] flip serial 31590 seq 125714 interval 8.346 ms (vblanks 1) gpu 2.331 ms: too small
+[ 1162.747] flip serial 31591 seq 125715 interval 8.255 ms (vblanks 1) gpu 2.352 ms: too small
+[ 1162.755] flip serial 31592 seq 125716 interval 8.280 ms (vblanks 1) gpu 2.673 ms: too small
+[ 1162.764] flip serial 31593 seq 125717 interval 8.300 ms (vblanks 1) gpu 2.394 ms: too small
+[ 1162.780] flip serial 31594 seq 125719 interval 16.601 ms (vblanks 2) gpu 3.502 ms: too small
+[ 1162.788] flip serial 31595 seq 125720 interval 8.290 ms (vblanks 1) gpu 2.502 ms: too small
+[ 1162.805] flip serial 31596 seq 125722 interval 16.590 ms (vblanks 2) gpu 2.642 ms: too small
+[ 1162.830] flip serial 31597 seq 125725 interval 24.899 ms (vblanks 3) gpu 3.823 ms: too small
+[ 1162.863] flip serial 31598 seq 125729 interval 33.176 ms (vblanks 4) gpu 2.714 ms: too small
+[ 1162.938] flip serial 31599 seq 125738 interval 74.796 ms (vblanks 9) planes 0.000 ms
+[ 1163.203] flip serial 31600 seq 125770 interval 265.332 ms (vblanks 32) gpu 7.554 ms: corner radius
+[ 1163.212] flip serial 31601 seq 125771 interval 8.287 ms (vblanks 1) gpu 3.142 ms: corner radius
+[ 1163.220] flip serial 31602 seq 125772 interval 8.304 ms (vblanks 1) gpu 3.290 ms: corner radius
+[ 1163.228] flip serial 31603 seq 125773 interval 8.286 ms (vblanks 1) gpu 2.829 ms: corner radius
+[ 1163.236] flip serial 31604 seq 125774 interval 8.296 ms (vblanks 1) gpu 3.244 ms: corner radius
+[ 1163.245] flip serial 31605 seq 125775 interval 8.302 ms (vblanks 1) gpu 2.951 ms: corner radius
+[ 1163.253] flip serial 31606 seq 125776 interval 8.302 ms (vblanks 1) gpu 4.270 ms: corner radius
+[ 1163.261] flip serial 31607 seq 125777 interval 8.288 ms (vblanks 1) gpu 3.077 ms: corner radius
+[ 1163.270] flip serial 31608 seq 125778 interval 8.300 ms (vblanks 1) gpu 3.113 ms: corner radius
+[ 1163.278] flip serial 31609 seq 125779 interval 8.293 ms (vblanks 1) gpu 3.789 ms: corner radius
+[ 1163.286] flip serial 31610 seq 125780 interval 8.294 ms (vblanks 1) gpu 3.450 ms: corner radius
+[ 1163.295] flip serial 31611 seq 125781 interval 8.299 ms (vblanks 1) gpu 4.804 ms: corner radius
+[ 1163.303] flip serial 31612 seq 125782 interval 8.293 ms (vblanks 1) gpu 3.410 ms: corner radius
+[ 1163.311] flip serial 31613 seq 125783 interval 8.299 ms (vblanks 1) gpu 3.823 ms: corner radius
+[ 1163.319] flip serial 31614 seq 125784 interval 8.291 ms (vblanks 1) gpu 3.452 ms: corner radius
+[ 1163.328] flip serial 31615 seq 125785 interval 8.299 ms (vblanks 1) gpu 4.754 ms: corner radius
+[ 1163.336] flip serial 31616 seq 125786 interval 8.293 ms (vblanks 1) gpu 3.389 ms: corner radius
+[ 1163.344] flip serial 31617 seq 125787 interval 8.299 ms (vblanks 1) gpu 4.332 ms: corner radius
+[ 1163.353] flip serial 31618 seq 125788 interval 8.299 ms (vblanks 1) gpu 3.147 ms: corner radius
+[ 1163.361] flip serial 31619 seq 125789 interval 8.292 ms (vblanks 1) gpu 3.679 ms: corner radius
+[ 1163.369] flip serial 31620 seq 125790 interval 8.292 ms (vblanks 1) gpu 3.204 ms: corner radius
+[ 1163.377] flip serial 31621 seq 125791 interval 8.299 ms (vblanks 1) gpu 3.650 ms: corner radius
+[ 1163.386] flip serial 31622 seq 125792 interval 8.291 ms (vblanks 1) gpu 3.440 ms: corner radius
+[ 1163.394] flip serial 31623 seq 125793 interval 8.308 ms (vblanks 1) gpu 3.699 ms: corner radius
+[ 1163.402] flip serial 31624 seq 125794 interval 8.285 ms (vblanks 1) gpu 3.278 ms: corner radius
+[ 1163.411] flip serial 31625 seq 125795 interval 8.300 ms (vblanks 1) gpu 3.650 ms: corner radius
+[ 1163.419] flip serial 31626 seq 125796 interval 8.293 ms (vblanks 1) gpu 3.307 ms: corner radius
+[ 1163.427] flip serial 31627 seq 125797 interval 8.295 ms (vblanks 1) gpu 3.410 ms: corner radius
+[ 1163.436] flip serial 31628 seq 125798 interval 8.299 ms (vblanks 1) gpu 4.606 ms: corner radius
+[ 1163.444] flip serial 31629 seq 125799 interval 8.292 ms (vblanks 1) gpu 3.326 ms: corner radius
+[ 1163.452] flip serial 31630 seq 125800 interval 8.307 ms (vblanks 1) gpu 3.229 ms: corner radius
+[ 1163.461] flip serial 31631 seq 125801 interval 8.287 ms (vblanks 1) gpu 3.987 ms: corner radius
+[ 1163.469] flip serial 31632 seq 125802 interval 8.295 ms (vblanks 1) gpu 3.321 ms: corner radius
+[ 1163.477] flip serial 31633 seq 125803 interval 8.298 ms (vblanks 1) gpu 4.706 ms: corner radius
+[ 1163.485] flip serial 31634 seq 125804 interval 8.299 ms (vblanks 1) gpu 3.340 ms: corner radius
+[ 1163.494] flip serial 31635 seq 125805 interval 8.292 ms (vblanks 1) gpu 4.057 ms: corner radius
+[ 1163.502] flip serial 31636 seq 125806 interval 8.297 ms (vblanks 1) gpu 3.370 ms: corner radius
+[ 1163.510] flip serial 31637 seq 125807 interval 8.293 ms (vblanks 1) gpu 4.117 ms: corner radius
+[ 1163.518] flip serial 31638 seq 125808 interval 8.293 ms (vblanks 1) gpu 3.605 ms: corner radius
+[ 1163.527] flip serial 31639 seq 125809 interval 8.297 ms (vblanks 1) gpu 3.247 ms: corner radius
+[ 1163.535] flip serial 31640 seq 125810 interval 8.298 ms (vblanks 1) gpu 3.205 ms: corner radius
+[ 1163.543] flip serial 31641 seq 125811 interval 8.295 ms (vblanks 1) gpu 3.615 ms: corner radius
+[ 1163.552] flip serial 31642 seq 125812 interval 8.354 ms (vblanks 1) gpu 4.758 ms: corner radius
+[ 1163.560] flip serial 31643 seq 125813 interval 8.233 ms (vblanks 1) gpu 3.364 ms: corner radius
+[ 1163.568] flip serial 31644 seq 125814 interval 8.305 ms (vblanks 1) gpu 3.864 ms: corner radius
+[ 1163.577] flip serial 31645 seq 125815 interval 8.289 ms (vblanks 1) gpu 3.434 ms: corner radius
+[ 1163.585] flip serial 31646 seq 125816 interval 8.297 ms (vblanks 1) gpu 4.073 ms: corner radius
+[ 1163.593] flip serial 31647 seq 125817 interval 8.296 ms (vblanks 1) gpu 3.456 ms: corner radius
+[ 1163.601] flip serial 31648 seq 125818 interval 8.296 ms (vblanks 1) gpu 4.053 ms: corner radius
+[ 1163.610] flip serial 31649 seq 125819 interval 8.294 ms (vblanks 1) gpu 3.528 ms: corner radius
+[ 1163.618] flip serial 31650 seq 125820 interval 8.295 ms (vblanks 1) gpu 3.343 ms: corner radius
+[ 1163.626] flip serial 31651 seq 125821 interval 8.300 ms (vblanks 1) gpu 3.908 ms: corner radius
+[ 1163.635] flip serial 31652 seq 125822 interval 8.298 ms (vblanks 1) gpu 3.445 ms: corner radius
+[ 1163.643] flip serial 31653 seq 125823 interval 8.294 ms (vblanks 1) gpu 3.352 ms: corner radius
+[ 1163.651] flip serial 31654 seq 125824 interval 8.293 ms (vblanks 1) gpu 3.234 ms: corner radius
+[ 1163.660] flip serial 31655 seq 125825 interval 8.297 ms (vblanks 1) gpu 3.756 ms: corner radius
+[ 1163.668] flip serial 31656 seq 125826 interval 8.306 ms (vblanks 1) gpu 4.901 ms: corner radius
+[ 1163.676] flip serial 31657 seq 125827 interval 8.287 ms (vblanks 1) gpu 4.030 ms: corner radius
+[ 1163.684] flip serial 31658 seq 125828 interval 8.309 ms (vblanks 1) gpu 4.231 ms: corner radius
+[ 1163.693] flip serial 31659 seq 125829 interval 8.283 ms (vblanks 1) gpu 5.241 ms: corner radius
+[ 1163.709] flip serial 31660 seq 125831 interval 16.594 ms (vblanks 2) planes 0.000 ms
+[ 1163.718] flip serial 0 seq 125832 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1164.215] flip serial 0 seq 125892 interval 497.751 ms (vblanks 60) planes 0.000 ms
+[ 1165.211] flip serial 0 seq 126012 interval 995.496 ms (vblanks 120) planes 0.000 ms
+[ 1165.825] flip serial 0 seq 126086 interval 613.864 ms (vblanks 74) planes 0.000 ms
+[ 1165.835] flip serial 0 seq 126087 interval 8.338 ms (vblanks 1) planes 0.000 ms
+[ 1165.841] flip serial 0 seq 126088 interval 8.268 ms (vblanks 1) planes 0.000 ms
+[ 1165.850] flip serial 0 seq 126089 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1165.858] flip serial 0 seq 126090 interval 8.342 ms (vblanks 1) planes 0.000 ms
+[ 1165.916] flip serial 0 seq 126091 interval 8.238 ms (vblanks 1) planes 0.000 ms
+[ 1165.931] flip serial 0 seq 126098 interval 58.075 ms (vblanks 7) planes 0.000 ms
+[ 1165.933] flip serial 0 seq 126099 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1165.941] flip serial 0 seq 126100 interval 8.286 ms (vblanks 1) planes 0.000 ms
+[ 1165.949] flip serial 0 seq 126101 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1165.957] flip serial 0 seq 126102 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1165.966] flip serial 0 seq 126103 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1165.974] flip serial 0 seq 126104 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1165.982] flip serial 0 seq 126105 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1165.991] flip serial 0 seq 126106 interval 8.313 ms (vblanks 1) planes 0.000 ms
+[ 1165.999] flip serial 0 seq 126107 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1166.007] flip serial 0 seq 126108 interval 8.466 ms (vblanks 1) planes 0.000 ms
+[ 1166.016] flip serial 0 seq 126109 interval 8.129 ms (vblanks 1) planes 0.000 ms
+[ 1166.024] flip serial 0 seq 126110 interval 8.432 ms (vblanks 1) planes 0.000 ms
+[ 1166.032] flip serial 0 seq 126111 interval 8.158 ms (vblanks 1) planes 0.000 ms
+[ 1166.041] flip serial 0 seq 126112 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1166.049] flip serial 0 seq 126113 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1166.066] flip serial 0 seq 126115 interval 16.815 ms (vblanks 2) planes 0.000 ms
+[ 1166.115] flip serial 0 seq 126121 interval 49.540 ms (vblanks 6) planes 0.000 ms
+[ 1166.123] flip serial 0 seq 126122 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1166.132] flip serial 0 seq 126123 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1166.157] flip serial 0 seq 126126 interval 24.885 ms (vblanks 3) planes 0.000 ms
+[ 1166.165] flip serial 0 seq 126127 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1166.182] flip serial 0 seq 126129 interval 16.643 ms (vblanks 2) planes 0.000 ms
+[ 1166.190] flip serial 0 seq 126130 interval 8.238 ms (vblanks 1) planes 0.000 ms
+[ 1166.198] flip serial 0 seq 126131 interval 8.311 ms (vblanks 1) planes 0.000 ms
+[ 1166.207] flip serial 0 seq 126132 interval 8.371 ms (vblanks 1) planes 0.000 ms
+[ 1166.215] flip serial 0 seq 126133 interval 8.218 ms (vblanks 1) planes 0.000 ms
+[ 1166.223] flip serial 0 seq 126134 interval 8.285 ms (vblanks 1) planes 0.000 ms
+[ 1166.240] flip serial 0 seq 126136 interval 16.756 ms (vblanks 2) planes 0.000 ms
+[ 1166.248] flip serial 0 seq 126137 interval 8.125 ms (vblanks 1) planes 0.000 ms
+[ 1166.291] flip serial 0 seq 126142 interval 41.737 ms (vblanks 5) planes 0.000 ms
+[ 1166.298] flip serial 0 seq 126143 interval 8.047 ms (vblanks 1) planes 0.000 ms
+[ 1166.306] flip serial 0 seq 126144 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1167.227] flip serial 0 seq 126255 interval 921.119 ms (vblanks 111) planes 0.000 ms
+[ 1168.231] flip serial 0 seq 126376 interval 1003.512 ms (vblanks 121) planes 0.000 ms
+[ 1169.218] flip serial 0 seq 126495 interval 987.416 ms (vblanks 119) planes 0.000 ms
+[ 1170.220] flips by path: planes 13015, gpu 1149, cpu 0
+[ 1170.222] flip serial 0 seq 126616 interval 1003.586 ms (vblanks 121) planes 0.000 ms
+[ 1170.752] flip serial 0 seq 126680 interval 530.900 ms (vblanks 64) planes 0.000 ms
+[ 1170.762] flip serial 0 seq 126681 interval 8.412 ms (vblanks 1) planes 0.000 ms
+[ 1170.769] flip serial 0 seq 126682 interval 8.237 ms (vblanks 1) planes 0.000 ms
+[ 1170.789] flip serial 0 seq 126684 interval 16.832 ms (vblanks 2) planes 0.000 ms
+[ 1170.828] flip serial 0 seq 126689 interval 41.197 ms (vblanks 5) planes 0.000 ms
+[ 1170.852] flip serial 0 seq 126692 interval 24.886 ms (vblanks 3) planes 0.000 ms
+[ 1170.861] flip serial 0 seq 126693 interval 8.498 ms (vblanks 1) planes 0.000 ms
+[ 1171.242] flip serial 0 seq 126739 interval 381.396 ms (vblanks 46) planes 0.000 ms
+[ 1172.038] flip serial 31661 seq 126835 interval 796.383 ms (vblanks 96) gpu 5.064 ms: corner radius
+[ 1172.047] flip serial 31662 seq 126836 interval 8.298 ms (vblanks 1) gpu 3.494 ms: corner radius
+[ 1172.055] flip serial 31663 seq 126837 interval 8.294 ms (vblanks 1) gpu 3.136 ms: corner radius
+[ 1172.063] flip serial 31664 seq 126838 interval 8.297 ms (vblanks 1) gpu 3.137 ms: corner radius
+[ 1172.071] flip serial 31665 seq 126839 interval 8.296 ms (vblanks 1) gpu 2.998 ms: corner radius
+[ 1172.080] flip serial 31666 seq 126840 interval 8.294 ms (vblanks 1) gpu 3.265 ms: corner radius
+[ 1172.088] flip serial 31667 seq 126841 interval 8.302 ms (vblanks 1) gpu 3.290 ms: corner radius
+[ 1172.096] flip serial 31668 seq 126842 interval 8.315 ms (vblanks 1) gpu 4.167 ms: corner radius
+[ 1172.105] flip serial 31669 seq 126843 interval 8.274 ms (vblanks 1) gpu 3.477 ms: corner radius
+[ 1172.113] flip serial 31670 seq 126844 interval 8.298 ms (vblanks 1) gpu 4.038 ms: corner radius
+[ 1172.121] flip serial 31671 seq 126845 interval 8.298 ms (vblanks 1) gpu 3.346 ms: corner radius
+[ 1172.130] flip serial 31672 seq 126846 interval 8.293 ms (vblanks 1) gpu 3.185 ms: corner radius
+[ 1172.138] flip serial 31673 seq 126847 interval 8.301 ms (vblanks 1) gpu 3.270 ms: corner radius
+[ 1172.146] flip serial 31674 seq 126848 interval 8.298 ms (vblanks 1) gpu 3.178 ms: corner radius
+[ 1172.154] flip serial 31675 seq 126849 interval 8.294 ms (vblanks 1) gpu 3.840 ms: corner radius
+[ 1172.163] flip serial 31676 seq 126850 interval 8.287 ms (vblanks 1) gpu 3.309 ms: corner radius
+[ 1172.171] flip serial 31677 seq 126851 interval 8.303 ms (vblanks 1) gpu 3.405 ms: corner radius
+[ 1172.179] flip serial 31678 seq 126852 interval 8.298 ms (vblanks 1) gpu 3.214 ms: corner radius
+[ 1172.188] flip serial 31679 seq 126853 interval 8.295 ms (vblanks 1) gpu 3.336 ms: corner radius
+[ 1172.196] flip serial 31680 seq 126854 interval 8.290 ms (vblanks 1) gpu 3.284 ms: corner radius
+[ 1172.204] flip serial 31681 seq 126855 interval 8.292 ms (vblanks 1) gpu 3.322 ms: corner radius
+[ 1172.212] flip serial 31682 seq 126856 interval 8.294 ms (vblanks 1) gpu 2.734 ms: corner radius
+[ 1172.221] flip serial 31683 seq 126857 interval 8.297 ms (vblanks 1) gpu 3.250 ms: corner radius
+[ 1172.229] flip serial 31684 seq 126858 interval 8.296 ms (vblanks 1) gpu 2.760 ms: corner radius
+[ 1172.237] flip serial 31685 seq 126859 interval 8.298 ms (vblanks 1) gpu 2.690 ms: corner radius
+[ 1172.246] flip serial 31686 seq 126860 interval 8.297 ms (vblanks 1) gpu 3.725 ms: corner radius
+[ 1172.254] flip serial 31687 seq 126861 interval 8.301 ms (vblanks 1) gpu 2.751 ms: corner radius
+[ 1172.262] flip serial 31688 seq 126862 interval 8.292 ms (vblanks 1) gpu 2.577 ms: corner radius
+[ 1172.271] flip serial 31689 seq 126863 interval 8.296 ms (vblanks 1) gpu 3.366 ms: corner radius
+[ 1172.279] flip serial 31690 seq 126864 interval 8.301 ms (vblanks 1) gpu 2.809 ms: corner radius
+[ 1172.287] flip serial 31691 seq 126865 interval 8.292 ms (vblanks 1) gpu 3.010 ms: corner radius
+[ 1172.295] flip serial 31692 seq 126866 interval 8.287 ms (vblanks 1) gpu 2.600 ms: corner radius
+[ 1172.304] flip serial 31693 seq 126867 interval 8.303 ms (vblanks 1) gpu 3.036 ms: corner radius
+[ 1172.312] flip serial 31694 seq 126868 interval 8.297 ms (vblanks 1) gpu 2.578 ms: corner radius
+[ 1172.320] flip serial 31695 seq 126869 interval 8.313 ms (vblanks 1) gpu 3.636 ms: corner radius
+[ 1172.329] flip serial 31696 seq 126870 interval 8.275 ms (vblanks 1) gpu 2.523 ms: corner radius
+[ 1172.337] flip serial 31697 seq 126871 interval 8.448 ms (vblanks 1) planes 0.000 ms
+[ 1172.345] flip serial 31698 seq 126872 interval 8.143 ms (vblanks 1) planes 0.000 ms
+[ 1172.354] flip serial 31699 seq 126873 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1172.362] flip serial 31700 seq 126874 interval 8.432 ms (vblanks 1) planes 0.000 ms
+[ 1172.370] flip serial 31701 seq 126875 interval 8.165 ms (vblanks 1) planes 0.000 ms
+[ 1172.378] flip serial 31702 seq 126876 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1172.387] flip serial 31703 seq 126877 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1172.395] flip serial 31704 seq 126878 interval 8.306 ms (vblanks 1) planes 0.000 ms
+[ 1172.403] flip serial 31705 seq 126879 interval 8.374 ms (vblanks 1) planes 0.000 ms
+[ 1172.412] flip serial 31706 seq 126880 interval 8.218 ms (vblanks 1) planes 0.000 ms
+[ 1172.420] flip serial 31707 seq 126881 interval 8.309 ms (vblanks 1) planes 0.000 ms
+[ 1172.428] flip serial 31708 seq 126882 interval 8.417 ms (vblanks 1) planes 0.000 ms
+[ 1172.437] flip serial 31709 seq 126883 interval 8.179 ms (vblanks 1) planes 0.000 ms
+[ 1172.445] flip serial 31710 seq 126884 interval 8.411 ms (vblanks 1) planes 0.000 ms
+[ 1172.453] flip serial 31711 seq 126885 interval 8.163 ms (vblanks 1) planes 0.000 ms
+[ 1172.462] flip serial 31712 seq 126886 interval 8.422 ms (vblanks 1) planes 0.000 ms
+[ 1172.470] flip serial 31713 seq 126887 interval 8.468 ms (vblanks 1) planes 0.000 ms
+[ 1172.478] flip serial 31714 seq 126888 interval 7.997 ms (vblanks 1) planes 0.000 ms
+[ 1172.486] flip serial 31715 seq 126889 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1172.495] flip serial 31716 seq 126890 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1172.503] flip serial 31717 seq 126891 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1173.067] flip serial 31718 seq 126959 interval 564.117 ms (vblanks 68) planes 0.000 ms
+[ 1173.075] flip serial 31719 seq 126960 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1173.084] flip serial 31720 seq 126961 interval 8.292 ms (vblanks 1) gpu 4.145 ms: too small
+[ 1173.092] flip serial 31721 seq 126962 interval 8.294 ms (vblanks 1) gpu 2.632 ms: too small
+[ 1173.100] flip serial 31722 seq 126963 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1173.108] flip serial 31723 seq 126964 interval 8.299 ms (vblanks 1) planes 0.000 ms
+[ 1173.117] flip serial 31724 seq 126965 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1173.125] flip serial 31725 seq 126966 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1173.133] flip serial 31726 seq 126967 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1173.142] flip serial 31727 seq 126968 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1173.150] flip serial 31728 seq 126969 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1173.159] flip serial 31729 seq 126970 interval 8.592 ms (vblanks 1) planes 0.000 ms
+[ 1173.167] flip serial 31730 seq 126971 interval 8.004 ms (vblanks 1) planes 0.000 ms
+[ 1173.175] flip serial 31731 seq 126972 interval 8.383 ms (vblanks 1) planes 0.000 ms
+[ 1173.183] flip serial 31732 seq 126973 interval 8.208 ms (vblanks 1) planes 0.000 ms
+[ 1173.192] flip serial 31733 seq 126974 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1173.200] flip serial 31734 seq 126975 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1173.208] flip serial 31735 seq 126976 interval 8.307 ms (vblanks 1) planes 0.000 ms
+[ 1173.216] flip serial 31736 seq 126977 interval 8.295 ms (vblanks 1) planes 0.000 ms
+[ 1173.225] flip serial 31737 seq 126978 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1173.233] flip serial 31738 seq 126979 interval 8.394 ms (vblanks 1) planes 0.000 ms
+[ 1173.241] flip serial 31739 seq 126980 interval 8.194 ms (vblanks 1) planes 0.000 ms
+[ 1173.250] flip serial 31740 seq 126981 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1173.258] flip serial 31741 seq 126982 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1173.266] flip serial 31742 seq 126983 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1173.275] flip serial 31743 seq 126984 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1173.283] flip serial 31744 seq 126985 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1173.291] flip serial 31745 seq 126986 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1173.299] flip serial 31746 seq 126987 interval 8.303 ms (vblanks 1) planes 0.000 ms
+[ 1173.308] flip serial 31747 seq 126988 interval 8.294 ms (vblanks 1) planes 0.000 ms
+[ 1173.316] flip serial 31748 seq 126989 interval 8.352 ms (vblanks 1) planes 0.000 ms
+[ 1173.324] flip serial 31749 seq 126990 interval 8.234 ms (vblanks 1) planes 0.000 ms
+[ 1173.333] flip serial 31750 seq 126991 interval 8.308 ms (vblanks 1) planes 0.000 ms
+[ 1173.342] flip serial 31751 seq 126992 interval 8.508 ms (vblanks 1) planes 0.000 ms
+[ 1173.349] flip serial 31752 seq 126993 interval 8.070 ms (vblanks 1) planes 0.000 ms
+[ 1173.366] flip serial 31753 seq 126995 interval 16.756 ms (vblanks 2) planes 0.000 ms
+[ 1173.382] flip serial 31754 seq 126997 interval 16.427 ms (vblanks 2) planes 0.000 ms
+[ 1173.416] flip serial 31755 seq 127001 interval 33.184 ms (vblanks 4) planes 0.000 ms
+[ 1173.449] flip serial 31756 seq 127005 interval 33.235 ms (vblanks 4) planes 0.000 ms
+[ 1173.465] flip serial 31757 seq 127007 interval 16.567 ms (vblanks 2) planes 0.000 ms
+[ 1173.490] flip serial 31758 seq 127010 interval 24.882 ms (vblanks 3) planes 0.000 ms
+[ 1173.515] flip serial 31759 seq 127013 interval 24.914 ms (vblanks 3) planes 0.000 ms
+[ 1173.549] flip serial 31760 seq 127017 interval 33.473 ms (vblanks 4) planes 0.000 ms
+[ 1173.598] flip serial 31761 seq 127023 interval 49.442 ms (vblanks 6) planes 0.000 ms
+[ 1178.061] flip serial 31762 seq 127561 interval 4463.136 ms (vblanks 538) planes 0.000 ms
+[ 1178.070] flip serial 31763 seq 127562 interval 8.381 ms (vblanks 1) planes 0.000 ms
+[ 1178.078] flip serial 31764 seq 127563 interval 8.210 ms (vblanks 1) planes 0.000 ms
+[ 1178.086] flip serial 31765 seq 127564 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1178.094] flip serial 31766 seq 127565 interval 8.372 ms (vblanks 1) planes 0.000 ms
+[ 1178.103] flip serial 31767 seq 127566 interval 8.519 ms (vblanks 1) planes 0.000 ms
+[ 1178.111] flip serial 31768 seq 127567 interval 7.994 ms (vblanks 1) planes 0.000 ms
+[ 1178.119] flip serial 31769 seq 127568 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1178.128] flip serial 31770 seq 127569 interval 8.336 ms (vblanks 1) planes 0.000 ms
+[ 1178.137] flip serial 31771 seq 127570 interval 8.561 ms (vblanks 1) planes 0.000 ms
+[ 1178.144] flip serial 31772 seq 127571 interval 8.001 ms (vblanks 1) planes 0.000 ms
+[ 1178.153] flip serial 31773 seq 127572 interval 8.287 ms (vblanks 1) planes 0.000 ms
+[ 1178.161] flip serial 31774 seq 127573 interval 8.293 ms (vblanks 1) planes 0.000 ms
+[ 1178.170] flip serial 31775 seq 127574 interval 8.595 ms (vblanks 1) planes 0.000 ms
+[ 1178.178] flip serial 31776 seq 127575 interval 7.999 ms (vblanks 1) planes 0.000 ms
+[ 1178.186] flip serial 31777 seq 127576 interval 8.368 ms (vblanks 1) planes 0.000 ms
+[ 1178.194] flip serial 31778 seq 127577 interval 8.520 ms (vblanks 1) planes 0.000 ms
+[ 1178.202] flip serial 31779 seq 127578 interval 7.973 ms (vblanks 1) planes 0.000 ms
+[ 1178.211] flip serial 31780 seq 127579 interval 8.454 ms (vblanks 1) planes 0.000 ms
+[ 1178.219] flip serial 31781 seq 127580 interval 8.235 ms (vblanks 1) planes 0.000 ms
+[ 1178.228] flip serial 31782 seq 127581 interval 8.579 ms (vblanks 1) planes 0.000 ms
+[ 1178.235] flip serial 31783 seq 127582 interval 7.984 ms (vblanks 1) planes 0.000 ms
+[ 1178.244] flip serial 31784 seq 127583 interval 8.565 ms (vblanks 1) planes 0.000 ms
+[ 1178.252] flip serial 31785 seq 127584 interval 8.152 ms (vblanks 1) planes 0.000 ms
+[ 1178.260] flip serial 31786 seq 127585 interval 8.114 ms (vblanks 1) gpu 4.995 ms: too small
+[ 1178.268] flip serial 31787 seq 127586 interval 8.292 ms (vblanks 1) gpu 2.479 ms: too small
+[ 1178.277] flip serial 31788 seq 127587 interval 8.296 ms (vblanks 1) gpu 3.459 ms: too small
+[ 1178.285] flip serial 31789 seq 127588 interval 8.294 ms (vblanks 1) gpu 2.466 ms: too small
+[ 1178.293] flip serial 31790 seq 127589 interval 8.302 ms (vblanks 1) planes 0.000 ms
+[ 1178.302] flip serial 31791 seq 127590 interval 8.290 ms (vblanks 1) planes 0.000 ms
+[ 1178.310] flip serial 31792 seq 127591 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1178.318] flip serial 31793 seq 127592 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1178.326] flip serial 31794 seq 127593 interval 8.286 ms (vblanks 1) planes 0.000 ms
+[ 1178.335] flip serial 31795 seq 127594 interval 8.532 ms (vblanks 1) planes 0.000 ms
+[ 1178.343] flip serial 31796 seq 127595 interval 8.152 ms (vblanks 1) planes 0.000 ms
+[ 1178.352] flip serial 31797 seq 127596 interval 8.517 ms (vblanks 1) planes 0.000 ms
+[ 1178.360] flip serial 31798 seq 127597 interval 7.993 ms (vblanks 1) planes 0.000 ms
+[ 1178.376] flip serial 31799 seq 127599 interval 16.591 ms (vblanks 2) planes 0.000 ms
+[ 1178.385] flip serial 31800 seq 127600 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1178.401] flip serial 31801 seq 127602 interval 16.587 ms (vblanks 2) planes 0.000 ms
+[ 1178.418] flip serial 31802 seq 127604 interval 16.683 ms (vblanks 2) planes 0.000 ms
+[ 1178.451] flip serial 31803 seq 127608 interval 33.085 ms (vblanks 4) planes 0.000 ms
+[ 1178.509] flip serial 31804 seq 127615 interval 58.394 ms (vblanks 7) planes 0.000 ms
+[ 1178.551] flip serial 31805 seq 127620 interval 41.180 ms (vblanks 5) planes 0.000 ms
+[ 1179.903] flip serial 31806 seq 127783 interval 1352.247 ms (vblanks 163) gpu 4.680 ms: dim above the bottom
+[ 1179.911] flip serial 31807 seq 127784 interval 8.280 ms (vblanks 1) gpu 4.201 ms: dim above the bottom
+[ 1179.919] flip serial 31808 seq 127785 interval 8.259 ms (vblanks 1) gpu 2.682 ms: dim above the bottom
+[ 1179.928] flip serial 31809 seq 127786 interval 8.301 ms (vblanks 1) gpu 3.176 ms: dim above the bottom
+[ 1179.936] flip serial 31810 seq 127787 interval 8.295 ms (vblanks 1) gpu 2.707 ms: dim above the bottom
+[ 1179.944] flip serial 31811 seq 127788 interval 8.304 ms (vblanks 1) gpu 3.715 ms: dim above the bottom
+[ 1179.952] flip serial 31812 seq 127789 interval 8.280 ms (vblanks 1) gpu 2.723 ms: dim above the bottom
+[ 1179.961] flip serial 31813 seq 127790 interval 8.300 ms (vblanks 1) gpu 2.960 ms: dim above the bottom
+[ 1179.969] flip serial 31814 seq 127791 interval 8.300 ms (vblanks 1) gpu 3.506 ms: dim above the bottom
+[ 1179.977] flip serial 31815 seq 127792 interval 8.287 ms (vblanks 1) gpu 2.807 ms: dim above the bottom
+[ 1179.986] flip serial 31816 seq 127793 interval 8.296 ms (vblanks 1) gpu 3.361 ms: dim above the bottom
+[ 1179.994] flip serial 31817 seq 127794 interval 8.302 ms (vblanks 1) gpu 2.944 ms: dim above the bottom
+[ 1180.002] flip serial 31818 seq 127795 interval 8.293 ms (vblanks 1) gpu 3.152 ms: dim above the bottom
+[ 1180.011] flip serial 31819 seq 127796 interval 8.318 ms (vblanks 1) gpu 2.876 ms: dim above the bottom
+[ 1180.019] flip serial 31820 seq 127797 interval 8.272 ms (vblanks 1) gpu 4.259 ms: dim above the bottom
+[ 1180.027] flip serial 31821 seq 127798 interval 8.295 ms (vblanks 1) gpu 3.058 ms: dim above the bottom
+[ 1180.035] flip serial 31822 seq 127799 interval 8.305 ms (vblanks 1) gpu 3.359 ms: dim above the bottom
+[ 1180.044] flip serial 31823 seq 127800 interval 8.283 ms (vblanks 1) gpu 2.907 ms: dim above the bottom
+[ 1180.052] flip serial 31824 seq 127801 interval 8.316 ms (vblanks 1) gpu 3.672 ms: dim above the bottom
+[ 1180.060] flip serial 31825 seq 127802 interval 8.281 ms (vblanks 1) gpu 2.948 ms: dim above the bottom
+[ 1180.069] flip serial 31826 seq 127803 interval 8.299 ms (vblanks 1) gpu 4.179 ms: dim above the bottom
+[ 1180.077] flip serial 31827 seq 127804 interval 8.293 ms (vblanks 1) gpu 2.991 ms: dim above the bottom
+[ 1180.085] flip serial 31828 seq 127805 interval 8.300 ms (vblanks 1) gpu 3.606 ms: dim above the bottom
+[ 1180.093] flip serial 31829 seq 127806 interval 8.293 ms (vblanks 1) gpu 3.031 ms: dim above the bottom
+[ 1180.102] flip serial 31830 seq 127807 interval 8.311 ms (vblanks 1) gpu 4.275 ms: dim above the bottom
+[ 1180.110] flip serial 31831 seq 127808 interval 8.279 ms (vblanks 1) gpu 3.106 ms: dim above the bottom
+[ 1180.118] flip serial 31832 seq 127809 interval 8.300 ms (vblanks 1) gpu 3.829 ms: dim above the bottom
+[ 1180.127] flip serial 31833 seq 127810 interval 8.294 ms (vblanks 1) gpu 3.041 ms: dim above the bottom
+[ 1180.135] flip serial 31834 seq 127811 interval 8.297 ms (vblanks 1) gpu 3.746 ms: dim above the bottom
+[ 1180.143] flip serial 31835 seq 127812 interval 8.295 ms (vblanks 1) gpu 2.965 ms: dim above the bottom
+[ 1180.152] flip serial 31836 seq 127813 interval 8.296 ms (vblanks 1) gpu 3.749 ms: dim above the bottom
+[ 1180.160] flip serial 31837 seq 127814 interval 8.304 ms (vblanks 1) gpu 3.240 ms: dim above the bottom
+[ 1180.168] flip serial 31838 seq 127815 interval 8.287 ms (vblanks 1) gpu 3.811 ms: dim above the bottom
+[ 1180.176] flip serial 31839 seq 127816 interval 8.294 ms (vblanks 1) gpu 3.138 ms: dim above the bottom
+[ 1180.218] flip serial 31840 seq 127821 interval 41.477 ms (vblanks 5) gpu 4.088 ms: dim above the bottom
+[ 1180.220] flips by path: planes 13127, gpu 1226, cpu 0
+[ 1180.226] flip serial 31841 seq 127822 interval 8.301 ms (vblanks 1) gpu 3.244 ms: dim above the bottom
+[ 1180.234] flip serial 31842 seq 127823 interval 8.288 ms (vblanks 1) gpu 3.360 ms: dim above the bottom
+[ 1180.243] flip serial 31843 seq 127824 interval 8.301 ms (vblanks 1) gpu 3.112 ms: dim above the bottom
+[ 1180.251] flip serial 31844 seq 127825 interval 8.293 ms (vblanks 1) gpu 3.643 ms: dim above the bottom
+[ 1180.259] flip serial 31845 seq 127826 interval 8.300 ms (vblanks 1) gpu 3.286 ms: dim above the bottom
+[ 1180.268] flip serial 31846 seq 127827 interval 8.299 ms (vblanks 1) gpu 3.658 ms: dim above the bottom
+[ 1180.276] flip serial 31847 seq 127828 interval 8.320 ms (vblanks 1) gpu 3.322 ms: dim above the bottom
+[ 1180.284] flip serial 31848 seq 127829 interval 8.269 ms (vblanks 1) gpu 3.607 ms: dim above the bottom
+[ 1180.293] flip serial 31849 seq 127830 interval 8.291 ms (vblanks 1) gpu 3.395 ms: dim above the bottom
+[ 1180.301] flip serial 31850 seq 127831 interval 8.299 ms (vblanks 1) gpu 3.613 ms: dim above the bottom
+[ 1180.309] flip serial 31851 seq 127832 interval 8.303 ms (vblanks 1) gpu 3.380 ms: dim above the bottom
+[ 1180.317] flip serial 31852 seq 127833 interval 8.286 ms (vblanks 1) gpu 3.191 ms: dim above the bottom
+[ 1180.326] flip serial 31853 seq 127834 interval 8.301 ms (vblanks 1) gpu 4.106 ms: dim above the bottom
+[ 1180.334] flip serial 31854 seq 127835 interval 8.295 ms (vblanks 1) gpu 3.432 ms: dim above the bottom
+[ 1180.342] flip serial 31855 seq 127836 interval 8.299 ms (vblanks 1) gpu 4.240 ms: dim above the bottom
+[ 1180.351] flip serial 31856 seq 127837 interval 8.288 ms (vblanks 1) gpu 3.345 ms: dim above the bottom
+[ 1180.359] flip serial 31857 seq 127838 interval 8.301 ms (vblanks 1) gpu 4.084 ms: dim above the bottom
+[ 1180.367] flip serial 31858 seq 127839 interval 8.294 ms (vblanks 1) gpu 3.618 ms: dim above the bottom
+[ 1180.376] flip serial 31859 seq 127840 interval 8.293 ms (vblanks 1) gpu 3.282 ms: dim above the bottom
+[ 1180.384] flip serial 31860 seq 127841 interval 8.315 ms (vblanks 1) gpu 3.765 ms: dim above the bottom
+[ 1180.392] flip serial 31861 seq 127842 interval 8.278 ms (vblanks 1) gpu 3.640 ms: dim above the bottom
+[ 1180.400] flip serial 31862 seq 127843 interval 8.293 ms (vblanks 1) gpu 3.323 ms: dim above the bottom
+[ 1180.409] flip serial 31863 seq 127844 interval 8.310 ms (vblanks 1) gpu 3.789 ms: dim above the bottom
+[ 1180.417] flip serial 31864 seq 127845 interval 8.283 ms (vblanks 1) gpu 3.719 ms: dim above the bottom
+[ 1180.425] flip serial 31865 seq 127846 interval 8.297 ms (vblanks 1) gpu 4.242 ms: dim above the bottom
+[ 1180.434] flip serial 31866 seq 127847 interval 8.303 ms (vblanks 1) gpu 4.294 ms: dim above the bottom
+[ 1180.442] flip serial 31867 seq 127848 interval 8.289 ms (vblanks 1) gpu 3.870 ms: dim above the bottom
+[ 1180.450] flip serial 31868 seq 127849 interval 8.300 ms (vblanks 1) gpu 4.829 ms: dim above the bottom
+[ 1180.458] flip serial 31869 seq 127850 interval 8.285 ms (vblanks 1) gpu 3.415 ms: dim above the bottom
+[ 1180.467] flip serial 31870 seq 127851 interval 8.294 ms (vblanks 1) gpu 3.494 ms: dim above the bottom
+[ 1180.475] flip serial 31871 seq 127852 interval 8.300 ms (vblanks 1) gpu 5.147 ms: dim above the bottom
+[ 1180.483] flip serial 31872 seq 127853 interval 8.296 ms (vblanks 1) gpu 3.594 ms: dim above the bottom
+[ 1180.492] flip serial 31873 seq 127854 interval 8.297 ms (vblanks 1) gpu 3.321 ms: dim above the bottom
+[ 1180.500] flip serial 31874 seq 127855 interval 8.304 ms (vblanks 1) gpu 3.958 ms: dim above the bottom
+[ 1180.508] flip serial 31875 seq 127856 interval 8.287 ms (vblanks 1) gpu 3.559 ms: dim above the bottom
+[ 1180.517] flip serial 31876 seq 127857 interval 8.299 ms (vblanks 1) gpu 3.948 ms: dim above the bottom
+[ 1180.525] flip serial 31877 seq 127858 interval 8.301 ms (vblanks 1) gpu 3.546 ms: dim above the bottom
+[ 1180.533] flip serial 31878 seq 127859 interval 8.289 ms (vblanks 1) gpu 3.532 ms: dim above the bottom
+[ 1180.541] flip serial 31879 seq 127860 interval 8.300 ms (vblanks 1) gpu 3.626 ms: dim above the bottom
+[ 1180.550] flip serial 31880 seq 127861 interval 8.299 ms (vblanks 1) gpu 4.671 ms: dim above the bottom
+[ 1180.558] flip serial 31881 seq 127862 interval 8.291 ms (vblanks 1) gpu 3.461 ms: dim above the bottom
+[ 1180.566] flip serial 31882 seq 127863 interval 8.294 ms (vblanks 1) gpu 4.386 ms: dim above the bottom
+[ 1180.575] flip serial 31883 seq 127864 interval 8.293 ms (vblanks 1) gpu 3.443 ms: dim above the bottom
+[ 1180.591] flip serial 31884 seq 127866 interval 16.595 ms (vblanks 2) gpu 4.459 ms: dim above the bottom
+[ 1180.600] flip serial 31885 seq 127867 interval 8.294 ms (vblanks 1) gpu 3.508 ms: dim above the bottom
+[ 1180.608] flip serial 31886 seq 127868 interval 8.304 ms (vblanks 1) gpu 4.111 ms: dim above the bottom
+[ 1180.624] flip serial 31887 seq 127870 interval 16.583 ms (vblanks 2) gpu 3.865 ms: dim above the bottom
+[ 1180.641] flip serial 31888 seq 127872 interval 16.597 ms (vblanks 2) gpu 4.808 ms: dim above the bottom
+[ 1180.666] flip serial 31889 seq 127875 interval 24.882 ms (vblanks 3) gpu 3.667 ms: dim above the bottom
+[ 1180.699] flip serial 31890 seq 127879 interval 33.180 ms (vblanks 4) gpu 3.712 ms: dim above the bottom
+[ 1180.774] flip serial 31891 seq 127888 interval 74.661 ms (vblanks 9) gpu 5.557 ms: dim above the bottom
+[ 1181.039] flip serial 31892 seq 127920 interval 265.466 ms (vblanks 32) gpu 4.472 ms: dim above the bottom
+[ 1181.047] flip serial 31893 seq 127921 interval 8.293 ms (vblanks 1) gpu 4.593 ms: dim above the bottom
+[ 1181.056] flip serial 31894 seq 127922 interval 8.317 ms (vblanks 1) gpu 3.454 ms: dim above the bottom
+[ 1181.064] flip serial 31895 seq 127923 interval 8.284 ms (vblanks 1) gpu 3.899 ms: dim above the bottom
+[ 1181.072] flip serial 31896 seq 127924 interval 8.292 ms (vblanks 1) gpu 3.372 ms: dim above the bottom
+[ 1181.081] flip serial 31897 seq 127925 interval 8.292 ms (vblanks 1) gpu 4.091 ms: dim above the bottom
+[ 1181.089] flip serial 31898 seq 127926 interval 8.298 ms (vblanks 1) gpu 3.982 ms: dim above the bottom
+[ 1181.097] flip serial 31899 seq 127927 interval 8.291 ms (vblanks 1) gpu 3.891 ms: dim above the bottom
+[ 1181.106] flip serial 31900 seq 127928 interval 8.299 ms (vblanks 1) gpu 4.339 ms: dim above the bottom
+[ 1181.114] flip serial 31901 seq 127929 interval 8.299 ms (vblanks 1) gpu 3.697 ms: dim above the bottom
+[ 1181.122] flip serial 31902 seq 127930 interval 8.297 ms (vblanks 1) gpu 4.176 ms: dim above the bottom
+[ 1181.130] flip serial 31903 seq 127931 interval 8.302 ms (vblanks 1) gpu 4.412 ms: dim above the bottom
+[ 1181.139] flip serial 31904 seq 127932 interval 8.286 ms (vblanks 1) gpu 3.151 ms: dim above the bottom
+[ 1181.147] flip serial 31905 seq 127933 interval 8.298 ms (vblanks 1) gpu 3.721 ms: dim above the bottom
+[ 1181.155] flip serial 31906 seq 127934 interval 8.298 ms (vblanks 1) gpu 3.136 ms: dim above the bottom
+[ 1181.164] flip serial 31907 seq 127935 interval 8.291 ms (vblanks 1) gpu 3.226 ms: dim above the bottom
+[ 1181.172] flip serial 31908 seq 127936 interval 8.295 ms (vblanks 1) gpu 4.439 ms: dim above the bottom
+[ 1181.180] flip serial 31909 seq 127937 interval 8.293 ms (vblanks 1) gpu 4.395 ms: dim above the bottom
+[ 1181.189] flip serial 31910 seq 127938 interval 8.301 ms (vblanks 1) gpu 3.409 ms: dim above the bottom
+[ 1181.197] flip serial 31911 seq 127939 interval 8.295 ms (vblanks 1) gpu 3.640 ms: dim above the bottom
+[ 1181.205] flip serial 31912 seq 127940 interval 8.295 ms (vblanks 1) gpu 3.709 ms: dim above the bottom
+[ 1181.213] flip serial 31913 seq 127941 interval 8.302 ms (vblanks 1) gpu 4.306 ms: dim above the bottom
+[ 1181.222] flip serial 31914 seq 127942 interval 8.289 ms (vblanks 1) gpu 3.478 ms: dim above the bottom
+[ 1181.230] flip serial 31915 seq 127943 interval 8.295 ms (vblanks 1) gpu 3.538 ms: dim above the bottom
+[ 1181.238] flip serial 31916 seq 127944 interval 8.301 ms (vblanks 1) gpu 3.390 ms: dim above the bottom
+[ 1181.247] flip serial 31917 seq 127945 interval 8.291 ms (vblanks 1) gpu 3.046 ms: dim above the bottom
+[ 1181.255] flip serial 31918 seq 127946 interval 8.301 ms (vblanks 1) gpu 3.282 ms: dim above the bottom
+[ 1181.263] flip serial 31919 seq 127947 interval 8.291 ms (vblanks 1) gpu 2.812 ms: dim above the bottom
+[ 1181.272] flip serial 31920 seq 127948 interval 8.299 ms (vblanks 1) gpu 4.133 ms: dim above the bottom
+[ 1181.280] flip serial 31921 seq 127949 interval 8.302 ms (vblanks 1) gpu 2.912 ms: dim above the bottom
+[ 1181.288] flip serial 31922 seq 127950 interval 8.290 ms (vblanks 1) gpu 3.751 ms: dim above the bottom
+[ 1181.305] flip serial 31923 seq 127952 interval 16.588 ms (vblanks 2) gpu 4.045 ms: dim above the bottom
+[ 1181.313] flip serial 31924 seq 127953 interval 8.294 ms (vblanks 1) gpu 2.894 ms: dim above the bottom
+[ 1181.321] flip serial 31925 seq 127954 interval 8.295 ms (vblanks 1) gpu 4.002 ms: dim above the bottom
+[ 1181.329] flip serial 31926 seq 127955 interval 8.294 ms (vblanks 1) gpu 2.721 ms: dim above the bottom
+[ 1181.338] flip serial 31927 seq 127956 interval 8.302 ms (vblanks 1) gpu 3.415 ms: dim above the bottom
+[ 1181.346] flip serial 31928 seq 127957 interval 8.300 ms (vblanks 1) gpu 2.780 ms: dim above the bottom
+[ 1181.354] flip serial 31929 seq 127958 interval 8.295 ms (vblanks 1) gpu 4.838 ms: dim above the bottom
+[ 1181.363] flip serial 31930 seq 127959 interval 8.291 ms (vblanks 1) gpu 2.729 ms: dim above the bottom
+[ 1181.371] flip serial 31931 seq 127960 interval 8.296 ms (vblanks 1) gpu 3.156 ms: dim above the bottom
+[ 1181.379] flip serial 31932 seq 127961 interval 8.297 ms (vblanks 1) gpu 2.898 ms: dim above the bottom
+[ 1181.388] flip serial 31933 seq 127962 interval 8.289 ms (vblanks 1) gpu 2.530 ms: dim above the bottom
+[ 1181.396] flip serial 31934 seq 127963 interval 8.303 ms (vblanks 1) gpu 3.652 ms: dim above the bottom
+[ 1181.404] flip serial 31935 seq 127964 interval 8.297 ms (vblanks 1) gpu 2.670 ms: dim above the bottom
+[ 1181.413] flip serial 31936 seq 127965 interval 8.293 ms (vblanks 1) gpu 3.728 ms: dim above the bottom
+[ 1181.421] flip serial 31937 seq 127966 interval 8.295 ms (vblanks 1) gpu 2.617 ms: dim above the bottom
+[ 1181.429] flip serial 31938 seq 127967 interval 8.302 ms (vblanks 1) gpu 2.510 ms: dim above the bottom
+[ 1181.437] flip serial 31939 seq 127968 interval 8.295 ms (vblanks 1) gpu 2.485 ms: dim above the bottom
+[ 1181.446] flip serial 31940 seq 127969 interval 8.294 ms (vblanks 1) gpu 2.855 ms: dim above the bottom
+[ 1181.454] flip serial 31941 seq 127970 interval 8.291 ms (vblanks 1) gpu 2.709 ms: dim above the bottom
+[ 1181.462] flip serial 31942 seq 127971 interval 8.299 ms (vblanks 1) gpu 2.892 ms: dim above the bottom
+[ 1181.471] flip serial 31943 seq 127972 interval 8.298 ms (vblanks 1) gpu 2.835 ms: dim above the bottom
+[ 1181.479] flip serial 31944 seq 127973 interval 8.293 ms (vblanks 1) gpu 2.886 ms: dim above the bottom
+[ 1181.487] flip serial 31945 seq 127974 interval 8.293 ms (vblanks 1) gpu 2.512 ms: dim above the bottom
+[ 1181.496] flip serial 31946 seq 127975 interval 8.296 ms (vblanks 1) gpu 2.508 ms: dim above the bottom
+[ 1181.504] flip serial 31947 seq 127976 interval 8.295 ms (vblanks 1) gpu 3.146 ms: dim above the bottom
+[ 1181.512] flip serial 31948 seq 127977 interval 8.292 ms (vblanks 1) gpu 2.592 ms: dim above the bottom
+[ 1181.520] flip serial 31949 seq 127978 interval 8.298 ms (vblanks 1) gpu 2.480 ms: dim above the bottom
+[ 1181.529] flip serial 31950 seq 127979 interval 8.303 ms (vblanks 1) gpu 3.447 ms: dim above the bottom
+[ 1181.537] flip serial 31951 seq 127980 interval 8.289 ms (vblanks 1) gpu 2.725 ms: dim above the bottom
+[ 1181.545] flip serial 31952 seq 127981 interval 8.296 ms (vblanks 1) gpu 3.037 ms: dim above the bottom
+[ 1181.554] flip serial 31953 seq 127982 interval 8.300 ms (vblanks 1) gpu 2.590 ms: dim above the bottom
+[ 1181.562] flip serial 31954 seq 127983 interval 8.289 ms (vblanks 1) gpu 2.802 ms: dim above the bottom
+[ 1181.570] flip serial 31955 seq 127984 interval 8.295 ms (vblanks 1) gpu 2.441 ms: dim above the bottom
+[ 1181.578] flip serial 31956 seq 127985 interval 8.297 ms (vblanks 1) gpu 2.344 ms: dim above the bottom
+[ 1181.587] flip serial 31957 seq 127986 interval 8.295 ms (vblanks 1) gpu 2.727 ms: dim above the bottom
+[ 1181.595] flip serial 31958 seq 127987 interval 8.296 ms (vblanks 1) gpu 3.387 ms: dim above the bottom
+[ 1181.603] flip serial 31959 seq 127988 interval 8.294 ms (vblanks 1) gpu 2.751 ms: dim above the bottom
+[ 1181.612] flip serial 31960 seq 127989 interval 8.301 ms (vblanks 1) gpu 2.539 ms: dim above the bottom
+[ 1181.620] flip serial 31961 seq 127990 interval 8.296 ms (vblanks 1) gpu 3.432 ms: dim above the bottom
+[ 1181.628] flip serial 31962 seq 127991 interval 8.315 ms (vblanks 1) gpu 2.448 ms: dim above the bottom
+[ 1181.637] flip serial 31963 seq 127992 interval 8.280 ms (vblanks 1) gpu 3.459 ms: dim above the bottom
+[ 1181.645] flip serial 31964 seq 127993 interval 8.293 ms (vblanks 1) gpu 2.410 ms: dim above the bottom
+[ 1181.653] flip serial 31965 seq 127994 interval 8.303 ms (vblanks 1) gpu 3.466 ms: dim above the bottom
+[ 1181.661] flip serial 31966 seq 127995 interval 8.288 ms (vblanks 1) gpu 2.478 ms: too small
+[ 1181.670] flip serial 31967 seq 127996 interval 8.301 ms (vblanks 1) gpu 2.873 ms: too small
+[ 1181.678] flip serial 31968 seq 127997 interval 8.293 ms (vblanks 1) gpu 2.529 ms: too small
+[ 1181.686] flip serial 31969 seq 127998 interval 8.304 ms (vblanks 1) gpu 2.802 ms: too small
+[ 1181.695] flip serial 31970 seq 127999 interval 8.279 ms (vblanks 1) gpu 2.450 ms: too small
+[ 1181.703] flip serial 31971 seq 128000 interval 8.302 ms (vblanks 1) gpu 2.373 ms: too small
+[ 1181.711] flip serial 31972 seq 128001 interval 8.304 ms (vblanks 1) gpu 2.705 ms: too small
+[ 1181.719] flip serial 31973 seq 128002 interval 8.288 ms (vblanks 1) gpu 2.383 ms: too small
+[ 1181.728] flip serial 31974 seq 128003 interval 8.289 ms (vblanks 1) gpu 2.892 ms: too small
+[ 1181.744] flip serial 31975 seq 128005 interval 16.602 ms (vblanks 2) gpu 3.450 ms: too small
+[ 1181.761] flip serial 31976 seq 128007 interval 16.588 ms (vblanks 2) gpu 2.851 ms: too small
+[ 1181.786] flip serial 31977 seq 128010 interval 24.887 ms (vblanks 3) gpu 2.568 ms: too small
+[ 1181.819] flip serial 31978 seq 128014 interval 33.181 ms (vblanks 4) gpu 2.647 ms: too small
+[ 1181.894] flip serial 31979 seq 128023 interval 74.756 ms (vblanks 9) planes 0.000 ms
+[ 1182.151] flip serial 31980 seq 128054 interval 257.079 ms (vblanks 31) gpu 4.510 ms: corner radius
+[ 1182.159] flip serial 31981 seq 128055 interval 8.295 ms (vblanks 1) gpu 3.074 ms: corner radius
+[ 1182.167] flip serial 31982 seq 128056 interval 8.292 ms (vblanks 1) gpu 3.218 ms: corner radius
+[ 1182.176] flip serial 31983 seq 128057 interval 8.325 ms (vblanks 1) gpu 3.245 ms: corner radius
+[ 1182.184] flip serial 31984 seq 128058 interval 8.277 ms (vblanks 1) gpu 3.051 ms: corner radius
+[ 1182.192] flip serial 31985 seq 128059 interval 8.285 ms (vblanks 1) gpu 3.487 ms: corner radius
+[ 1182.201] flip serial 31986 seq 128060 interval 8.300 ms (vblanks 1) gpu 3.342 ms: corner radius
+[ 1182.209] flip serial 31987 seq 128061 interval 8.291 ms (vblanks 1) gpu 5.062 ms: corner radius
+[ 1182.217] flip serial 31988 seq 128062 interval 8.295 ms (vblanks 1) gpu 3.987 ms: corner radius
+[ 1182.225] flip serial 31989 seq 128063 interval 8.302 ms (vblanks 1) gpu 4.570 ms: corner radius
+[ 1182.234] flip serial 31990 seq 128064 interval 8.297 ms (vblanks 1) gpu 3.957 ms: corner radius
+[ 1182.242] flip serial 31991 seq 128065 interval 8.293 ms (vblanks 1) gpu 4.085 ms: corner radius
+[ 1182.250] flip serial 31992 seq 128066 interval 8.304 ms (vblanks 1) gpu 4.047 ms: corner radius
+[ 1182.259] flip serial 31993 seq 128067 interval 8.290 ms (vblanks 1) gpu 4.367 ms: corner radius
+[ 1182.267] flip serial 31994 seq 128068 interval 8.295 ms (vblanks 1) gpu 4.309 ms: corner radius
+[ 1182.275] flip serial 31995 seq 128069 interval 8.294 ms (vblanks 1) gpu 3.476 ms: corner radius
+[ 1182.284] flip serial 31996 seq 128070 interval 8.297 ms (vblanks 1) gpu 4.696 ms: corner radius
+[ 1182.292] flip serial 31997 seq 128071 interval 8.293 ms (vblanks 1) gpu 3.080 ms: corner radius
+[ 1182.300] flip serial 31998 seq 128072 interval 8.307 ms (vblanks 1) gpu 3.018 ms: corner radius
+[ 1182.308] flip serial 31999 seq 128073 interval 8.284 ms (vblanks 1) gpu 3.048 ms: corner radius
+[ 1182.317] flip serial 32000 seq 128074 interval 8.297 ms (vblanks 1) gpu 3.083 ms: corner radius
+[ 1182.325] flip serial 32001 seq 128075 interval 8.299 ms (vblanks 1) gpu 4.399 ms: corner radius
+[ 1182.333] flip serial 32002 seq 128076 interval 8.293 ms (vblanks 1) gpu 3.203 ms: corner radius
+[ 1182.342] flip serial 32003 seq 128077 interval 8.296 ms (vblanks 1) gpu 4.493 ms: corner radius
+[ 1182.350] flip serial 32004 seq 128078 interval 8.295 ms (vblanks 1) gpu 3.342 ms: corner radius
+[ 1182.358] flip serial 32005 seq 128079 interval 8.303 ms (vblanks 1) gpu 4.174 ms: corner radius
+[ 1182.367] flip serial 32006 seq 128080 interval 8.293 ms (vblanks 1) gpu 3.292 ms: corner radius
+[ 1182.375] flip serial 32007 seq 128081 interval 8.290 ms (vblanks 1) gpu 3.544 ms: corner radius
+[ 1182.383] flip serial 32008 seq 128082 interval 8.298 ms (vblanks 1) gpu 3.175 ms: corner radius
+[ 1182.391] flip serial 32009 seq 128083 interval 8.295 ms (vblanks 1) gpu 3.214 ms: corner radius
+[ 1182.400] flip serial 32010 seq 128084 interval 8.296 ms (vblanks 1) gpu 3.981 ms: corner radius
+[ 1182.408] flip serial 32011 seq 128085 interval 8.306 ms (vblanks 1) gpu 3.502 ms: corner radius
+[ 1182.416] flip serial 32012 seq 128086 interval 8.282 ms (vblanks 1) gpu 3.200 ms: corner radius
+[ 1182.425] flip serial 32013 seq 128087 interval 8.300 ms (vblanks 1) gpu 3.674 ms: corner radius
+[ 1182.433] flip serial 32014 seq 128088 interval 8.293 ms (vblanks 1) gpu 3.469 ms: corner radius
+[ 1182.441] flip serial 32015 seq 128089 interval 8.300 ms (vblanks 1) gpu 3.883 ms: corner radius
+[ 1182.449] flip serial 32016 seq 128090 interval 8.294 ms (vblanks 1) gpu 3.373 ms: corner radius
+[ 1182.458] flip serial 32017 seq 128091 interval 8.296 ms (vblanks 1) gpu 3.307 ms: corner radius
+[ 1182.466] flip serial 32018 seq 128092 interval 8.298 ms (vblanks 1) gpu 3.498 ms: corner radius
+[ 1182.474] flip serial 32019 seq 128093 interval 8.294 ms (vblanks 1) gpu 3.797 ms: corner radius
+[ 1182.483] flip serial 32020 seq 128094 interval 8.298 ms (vblanks 1) gpu 3.820 ms: corner radius
+[ 1182.491] flip serial 32021 seq 128095 interval 8.299 ms (vblanks 1) gpu 3.394 ms: corner radius
+[ 1182.499] flip serial 32022 seq 128096 interval 8.290 ms (vblanks 1) gpu 3.573 ms: corner radius
+[ 1182.507] flip serial 32023 seq 128097 interval 8.290 ms (vblanks 1) gpu 3.710 ms: corner radius
+[ 1182.516] flip serial 32024 seq 128098 interval 8.298 ms (vblanks 1) gpu 3.858 ms: corner radius
+[ 1182.524] flip serial 32025 seq 128099 interval 8.296 ms (vblanks 1) gpu 3.408 ms: corner radius
+[ 1182.532] flip serial 32026 seq 128100 interval 8.300 ms (vblanks 1) gpu 4.005 ms: corner radius
+[ 1182.541] flip serial 32027 seq 128101 interval 8.294 ms (vblanks 1) gpu 3.480 ms: corner radius
+[ 1182.549] flip serial 32028 seq 128102 interval 8.296 ms (vblanks 1) gpu 4.137 ms: corner radius
+[ 1182.557] flip serial 32029 seq 128103 interval 8.295 ms (vblanks 1) gpu 3.518 ms: corner radius
+[ 1182.566] flip serial 32030 seq 128104 interval 8.296 ms (vblanks 1) gpu 4.964 ms: corner radius
+[ 1182.574] flip serial 32031 seq 128105 interval 8.297 ms (vblanks 1) gpu 3.380 ms: corner radius
+[ 1182.582] flip serial 32032 seq 128106 interval 8.306 ms (vblanks 1) gpu 4.141 ms: corner radius
+[ 1182.590] flip serial 32033 seq 128107 interval 8.284 ms (vblanks 1) gpu 3.462 ms: corner radius
+[ 1182.599] flip serial 32034 seq 128108 interval 8.295 ms (vblanks 1) gpu 3.336 ms: corner radius
+[ 1182.607] flip serial 32035 seq 128109 interval 8.296 ms (vblanks 1) gpu 4.097 ms: corner radius
+[ 1182.615] flip serial 32036 seq 128110 interval 8.294 ms (vblanks 1) gpu 3.341 ms: corner radius
+[ 1182.624] flip serial 32037 seq 128111 interval 8.349 ms (vblanks 1) gpu 4.705 ms: corner radius
+[ 1182.632] flip serial 32038 seq 128112 interval 8.241 ms (vblanks 1) gpu 3.369 ms: corner radius
+[ 1182.640] flip serial 32039 seq 128113 interval 8.301 ms (vblanks 1) gpu 3.426 ms: corner radius
+[ 1182.657] flip serial 32040 seq 128115 interval 16.614 ms (vblanks 2) planes 0.000 ms
+[ 1182.665] flip serial 0 seq 128116 interval 8.269 ms (vblanks 1) planes 0.000 ms
+[ 1183.171] flip serial 0 seq 128177 interval 506.045 ms (vblanks 61) planes 0.000 ms
+[ 1184.175] flip serial 0 seq 128298 interval 1004.028 ms (vblanks 121) planes 0.000 ms
+[ 1184.789] flip serial 0 seq 128372 interval 613.666 ms (vblanks 74) planes 0.000 ms
+[ 1184.798] flip serial 0 seq 128373 interval 8.318 ms (vblanks 1) planes 0.000 ms
+[ 1184.806] flip serial 0 seq 128374 interval 8.469 ms (vblanks 1) planes 0.000 ms
+[ 1184.814] flip serial 0 seq 128375 interval 8.091 ms (vblanks 1) planes 0.000 ms
+[ 1184.823] flip serial 0 seq 128376 interval 8.309 ms (vblanks 1) planes 0.000 ms
+[ 1184.831] flip serial 0 seq 128377 interval 8.281 ms (vblanks 1) planes 0.000 ms
+[ 1184.839] flip serial 0 seq 128378 interval 8.370 ms (vblanks 1) planes 0.000 ms
+[ 1184.848] flip serial 0 seq 128379 interval 8.237 ms (vblanks 1) planes 0.000 ms
+[ 1184.855] flip serial 0 seq 128380 interval 8.285 ms (vblanks 1) planes 0.000 ms
+[ 1184.864] flip serial 0 seq 128381 interval 8.280 ms (vblanks 1) planes 0.000 ms
+[ 1184.872] flip serial 0 seq 128382 interval 8.310 ms (vblanks 1) planes 0.000 ms
+[ 1184.880] flip serial 0 seq 128383 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1184.889] flip serial 0 seq 128384 interval 8.288 ms (vblanks 1) planes 0.000 ms
+[ 1184.897] flip serial 0 seq 128385 interval 8.369 ms (vblanks 1) planes 0.000 ms
+[ 1184.905] flip serial 0 seq 128386 interval 8.227 ms (vblanks 1) planes 0.000 ms
+[ 1184.914] flip serial 0 seq 128387 interval 8.305 ms (vblanks 1) planes 0.000 ms
+[ 1184.922] flip serial 0 seq 128388 interval 8.280 ms (vblanks 1) planes 0.000 ms
+[ 1184.930] flip serial 0 seq 128389 interval 8.297 ms (vblanks 1) planes 0.000 ms
+[ 1184.938] flip serial 0 seq 128390 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1184.947] flip serial 0 seq 128391 interval 8.515 ms (vblanks 1) planes 0.000 ms
+[ 1184.955] flip serial 0 seq 128392 interval 8.072 ms (vblanks 1) planes 0.000 ms
+[ 1184.963] flip serial 0 seq 128393 interval 8.298 ms (vblanks 1) planes 0.000 ms
+[ 1184.972] flip serial 0 seq 128394 interval 8.327 ms (vblanks 1) planes 0.000 ms
+[ 1184.980] flip serial 0 seq 128395 interval 8.262 ms (vblanks 1) planes 0.000 ms
+[ 1184.988] flip serial 0 seq 128396 interval 8.304 ms (vblanks 1) planes 0.000 ms
+[ 1184.996] flip serial 0 seq 128397 interval 8.300 ms (vblanks 1) planes 0.000 ms
+[ 1185.022] flip serial 0 seq 128400 interval 25.137 ms (vblanks 3) planes 0.000 ms
+[ 1185.054] flip serial 0 seq 128404 interval 32.908 ms (vblanks 4) planes 0.000 ms
+[ 1185.063] flip serial 0 seq 128405 interval 8.301 ms (vblanks 1) planes 0.000 ms
+[ 1185.079] flip serial 0 seq 128407 interval 16.589 ms (vblanks 2) planes 0.000 ms
+[ 1185.096] flip serial 0 seq 128409 interval 16.585 ms (vblanks 2) planes 0.000 ms
+[ 1185.104] flip serial 0 seq 128410 interval 8.428 ms (vblanks 1) planes 0.000 ms
+[ 1185.113] flip serial 0 seq 128411 interval 8.172 ms (vblanks 1) planes 0.000 ms
+[ 1185.131] flip serial 0 seq 128413 interval 16.808 ms (vblanks 2) planes 0.000 ms
+[ 1185.138] flip serial 0 seq 128414 interval 8.079 ms (vblanks 1) planes 0.000 ms
+[ 1185.147] flip serial 0 seq 128415 interval 8.490 ms (vblanks 1) planes 0.000 ms
+[ 1185.164] flip serial 0 seq 128417 interval 16.856 ms (vblanks 2) planes 0.000 ms
+[ 1185.171] flip serial 0 seq 128418 interval 7.843 ms (vblanks 1) planes 0.000 ms
+[ 1185.179] flip serial 0 seq 128419 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1185.187] flip serial 0 seq 128420 interval 8.312 ms (vblanks 1) planes 0.000 ms
+[ 1185.196] flip serial 0 seq 128421 interval 8.279 ms (vblanks 1) planes 0.000 ms
+[ 1185.237] flip serial 0 seq 128426 interval 41.492 ms (vblanks 5) planes 0.000 ms
+[ 1185.246] flip serial 0 seq 128427 interval 8.620 ms (vblanks 1) planes 0.000 ms
+[ 1186.166] flip serial 0 seq 128538 interval 920.508 ms (vblanks 111) planes 0.000 ms
+[ 1187.170] flip serial 0 seq 128659 interval 1003.784 ms (vblanks 121) planes 0.000 ms
+[ 1189.211] flip serial 0 seq 128905 interval 2040.742 ms (vblanks 246) planes 0.000 ms
+[ 1189.708] flip serial 0 seq 128965 interval 497.751 ms (vblanks 60) planes 0.000 ms
+[ 1189.717] flip serial 0 seq 128966 interval 8.358 ms (vblanks 1) planes 0.000 ms
+[ 1189.733] flip serial 0 seq 128968 interval 16.529 ms (vblanks 2) planes 0.000 ms
+[ 1189.767] flip serial 0 seq 128972 interval 33.202 ms (vblanks 4) planes 0.000 ms
+[ 1189.800] flip serial 0 seq 128976 interval 33.228 ms (vblanks 4) planes 0.000 ms
+[ 1189.816] flip serial 0 seq 128978 interval 16.538 ms (vblanks 2) planes 0.000 ms
+[ 1189.825] flip serial 0 seq 128979 interval 8.605 ms (vblanks 1) planes 0.000 ms
+[ 1189.833] flip serial 0 seq 128980 interval 8.221 ms (vblanks 1) planes 0.000 ms
+[ 1189.841] flip serial 0 seq 128981 interval 8.063 ms (vblanks 1) planes 0.000 ms
+[ 1190.173] flip serial 0 seq 129021 interval 332.143 ms (vblanks 40) planes 0.000 ms
+[ 1190.985] flips by path: planes 13188, gpu 1424, cpu 0
+[ 1190.994] flip serial 32041 seq 129120 interval 820.958 ms (vblanks 99) gpu 5.039 ms: corner radius
+[ 1191.002] flip serial 32042 seq 129121 interval 8.290 ms (vblanks 1) gpu 3.403 ms: corner radius
+[ 1191.011] flip serial 32043 seq 129122 interval 8.298 ms (vblanks 1) gpu 3.704 ms: corner radius
+[ 1191.019] flip serial 32044 seq 129123 interval 8.295 ms (vblanks 1) gpu 3.264 ms: corner radius
+[ 1191.027] flip serial 32045 seq 129124 interval 8.300 ms (vblanks 1) gpu 3.735 ms: corner radius
+[ 1191.036] flip serial 32046 seq 129125 interval 8.292 ms (vblanks 1) gpu 3.242 ms: corner radius
+[ 1191.044] flip serial 32047 seq 129126 interval 8.305 ms (vblanks 1) gpu 3.440 ms: corner radius
+[ 1191.052] flip serial 32048 seq 129127 interval 8.291 ms (vblanks 1) gpu 3.300 ms: corner radius
+[ 1191.060] flip serial 32049 seq 129128 interval 8.294 ms (vblanks 1) gpu 3.396 ms: corner radius
+[ 1191.069] flip serial 32050 seq 129129 interval 8.303 ms (vblanks 1) gpu 4.588 ms: corner radius
+[ 1191.077] flip serial 32051 seq 129130 interval 8.295 ms (vblanks 1) gpu 3.403 ms: corner radius
+[ 1191.085] flip serial 32052 seq 129131 interval 8.297 ms (vblanks 1) gpu 4.492 ms: corner radius
+[ 1191.094] flip serial 32053 seq 129132 interval 8.290 ms (vblanks 1) gpu 3.205 ms: corner radius
+[ 1191.102] flip serial 32054 seq 129133 interval 8.304 ms (vblanks 1) gpu 3.848 ms: corner radius
+[ 1191.110] flip serial 32055 seq 129134 interval 8.286 ms (vblanks 1) gpu 3.186 ms: corner radius
+[ 1191.119] flip serial 32056 seq 129135 interval 8.302 ms (vblanks 1) gpu 2.950 ms: corner radius
+[ 1191.127] flip serial 32057 seq 129136 interval 8.296 ms (vblanks 1) gpu 3.263 ms: corner radius
+[ 1191.135] flip serial 32058 seq 129137 interval 8.292 ms (vblanks 1) gpu 2.833 ms: corner radius
+[ 1191.143] flip serial 32059 seq 129138 interval 8.289 ms (vblanks 1) gpu 2.887 ms: corner radius
+[ 1191.152] flip serial 32060 seq 129139 interval 8.305 ms (vblanks 1) gpu 4.207 ms: corner radius
+[ 1191.160] flip serial 32061 seq 129140 interval 8.292 ms (vblanks 1) gpu 3.330 ms: corner radius
+[ 1191.168] flip serial 32062 seq 129141 interval 8.302 ms (vblanks 1) gpu 3.532 ms: corner radius
+[ 1191.177] flip serial 32063 seq 129142 interval 8.292 ms (vblanks 1) gpu 3.298 ms: corner radius
+[ 1191.185] flip serial 32064 seq 129143 interval 8.299 ms (vblanks 1) gpu 3.563 ms: corner radius
+[ 1191.193] flip serial 32065 seq 129144 interval 8.291 ms (vblanks 1) gpu 3.220 ms: corner radius
+[ 1191.201] flip serial 32066 seq 129145 interval 8.297 ms (vblanks 1) gpu 3.394 ms: corner radius
+[ 1191.210] flip serial 32067 seq 129146 interval 8.294 ms (vblanks 1) gpu 3.842 ms: corner radius
+[ 1191.218] flip serial 32068 seq 129147 interval 8.297 ms (vblanks 1) gpu 3.146 ms: corner radius
+[ 1191.226] flip serial 32069 seq 129148 interval 8.298 ms (vblanks 1) gpu 3.360 ms: corner radius
+[ 1191.235] flip serial 32070 seq 129149 interval 8.296 ms (vblanks 1) gpu 3.433 ms: corner radius
+[ 1191.243] flip serial 32071 seq 129150 interval 8.298 ms (vblanks 1) gpu 3.395 ms: corner radius
+[ 1191.251] flip serial 32072 seq 129151 interval 8.328 ms (vblanks 1) gpu 2.479 ms: corner radius
+[ 1191.260] flip serial 32073 seq 129152 interval 8.260 ms (vblanks 1) gpu 3.514 ms: corner radius
+[ 1191.268] flip serial 32074 seq 129153 interval 8.291 ms (vblanks 1) gpu 2.583 ms: corner radius
+[ 1191.276] flip serial 32075 seq 129154 interval 8.315 ms (vblanks 1) gpu 3.555 ms: corner radius
+[ 1191.284] flip serial 32076 seq 129155 interval 8.278 ms (vblanks 1) gpu 2.640 ms: corner radius
+[ 1191.293] flip serial 32077 seq 129156 interval 8.319 ms (vblanks 1) planes 0.000 ms
+[ 1191.301] flip serial 32078 seq 129157 interval 8.272 ms (vblanks 1) planes 0.000 ms
+[ 1191.309] flip serial 32079 seq 129158 interval 8.303 ms (vblanks 1) planes 0.000 ms
+[ 1191.318] flip serial 32080 seq 129159 interval 8.292 ms (vblanks 1) planes 0.000 ms
+[ 1191.326] flip serial 32081 seq 129160 interval 8.296 ms (vblanks 1) planes 0.000 ms
+[ 1191.334] flip serial 32082 seq 129161 interval 8.315 ms (vblanks 1) planes 0.000 ms
+[ 1191.343] flip serial 32083 seq 129162 interval 8.274 ms (vblanks 1) planes 0.000 ms
+[ 1191.351] flip serial 32084 seq 129163 interval 8.390 ms (vblanks 1) planes 0.000 ms
+[ 1191.360] flip serial 32085 seq 129164 interval 8.216 ms (vblanks 1) planes 0.000 ms
+[ 1191.367] flip serial 32086 seq 129165 interval 8.274 ms (vblanks 1) planes 0.000 ms
+[ 1191.376] flip serial 32087 seq 129166 interval 8.315 ms (vblanks 1) planes 0.000 ms
+[ 1191.384] flip serial 32088 seq 129167 interval 8.464 ms (vblanks 1) planes 0.000 ms
+[ 1191.392] flip serial 32089 seq 129168 interval 8.125 ms (vblanks 1) planes 0.000 ms
+[ 1191.401] flip serial 32090 seq 129169 interval 8.581 ms (vblanks 1) planes 0.000 ms
+[ 1191.409] flip serial 32091 seq 129170 interval 8.186 ms (vblanks 1) planes 0.000 ms
+[ 1191.417] flip serial 32092 seq 129171 interval 8.127 ms (vblanks 1) planes 0.000 ms
+[ 1191.426] flip serial 32093 seq 129172 interval 8.479 ms (vblanks 1) planes 0.000 ms
+[ 1191.434] flip serial 32094 seq 129173 interval 8.104 ms (vblanks 1) planes 0.000 ms
+[ 1191.442] flip serial 32095 seq 129174 interval 8.467 ms (vblanks 1) planes 0.000 ms
+[ 1191.450] flip serial 32096 seq 129175 interval 8.127 ms (vblanks 1) planes 0.000 ms
+[ 1191.459] flip serial 32097 seq 129176 interval 8.373 ms (vblanks 1) planes 0.000 ms
+[ 1192.802] panel off: ok in 263.7 ms
+[ 1196.302] panel on: ok in 158.3 ms
+[ 1196.310] flip serial 0 seq 129339 interval 4850.973 ms (vblanks 163) gpu 5.591 ms: dim above the bottom
+[ 1196.351] flip serial 32100 seq 129344 interval 41.519 ms (vblanks 5) gpu 4.455 ms: dim above the bottom
+[ 1196.368] flip serial 32101 seq 129346 interval 16.557 ms (vblanks 2) gpu 4.283 ms: dim above the bottom
+[ 1196.384] flip serial 32102 seq 129348 interval 16.589 ms (vblanks 2) gpu 4.476 ms: dim above the bottom
+[ 1196.401] flip serial 32103 seq 129350 interval 16.590 ms (vblanks 2) gpu 4.654 ms: dim above the bottom
+[ 1196.418] flip serial 32104 seq 129352 interval 16.601 ms (vblanks 2) gpu 4.314 ms: dim above the bottom
+[ 1196.434] flip serial 32105 seq 129354 interval 16.582 ms (vblanks 2) gpu 5.073 ms: dim above the bottom
+[ 1196.451] flip serial 32106 seq 129356 interval 16.594 ms (vblanks 2) gpu 4.623 ms: dim above the bottom
+[ 1196.467] flip serial 32107 seq 129358 interval 16.591 ms (vblanks 2) gpu 4.577 ms: dim above the bottom
+[ 1196.484] flip serial 32108 seq 129360 interval 16.592 ms (vblanks 2) gpu 4.395 ms: dim above the bottom
+[ 1198.633] flip serial 32109 seq 129619 interval 2148.604 ms (vblanks 259) planes 0.000 ms
+[ 1201.160] panel off: ok in 261.8 ms
+[ 1201.160] flips by path: planes 13210, gpu 1470, cpu 0
+[ 1204.267] panel on: ok in 153.2 ms
+[ 1204.325] flip serial 32112 seq 129931 interval 5692.126 ms (vblanks 312) gpu 7.739 ms: dim above the bottom
+[ 1204.333] flip serial 32113 seq 129932 interval 8.204 ms (vblanks 1) gpu 4.415 ms: dim above the bottom
+[ 1204.349] flip serial 32114 seq 129934 interval 16.591 ms (vblanks 2) gpu 4.450 ms: dim above the bottom
+[ 1204.366] flip serial 32115 seq 129936 interval 16.600 ms (vblanks 2) gpu 4.406 ms: dim above the bottom
+[ 1204.383] flip serial 32116 seq 129938 interval 16.590 ms (vblanks 2) gpu 4.492 ms: dim above the bottom
+[ 1204.399] flip serial 32117 seq 129940 interval 16.595 ms (vblanks 2) gpu 5.241 ms: dim above the bottom
+[ 1204.416] flip serial 32118 seq 129942 interval 16.590 ms (vblanks 2) gpu 4.409 ms: dim above the bottom
+[ 1204.432] flip serial 32119 seq 129944 interval 16.589 ms (vblanks 2) gpu 5.160 ms: dim above the bottom
+[ 1204.449] flip serial 32120 seq 129946 interval 16.596 ms (vblanks 2) gpu 5.318 ms: dim above the bottom
+[ 1204.466] flip serial 32121 seq 129948 interval 16.593 ms (vblanks 2) gpu 5.211 ms: dim above the bottom
+[ 1204.482] flip serial 32122 seq 129950 interval 16.586 ms (vblanks 2) gpu 5.312 ms: dim above the bottom
+[ 1206.988] flip serial 32123 seq 130252 interval 2505.326 ms (vblanks 302) planes 0.000 ms

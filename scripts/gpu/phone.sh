@@ -30,7 +30,13 @@ shot)
     su_sh <<EOF
 rm -f $RUN/shot.ppm
 kill -USR1 \$(cat $RUN/compositor.pid)
-for i in \$(seq 1 30); do [ -s $RUN/shot.ppm ] && break; sleep 0.1; done
+last=-1
+for i in \$(seq 1 50); do
+    size=\$(stat -c %s $RUN/shot.ppm 2>/dev/null || echo 0)
+    [ "\$size" -gt 1000000 ] && [ "\$size" = "\$last" ] && break
+    last=\$size
+    sleep 0.2
+done
 cp $RUN/shot.ppm /data/local/tmp/moon-gpu-shot.ppm && chmod 0644 /data/local/tmp/moon-gpu-shot.ppm
 EOF
     adb -s "$SERIAL" pull /data/local/tmp/moon-gpu-shot.ppm /tmp/moon-gpu-shot.ppm >/dev/null

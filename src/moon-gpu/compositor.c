@@ -155,6 +155,7 @@ struct comp {
     uint64_t last_flip_ns;
     uint32_t last_seq;
     uint64_t path_counts[4];
+    const char *flight_miss;
 };
 
 static void dmabuf_sync(int fd, uint64_t flags) {
@@ -690,15 +691,22 @@ static int clip_layer(struct comp *c, struct kms_layer *l, float sx, float sy,
     return 1;
 }
 
+static const char *plane_miss; /* why the last frame was drawn (profile) */
+
 /* Maps the current frame onto planes, bottom first. Returns the layer
- * count, or -1 if some part needs drawing. */
+ * count, or -1 if some part needs drawing (plane_miss says what). */
 static int plan_planes(struct comp *c, struct kms_layer *layers) {
+#define MISS(why)                                                              \
+    do {                                                                       \
+        plane_miss = why;                                                      \
+        return -1;                                                             \
+    } while (0)
     const struct frame *f = &c->cur;
     int n = 0, scaled = 0;
     if (f->flags & MG_FRAME_HAS_BASE) {
         struct surface *s = find_surface(c, f->base);
         if (!s || !s->fb || !s->opaque || s->width < c->width || s->height < c->height)
-            return -1;
+            MISS("base");
         layers[n++] = (struct kms_layer){.fb = s->fb, .sw = (float)c->width,
                                          .sh = (float)c->height, .dw = c->width,
                                          .dh = c->height, .alpha = 0xffff,
@@ -712,31 +720,55 @@ static int plan_planes(struct comp *c, struct kms_layer *layers) {
             /* Black on the black background at the very bottom: nothing. */
             if (n == 0 && (nd->color & 0xffffff) == 0)
                 continue;
-            return -1;
+            MISS("fill");
         }
         struct surface *s = find_surface(c, nd->surface);
-        if (!s || !s->fb || n == KMS_MAX_PLANES || nd->src_w <= 0 || nd->src_h <= 0)
-            return -1;
+        if (!s || !s->fb)
+            MISS("no scanout buffer");
+        if (n == KMS_MAX_PLANES)
+            MISS("too many layers");
+        if (nd->src_w <= 0 || nd->src_h <= 0)
+            MISS("empty source");
         float kx = nd->dst_w / nd->src_w, ky = nd->dst_h / nd->src_h;
         /* Rounded corners only where the buffer has them, at this scale. */
         if (fabsf(nd->radius - s->baked_radius * kx) > 1.5f)
-            return -1;
+            MISS("corner radius");
         struct kms_layer *l = &layers[n];
         if (!clip_layer(c, l, nd->src_x, nd->src_y, nd->src_w, nd->src_h,
                         nd->dst_x, nd->dst_y, nd->dst_w, nd->dst_h))
             continue;
         /* DPP limits: 2x down to 8x up, at least 64x16 on screen. */
         int scaling = fabsf(kx - 1) > 0.002f || fabsf(ky - 1) > 0.002f;
-        if (scaling && (kx < 0.5f || ky < 0.5f || kx > 8 || ky > 8 ||
-                        ++scaled > c->k.nscalers))
-            return -1;
+        if (scaling && (kx < 0.5f || ky < 0.5f || kx > 8 || ky > 8))
+            MISS("scale out of range");
+        if (scaling && ++scaled > c->k.nscalers)
+            MISS("too many scaled layers");
         if (l->dw < 64 || l->dh < 16)
-            return -1;
+            MISS("too small");
+        /* The source must lie inside the buffer (the kernel refuses even a
+         * fraction of a pixel outside), and a 1:1 layer must be exactly
+         * 1:1: non-scaling planes reject any other ratio. */
+        if (!scaling) {
+            l->sx = roundf(l->sx);
+            l->sy = roundf(l->sy);
+            l->sw = (float)l->dw;
+            l->sh = (float)l->dh;
+        }
+        if (l->sw > s->width || l->sh > s->height)
+            MISS("source outside the buffer");
+        if (l->sx < 0)
+            l->sx = 0;
+        if (l->sy < 0)
+            l->sy = 0;
+        if (l->sx + l->sw > s->width)
+            l->sx = s->width - l->sw;
+        if (l->sy + l->sh > s->height)
+            l->sy = s->height - l->sh;
         float a = nd->alpha;
         /* A dim is plane alpha over black, so only at the very bottom. */
         if (nd->dim < 0.998f) {
             if (n != 0 || !s->opaque)
-                return -1;
+                MISS("dim above the bottom");
             a *= nd->dim;
         }
         l->fb = s->fb;
@@ -746,6 +778,7 @@ static int plan_planes(struct comp *c, struct kms_layer *layers) {
         n++;
     }
     return n;
+#undef MISS
 }
 
 /* ---- frames ---- */
@@ -799,10 +832,29 @@ static void submit(struct comp *c, uint32_t serial) {
     uint64_t tag = ++c->tags;
     struct kms_layer layers[KMS_MAX_PLANES];
     int path = MG_PATH_PLANES, fence = -1, r = -1;
+    plane_miss = c->planes ? NULL : "planes off";
     int n = c->planes ? plan_planes(c, layers) : -1;
-    if (n > 0 && !kms_assign(&c->k, layers, n) &&
-        !kms_commit_layers(&c->k, layers, n, KMS_TEST, 0))
+    int tr = 0;
+    if (n > 0 && kms_assign(&c->k, layers, n))
+        plane_miss = "no plane fits";
+    else if (n > 0 && (tr = kms_commit_layers(&c->k, layers, n, KMS_TEST, 0))) {
+        plane_miss = "rejected by TEST_ONLY";
+        static int told;
+        if (c->profile && told++ < 6) {
+            LOG("TEST_ONLY: %s, %d layers:", strerror(-tr), n);
+            for (int i = 0; i < n; i++)
+                LOG("  plane %u src %.2f,%.2f %.2fx%.2f dst %d,%d %dx%d alpha %u%s",
+                    c->k.planes[layers[i].plane].id, layers[i].sx, layers[i].sy,
+                    layers[i].sw, layers[i].sh, layers[i].dx, layers[i].dy,
+                    layers[i].dw, layers[i].dh, layers[i].alpha,
+                    layers[i].premultiplied ? " premultiplied" : "");
+        }
+    }
+    else if (n > 0)
         r = commit_retry(c, layers, n, tag);
+    else if (!n)
+        plane_miss = "nothing visible";
+    c->flight_miss = plane_miss;
     if (r) {
         path = c->tier == TIER_GPU ? MG_PATH_GPU : MG_PATH_CPU;
         int buf = c->next_buf;
@@ -859,12 +911,13 @@ static void flip_done(struct comp *c, const struct kms_flip *ev) {
     };
     c->path_counts[c->flight_path & 3]++;
     if (c->profile)
-        LOG("flip serial %u seq %u interval %.3f ms (vblanks %u) %s %.3f ms",
+        LOG("flip serial %u seq %u interval %.3f ms (vblanks %u) %s %.3f ms%s%s",
             p.serial, ev->sequence,
             c->last_flip_ns ? (ev->time_ns - c->last_flip_ns) / 1e6 : 0.0,
             ev->sequence - c->last_seq,
             p.path == MG_PATH_PLANES ? "planes" : p.path == MG_PATH_GPU ? "gpu" : "cpu",
-            p.render_ns / 1e6);
+            p.render_ns / 1e6, p.path != MG_PATH_PLANES && c->flight_miss ? ": " : "",
+            p.path != MG_PATH_PLANES && c->flight_miss ? c->flight_miss : "");
     c->last_flip_ns = ev->time_ns;
     c->last_seq = ev->sequence;
     if (c->flight_fence >= 0)
@@ -1052,7 +1105,7 @@ static int listen_on(const char *path) {
 
 int main(int argc, char **argv) {
     const char *socket_path = NULL, *card = "/dev/dri/card0", *ready_file = NULL;
-    int hz = 120, floor_khz = 507000, force_cpu = 0, planes = 1, threads = 4;
+    int hz = 120, floor_khz = 702000, force_cpu = 0, planes = 1, threads = 4;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         int more = i + 1 < argc;

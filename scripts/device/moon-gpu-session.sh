@@ -38,10 +38,14 @@ live_pid() {
     case "$exe" in *"$2"*) echo "$pid" ;; *) return 1 ;; esac
 }
 
+# GPU_FLOOR_KHZ (config): the GPU clock floor while frames flow.
+floor="$(sed -n 's/^GPU_FLOOR_KHZ=\([0-9]*\)$/\1/p' "$CONFIG" 2>/dev/null | tail -1)"
+
 start_compositor() {
     rm -f "$RUN/ready"
     "$BB" nohup "$BB" setsid "$BIN" --socket "$RUN/compositor.sock" \
-        --ready-file "$RUN/ready" >>"$RUN/compositor.log" 2>&1 </dev/null &
+        --ready-file "$RUN/ready" ${floor:+--gpu-floor "$floor"} \
+        >>"$RUN/compositor.log" 2>&1 </dev/null &
     echo $! >"$RUN/compositor.pid"
     for _ in $("$BB" seq 1 40); do
         [ -e "$RUN/ready" ] && return 0
@@ -52,7 +56,10 @@ start_compositor() {
 }
 
 stop_compositor() {
-    pid="$(live_pid "$RUN/compositor.pid" moon-compositor)" || return 0
+    pid="$(live_pid "$RUN/compositor.pid" moon-compositor)" || {
+        rm -f "$RUN/compositor.pid" "$RUN/ready"
+        return 0
+    }
     kill -TERM "$pid" 2>/dev/null
     for _ in $("$BB" seq 1 20); do
         kill -0 "$pid" 2>/dev/null || break

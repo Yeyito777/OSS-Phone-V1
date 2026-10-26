@@ -37,7 +37,7 @@ CACHE="$PROJECT_ROOT/build/moon-gpu"
 mkdir -p "$CACHE"
 if [[ ! -s "$CACHE/$DUMMY_APK" ]]; then
     curl -fsSL -o "$CACHE/$DUMMY_APK.part" \
-        "https://dl-cdn.alpinelinux.org/alpine/$ALPINE/main/aarch64/$DUMMY_APK"
+        "https://dl-cdn.alpinelinux.org/alpine/$ALPINE/community/aarch64/$DUMMY_APK"
     mv "$CACHE/$DUMMY_APK.part" "$CACHE/$DUMMY_APK"
 fi
 

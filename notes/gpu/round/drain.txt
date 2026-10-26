@@ -1,0 +1,10 @@
+# scripts/direct-boot/measure-drain.sh 60 LABEL, 2026-10-26, same session, brightness 128,
+# battery 100 %, on battery (slate mode). Switcher-scroll loop: the switcher open with the
+# System app's card, injected 400 ms swipes left and right back to back for 85 s.
+RESULT gpu-home-idle avg_mA=218 samples=12 range_mA=209..244 cpu_busy_pct=2 voltage_mV=4416 cap=100
+RESULT gpu-screen-off avg_mA=46 samples=12 range_mA=33..90 cpu_busy_pct=2 voltage_mV=4425 cap=100
+RESULT gpu-switcher-scroll-loop avg_mA=337 samples=12 range_mA=312..363 cpu_busy_pct=10 voltage_mV=4404 cap=100   (before the plane fix: GPU-drawn)
+RESULT gpu-planes-switcher-scroll-loop avg_mA=273 samples=12 range_mA=254..301 cpu_busy_pct=7 voltage_mV=4408 cap=100   (after it: 97 % planes)
+RESULT sw-home-idle avg_mA=220 samples=12 range_mA=208..262 cpu_busy_pct=1 voltage_mV=4412 cap=100
+RESULT sw-switcher-scroll-loop avg_mA=443 samples=12 range_mA=396..523 cpu_busy_pct=15 voltage_mV=4396 cap=100
+RESULT sw-screen-off avg_mA=37 samples=12 range_mA=23..77 cpu_busy_pct=1 voltage_mV=4417 cap=100
