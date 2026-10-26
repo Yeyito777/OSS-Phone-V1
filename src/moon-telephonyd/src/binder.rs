@@ -151,6 +151,13 @@ impl Blob {
             children: Vec::new(),
         }
     }
+    /// Raw element bytes (e.g. a `vec<uint8_t>`'s contents).
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            children: Vec::new(),
+        }
+    }
     pub fn i32(&mut self, offset: usize, value: i32) -> &mut Self {
         self.bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         self
@@ -964,8 +971,105 @@ impl Drop for Binder {
 }
 
 #[cfg(test)]
+pub mod testing {
+    use super::*;
+
+    /// What the kernel does to a parcel on its way to the receiver: copies
+    /// the scatter-gather buffers into the receiver's mapping and patches
+    /// object and parent pointers. The arena stands in for the mapping.
+    pub struct Received {
+        arena: Vec<u8>,
+        data_len: usize,
+        offsets: Vec<u64>,
+    }
+
+    impl Received {
+        pub fn new(parcel: &Parcel) -> Self {
+            let mut arena = vec![0u8; parcel.data.len() + parcel.buffers_size + 64];
+            arena[..parcel.data.len()].copy_from_slice(&parcel.data);
+            let base = arena.as_ptr() as u64;
+            let mut next = align8(parcel.data.len());
+            let mut placed: Vec<u64> = Vec::new(); // new address per object index
+            let mut buffer = 0;
+            for &offset in &parcel.offsets {
+                let o = offset as usize;
+                let kind = u32::from_le_bytes(arena[o..o + 4].try_into().unwrap());
+                if kind != TYPE_PTR {
+                    placed.push(0);
+                    continue;
+                }
+                let bytes = &parcel.buffers[buffer];
+                buffer += 1;
+                let address = base + next as u64;
+                arena[next..next + bytes.len()].copy_from_slice(bytes);
+                arena[o + 8..o + 16].copy_from_slice(&address.to_le_bytes());
+                let flags = u32::from_le_bytes(arena[o + 4..o + 8].try_into().unwrap());
+                if flags & BUFFER_FLAG_HAS_PARENT != 0 {
+                    let parent =
+                        u64::from_le_bytes(arena[o + 24..o + 32].try_into().unwrap()) as usize;
+                    let at = u64::from_le_bytes(arena[o + 32..o + 40].try_into().unwrap()) as usize;
+                    let p = (placed[parent] - base) as usize + at;
+                    arena[p..p + 8].copy_from_slice(&address.to_le_bytes());
+                }
+                placed.push(address);
+                next += align8(bytes.len());
+            }
+            Self {
+                arena,
+                data_len: parcel.data.len(),
+                offsets: parcel.offsets.clone(),
+            }
+        }
+
+        pub fn reader(&self) -> Reader<'_> {
+            Reader {
+                data: &self.arena[..self.data_len],
+                offsets: self.offsets.clone(),
+                pos: 0,
+                mem: Mem {
+                    base: self.arena.as_ptr() as usize,
+                    len: self.arena.len(),
+                },
+                keep: Vec::new(),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn received_parcels_decode_nested_strings_and_vectors() {
+        let mut parcel = Parcel::request("iface");
+        parcel.write_i32(1);
+        let mut blob = Blob::new(24);
+        blob.i32(0, 7);
+        let names = ["first", "second"];
+        blob.vec(
+            8,
+            2,
+            Blob::array(2, 24, |b, off, i| {
+                b.i32(off, i as i32 + 10);
+                b.string(off + 8, names[i]);
+            }),
+        );
+        parcel.write_blob(blob);
+        parcel.write_string("tail");
+        let received = testing::Received::new(&parcel);
+        let mut r = received.reader();
+        assert_eq!(r.cstring().as_deref(), Some("iface"));
+        assert_eq!(r.i32(), Some(1));
+        let v = r.buffer().unwrap();
+        assert_eq!(v.i32(0), 7);
+        let items = v.vec(8, 24);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[1].i32(0), 11);
+        assert_eq!(items[1].string(8), "second");
+        assert_eq!(r.string().as_deref(), Some("tail"));
+        assert!(r.buffer().is_none());
+    }
 
     #[test]
     fn ioctl_numbers_match_the_uapi() {
