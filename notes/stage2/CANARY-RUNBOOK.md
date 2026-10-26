@@ -1,8 +1,18 @@
 # Recovery-slot test runbook: canary v2, then Moon and stage 2 from the slot
 
-> ⏸ **ON HOLD until `oss-rebootmode-clear.ko` passes its on-device test**
-> (kernel agent; dry run, real run, reboot; `src/oss-rebootmode-clear/README.md`
-> on branch `rebootmode-clear`). Every image here loads that module first.
+> ⏸ **ON HOLD: do not run canary 0e4e70b2 until the module returns an error
+> whenever it could not select NORMAL.** The module passed its on-device test
+> (2026-10-26), but in a normal boot 0x810 reads **0x48**, not 0. The value is
+> bootloader-owned: only exynos-reboot writes 0x810 in the kernel, as whole mode
+> values (recovery 0x01). If a recovery boot reads e.g. **0x49**, the current
+> module logs "not a reboot mode; left unchanged" yet **returns 0**, so the canary
+> would believe the clear worked and panic: a possible loop (Download-mode escape
+> still works). Requested fix (kernel agent): clear only the mode bits 2:0
+> (keep the bootloader's flag bits), then read back and **fail the load unless
+> mode bits = 0, magic bits 23:16 = 0x4E and panic-inform = 0x12345670**. With
+> that, the canary is a safe measurement whatever the value: success → the
+> deliberate panic; anything else → no panic, stock recovery, and the logged
+> `before:` value tells us what a recovery boot really holds.
 
 ## Why it is built this way (history in one paragraph)
 `adb reboot recovery` writes a sticky `boot-recovery` BCB, so recovery is
@@ -47,10 +57,17 @@ back to a stock init instead. Stage 0 is retired: its question is answered.
    - `--check-bcb` → all zero.
    - BOOT `8c0461ee…`.
    - `adb shell su -c 'cat /proc/last_kmsg' | grep -aE 'oss-rebootmode-clear|OSS-CANARY|Attempted to kill init'`
-     must show (values from the kernel source; `%#x` prints 0 as `0`):
+     The `before:` line is the measurement. Expected values, by what the
+     bootloader does with 0x810 (normal boot: 0x48 = mode 0 + flag bits 6, 3):
+     | `before:` reboot-cmd | Meaning | Module (after the fix) | Canary |
+     | --- | --- | --- | --- |
+     | `0x1` | kernel's recovery write intact | mode bits → 0 (`after:` `0`) | panics → expect BOOT |
+     | `0x49` | flags re-added, mode 1 | mode bits → 0 (`after:` `0x48`) | panics → expect BOOT |
+     | `0x48` | mode already consumed; recovery is selected elsewhere (informs) | no 0x810 write; informs cleared | panics → expect BOOT; if it loops, the selector is not in these registers |
+     | other | unknown layout | load fails | no panic; stock recovery; report the value |
+     plus `magic-inform` bits 23:16 → `0x4e` and `panic-inform` `0x12345674` →
+     `0x12345670`, then
      ```
-     oss-rebootmode-clear: before: reboot-cmd[0x810]=0x1 magic-inform[0x808]=0x..4e.... panic-inform[0x80c]=0x12345674
-     oss-rebootmode-clear: after:  reboot-cmd[0x810]=0 magic-inform[0x808]=0x..4e.... panic-inform[0x80c]=0x12345670
      OSS-CANARY: PMU reboot state cleared; exiting PID 1 now to force a panic/reset (expected: return to BOOT)
      Kernel panic - not syncing: Attempted to kill init!
      ```
