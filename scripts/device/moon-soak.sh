@@ -111,14 +111,26 @@ wifi_drop() {
 }
 
 # A silent alarm (no sound, no vibration) two minutes ahead; time it fires.
-alarm_fire() {
-    set -- $(in_chroot 5 date -d @$(($(now) + 120)) '+%H %M' 2>/dev/null)
-    hour=${1#0}
-    minute=${2#0}
-    created="$(notifyctl alarm.create hour=${hour:-0} minute=${minute:-0} label=soak sound=none vibrate=false)"
+# moon-notifyd's local time zone may differ from the chroot's `date` (UTC):
+# create, compare next_fire_at with the target, recreate shifted if needed.
+create_alarm() { # epoch-of-wall-clock -> sets id, due
+    set -- $(in_chroot 5 date -u -d @"$1" '+%H %M' 2>/dev/null)
+    created="$(notifyctl alarm.create hour=${1#0} minute=${2#0} label=soak sound=none vibrate=false)"
     id="$(echo "$created" | sed -n 's/.*"id": *"\([^"]*\)".*/\1/p' | head -1)"
     due="$(echo "$created" | sed -n 's/.*"next_fire_at": *\([0-9]*\).*/\1/p' | head -1)"
+}
+alarm_fire() {
+    target=$(($(now) + 120))
+    create_alarm "$target"
     [ -n "$id" ] && [ -n "$due" ] || { event alarm fail "create: $created"; return; }
+    offset=$((due - target))
+    if [ "$offset" -gt 90 ] || [ "$offset" -lt -90 ]; then
+        notifyctl alarm.delete alarm="$id" >/dev/null
+        # Whole hours (time zones), into the next day's range.
+        hours=$(( (offset + 1800) / 3600 ))
+        create_alarm $((target - hours * 3600))
+        [ -n "$id" ] && [ -n "$due" ] || { event alarm fail "recreate: $created"; return; }
+    fi
     while [ "$(now)" -lt $((due + 120)) ]; do
         if notifyctl alarm.list | tr -d ' \n' | grep -q "\"id\":\"$id\"[^}]*\"ringing\":true"; then
             event alarm ok "rang $(($(now) - due))s after due"
