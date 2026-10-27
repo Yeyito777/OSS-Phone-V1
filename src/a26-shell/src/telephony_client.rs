@@ -139,6 +139,10 @@ impl TelState {
             return Cellular::Airplane;
         }
         match self.sim.state.as_str() {
+            // Compact, as on iPhone: "SOS" when emergency calls work.
+            "absent" | "no_profile" if self.network.emergency_only => {
+                return Cellular::Text("SOS");
+            }
             "absent" | "no_profile" => return Cellular::Text("No SIM"),
             "pin_required" | "puk_required" | "network_locked" => {
                 return Cellular::Text("SIM Locked");
@@ -172,15 +176,12 @@ impl TelState {
     }
 
     /// The carrier name for the lock screen and Control Centre.
+    /// Only a real operator: every other state is the status bar's short
+    /// indicator ("No SIM", "SOS"), never a second, longer line.
     pub fn carrier(&self) -> Option<String> {
-        if self.available && !self.airplane && self.network.emergency_only {
-            return Some("Emergency calls only".into());
-        }
         match self.cellular() {
-            Cellular::Hidden => None,
-            Cellular::Airplane => Some("Airplane Mode".into()),
-            Cellular::Text(text) => Some(text.into()),
             Cellular::Bars { .. } => self.network.operator.clone().filter(|o| !o.is_empty()),
+            _ => None,
         }
     }
 }
@@ -330,12 +331,13 @@ mod tests {
         store.state.network.registration = "none".into();
         store.state.network.emergency_only = true;
         assert_eq!(store.state.cellular(), Cellular::Text("SOS"));
-        assert_eq!(
-            store.state.carrier().as_deref(),
-            Some("Emergency calls only")
-        );
+        assert_eq!(store.state.carrier(), None);
+        // The A26 today: no SIM, emergency calls possible.
         store.state.sim.state = "absent".into();
+        assert_eq!(store.state.cellular(), Cellular::Text("SOS"));
+        store.state.network.emergency_only = false;
         assert_eq!(store.state.cellular(), Cellular::Text("No SIM"));
+        assert_eq!(store.state.carrier(), None);
         store.state.airplane = true;
         assert_eq!(store.state.cellular(), Cellular::Airplane);
         store.state.available = false;

@@ -1926,14 +1926,14 @@ pub fn draw_status_bar(canvas: &mut Canvas, status: &StatusInfo, background: Opt
         // The lock screen's big clock stands in for the time; the carrier
         // takes its place, as on iPhone.
         if let Some(carrier) = &status.carrier {
-            let carrier = text::fit(carrier, Weight::SemiBold, 44.0, 560.0);
+            let carrier = text::fit(carrier, Weight::SemiBold, 38.0, 520.0);
             text::draw(
                 canvas,
                 &carrier,
                 72.0,
-                text::centered_baseline(cy, Weight::SemiBold, 44.0),
+                text::centered_baseline(cy, Weight::SemiBold, 38.0),
                 Weight::SemiBold,
-                44.0,
+                38.0,
                 WHITE,
                 1.0,
             );
@@ -1991,8 +1991,8 @@ pub fn draw_status_bar(canvas: &mut Canvas, status: &StatusInfo, background: Opt
             edge -= 20.0 + SIGNAL_W;
         }
         Cellular::Text(label) => {
-            let width = text::measure(label, Weight::SemiBold, 38.0);
-            let baseline = text::centered_baseline(cy, Weight::SemiBold, 38.0);
+            let width = text::measure(label, Weight::SemiBold, 34.0);
+            let baseline = text::centered_baseline(cy, Weight::SemiBold, 34.0);
             let x = edge - 20.0 - width;
             text::draw(
                 canvas,
@@ -2000,7 +2000,7 @@ pub fn draw_status_bar(canvas: &mut Canvas, status: &StatusInfo, background: Opt
                 x,
                 baseline,
                 Weight::SemiBold,
-                38.0,
+                34.0,
                 WHITE,
                 1.0,
             );

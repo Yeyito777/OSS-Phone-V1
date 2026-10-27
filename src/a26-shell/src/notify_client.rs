@@ -335,10 +335,12 @@ impl NotifyClient {
 
     /// A short vibrator pulse, if the daemon knows `haptic` (revision 4);
     /// an older one would refuse it.
-    /// `ms` overrides the style's length (Moon's tuned lengths).
+    /// `ms` overrides the style's length (Moon's tuned lengths); only a
+    /// revision-5 daemon takes it (revision 4 would refuse the whole
+    /// haptic), so older ones get the style alone.
     pub fn haptic(&mut self, style: Haptic, ms: Option<u32>) {
         if self.line.connected() && self.revision.is_some_and(|revision| revision >= 4) {
-            match ms {
+            match ms.filter(|_| self.revision.is_some_and(|revision| revision >= 5)) {
                 Some(ms) => self
                     .line
                     .send("haptic", json!({ "style": style.name(), "ms": ms })),

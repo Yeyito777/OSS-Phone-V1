@@ -351,7 +351,7 @@ impl Engine {
         match cmd {
             "ping" => {
                 parse::<Empty>(args)?;
-                Ok(json!({"version": 1, "revision": 4}))
+                Ok(json!({"version": 1, "revision": 5}))
             }
             "notify.post" => self.post(parse(args)?, now, ev),
             "haptic" => {
@@ -1114,7 +1114,7 @@ struct AppFilter {
 struct Haptic {
     style: String,
     /// The pulse length in ms (5-100), overriding the style's default:
-    /// Moon's tuned lengths.
+    /// Moon's tuned lengths (revision 5).
     ms: Option<u32>,
 }
 
@@ -1511,7 +1511,7 @@ mod tests {
         with_tz(TZ, || {
             let mut e = fresh();
             let (r, _) = run(&mut e, "ping", json!({}), T0);
-            assert_eq!(r["revision"], 4);
+            assert_eq!(r["revision"], 5);
             e.take_effects();
             e.dirty = false;
             let (r, ev) = run(&mut e, "haptic", json!({"style": "light"}), T0);
