@@ -36,6 +36,7 @@ mod telephony_client;
 mod text;
 mod touch;
 mod tz;
+mod uevent;
 mod ui;
 mod volume;
 mod wallpaper;
@@ -537,6 +538,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut next_clock_tick = clock::next_minute_boundary(Instant::now());
     let mut frame_idle_until = Instant::now();
     let mut was_animating = false;
+    let power_supply_events = uevent::PowerSupplyEvents::open()
+        .inspect_err(|error| eprintln!("power-supply uevents unavailable: {error}"))
+        .ok();
     let mut power_key = match PowerKey::open("/dev/input/event1") {
         Ok(device) => {
             eprintln!("physical power key ready at /dev/input/event1");
@@ -1234,6 +1238,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
 
+        if power_supply_events
+            .as_ref()
+            .is_some_and(uevent::PowerSupplyEvents::drain)
+        {
+            // A charger in or out: read now.
+            next_device_status = Instant::now();
+        }
         if Instant::now() >= next_device_status {
             let device_status = status::DeviceStatus::read();
             let was_charging = state.battery_charging;
@@ -1644,6 +1655,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut app_fds = apps.poll_fds();
         if let Some(device) = evdev_touch.as_ref() {
             app_fds.push(device.raw_fd());
+        }
+        if let Some(events) = power_supply_events.as_ref() {
+            app_fds.push(events.raw_fd());
         }
         if let Some(server) = wayland.as_mut() {
             app_fds.extend(server.poll_fds());

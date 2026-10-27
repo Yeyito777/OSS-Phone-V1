@@ -558,6 +558,9 @@ impl ShellState {
 
     pub fn screen_off(&mut self) {
         self.lock();
+        // Auto-Lock with the power menu open: it is gone when the screen
+        // comes back, as on iPhone.
+        self.power.menu = None;
         self.fade = None;
         self.screen_awake = false;
         self.last_action = "screen_off".into();

@@ -34,6 +34,9 @@ pub const CANCEL_CENTER: (f32, f32) = (540.0, 1960.0);
 /// The supervisor's critical-battery notification (app `moon`): Moon shows
 /// a full-screen countdown to its `expires_at`, the shutdown time.
 pub const CRITICAL_TAG: &str = "battery-critical";
+/// How long the shutting-down screen waits for the supervisor's power-off
+/// after the countdown.
+const CRITICAL_POWER_OFF_WAIT: Duration = Duration::from_secs(30);
 /// The charging card on the lock screen.
 pub const CHARGING_CARD_FOR: Duration = Duration::from_millis(2600);
 pub const CARD: RectF = RectF::new(330.0, 960.0, 420.0, 420.0);
@@ -134,6 +137,11 @@ pub struct PowerUi {
     /// The helper failed: say so for a moment, then carry on.
     pub failed_at: Option<Instant>,
     pub charging_card: Option<Instant>,
+    /// The critical countdown's deadline while it shows (Unix seconds).
+    critical_deadline: Option<i64>,
+    /// The countdown ran out: the supervisor is powering off, so the screen
+    /// says so instead of returning to what was beneath (since when).
+    critical_expired: Option<Instant>,
 }
 
 impl PowerUi {
@@ -275,7 +283,14 @@ impl ShellState {
             now + Duration::from_nanos(1_000_000_000 - u64::from(unix.subsec_nanos()) + 1_000_000)
         });
         let failed = self.power.failed_at.map(|at| at + Duration::from_secs(3));
-        [hold, countdown, failed].into_iter().flatten().min()
+        let expired = self
+            .power
+            .critical_expired
+            .map(|at| at + CRITICAL_POWER_OFF_WAIT);
+        [hold, countdown, failed, expired]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     pub fn power_tick(&mut self, now: Instant) {
@@ -293,12 +308,30 @@ impl ShellState {
             self.power.menu = None;
             self.redraw = true;
         }
-        if self.critical_battery().is_some() {
+        if let Some(deadline) = self.critical_battery() {
             // The countdown repaints each second (the supervisor powers off).
+            self.power.critical_deadline = Some(deadline);
             self.redraw = true;
             if self.power.menu.is_some() {
                 self.power.menu = None;
             }
+        } else if let Some(deadline) = self.power.critical_deadline.take() {
+            // Gone: withdrawn (a charger), or expired, when the supervisor
+            // powers off.
+            if crate::clock::unix_now() + 1 >= deadline && self.power.shutting_down.is_none() {
+                self.power.shutting_down = Some(PowerAction::PowerOff);
+                self.power.critical_expired = Some(now);
+            }
+            self.redraw = true;
+        }
+        if self
+            .power
+            .critical_expired
+            .is_some_and(|at| now.saturating_duration_since(at) >= CRITICAL_POWER_OFF_WAIT)
+        {
+            // Still running: the power-off did not happen.
+            self.power.critical_expired = None;
+            self.shutdown_failed();
         }
         if self
             .power
@@ -694,7 +727,11 @@ pub fn draw_charging_card(canvas: &mut Canvas, percent: Option<u8>) {
     );
     text::draw_centered(
         canvas,
-        "Charging",
+        if percent == Some(100) {
+            "Charged"
+        } else {
+            "Charging"
+        },
         r,
         CARD.h - 52.0,
         Weight::Regular,
@@ -753,6 +790,10 @@ mod tests {
         state.power_key_up();
         assert!(!state.power.menu.as_ref().unwrap().open);
         assert!(state.fade.is_none());
+        // The screen going off (Auto-Lock) dismisses it.
+        state.open_power_menu(PowerAction::PowerOff);
+        state.screen_off();
+        assert!(state.power.menu.is_none());
     }
 
     #[test]
@@ -774,7 +815,30 @@ mod tests {
         assert!(state.power.menu.is_none());
         // Plugged in: the supervisor withdraws it.
         state.notify_event(crate::notify_client::Event::NotificationRemoved { id: "n7".into() });
+        state.power_tick(Instant::now());
         assert!(!state.power_takes_over());
+
+        // Run out: the supervisor powers off, and the screen says so
+        // instead of showing what was beneath for its last moment.
+        let event: crate::notify_client::Event = serde_json::from_value(serde_json::json!({
+            "event": "notification_posted", "wake": true,
+            "notification": {"id": "n8", "app": "moon", "tag": CRITICAL_TAG,
+                "title": "Battery critically low", "urgency": "high", "posted_at": 1,
+                "expires_at": crate::clock::unix_now()}
+        }))
+        .unwrap();
+        state.notify_event(event);
+        let now = Instant::now();
+        state.power_tick(now);
+        state.notify_event(crate::notify_client::Event::NotificationRemoved { id: "n8".into() });
+        state.power_tick(now);
+        assert_eq!(state.power.shutting_down, Some(PowerAction::PowerOff));
+        assert_eq!(
+            state.power.pending_action, None,
+            "the supervisor's power-off"
+        );
+        state.power_tick(now + CRITICAL_POWER_OFF_WAIT);
+        assert!(!state.power_takes_over(), "still running: carry on");
     }
 
     #[test]

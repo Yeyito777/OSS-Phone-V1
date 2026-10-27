@@ -1138,6 +1138,9 @@ fn draw_app_icon(canvas: &mut Canvas, icons: &dyn Icons, app: &str, rect: RectF)
             canvas.fill_rrect(rect, rect.w * 0.23, 0x636366, 1.0);
             if app == "moon-notifyd" {
                 draw_clock_glyph(canvas, rect.center(), rect.w * 0.3, WHITE);
+            } else if app == "moon" {
+                // The supervisor's notifications are about the battery.
+                draw_low_battery_glyph(canvas, rect.center(), rect.w * 0.3);
             } else {
                 draw_bell_glyph(canvas, rect.center(), rect.w * 0.3, WHITE);
             }
@@ -1540,6 +1543,35 @@ fn draw_timer_glyph(canvas: &mut Canvas, (cx, cy): (f32, f32), r: f32, color: u3
     let mut path = crate::gfx::Path::new();
     path.stroke_segment((cx, cy), (cx + r * 0.42, cy - r * 0.42), r * 0.13);
     canvas.fill_path(&path, color, 1.0);
+}
+
+/// A nearly empty battery, its charge in red.
+fn draw_low_battery_glyph(canvas: &mut Canvas, (cx, cy): (f32, f32), r: f32) {
+    let body = RectF::new(cx - r * 1.05, cy - r * 0.55, r * 1.9, r * 1.1);
+    canvas.stroke_rrect(body, r * 0.28, r * 0.13, WHITE, 1.0);
+    canvas.fill_rrect(
+        RectF::new(
+            body.x + body.w + r * 0.06,
+            cy - r * 0.22,
+            r * 0.14,
+            r * 0.44,
+        ),
+        r * 0.07,
+        WHITE,
+        1.0,
+    );
+    let inset = r * 0.24;
+    canvas.fill_rrect(
+        RectF::new(
+            body.x + inset,
+            body.y + inset,
+            r * 0.38,
+            body.h - 2.0 * inset,
+        ),
+        r * 0.1,
+        0xFF453A,
+        1.0,
+    );
 }
 
 fn draw_bell_glyph(canvas: &mut Canvas, (cx, cy): (f32, f32), r: f32, color: u32) {
