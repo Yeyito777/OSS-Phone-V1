@@ -138,12 +138,32 @@ impl Touchscreen {
         ))
     }
 
+    /// Off-device testing: input events written to a FIFO at `path`, with
+    /// the axis maxima a device would report (no ioctls on a FIFO). Opened
+    /// read-write, so the writer can come and go without an end of file.
+    pub fn replay(path: &Path, max: (i32, i32), width: u16, height: u16) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(path)?;
+        let axis = |maximum| Axis {
+            minimum: 0,
+            maximum,
+        };
+        Ok(Self::with_axes(file, path.to_owned(), (axis(max.0), axis(max.1)), width, height))
+    }
+
     fn from_file(file: File, path: PathBuf, width: u16, height: u16) -> io::Result<Self> {
         let axes = (
             abs_info(&file, ABS_MT_POSITION_X)?,
             abs_info(&file, ABS_MT_POSITION_Y)?,
         );
-        Ok(Self {
+        Ok(Self::with_axes(file, path, axes, width, height))
+    }
+
+    fn with_axes(file: File, path: PathBuf, axes: (Axis, Axis), width: u16, height: u16) -> Self {
+        Self {
             file,
             path,
             pending: Vec::new(),
@@ -154,7 +174,7 @@ impl Touchscreen {
             slot: 0,
             axes,
             screen: (width, height),
-        })
+        }
     }
 
     pub fn path(&self) -> &Path {

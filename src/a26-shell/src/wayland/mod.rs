@@ -150,6 +150,18 @@ pub enum Event {
 #[derive(Debug, Default)]
 pub struct ClientInfo {
     pub pid: Option<u32>,
+    /// Moon's own Xwayland (milestone 4): the X server Moon's X side runs
+    /// on, not an app. Its one toplevel is the X root at the panel's full
+    /// size in pixels (scale 1); it gets touch, and a keyboard that only
+    /// ever enters its root (keys reach X through XTEST, as with Xorg); and
+    /// nothing shows its buffers: Moon still mirrors the X root.
+    pub xwayland: bool,
+}
+
+pub(crate) fn is_xwayland(client: &wayland_server::Client) -> bool {
+    client
+        .get_data::<ClientInfo>()
+        .is_some_and(|info| info.xwayland)
 }
 
 impl ClientData for ClientInfo {
@@ -177,6 +189,8 @@ pub struct WlState {
     pub(crate) feedbacks: presentation::Feedbacks,
     pub(crate) clipboard: clipboard::Clipboard,
     pub(crate) serial: u32,
+    /// Xwayland's root surface, once it has one.
+    pub(crate) xwayland_root: Option<SurfaceKey>,
 }
 
 impl WlState {
@@ -297,6 +311,7 @@ impl WaylandServer {
                 feedbacks: presentation::Feedbacks::default(),
                 clipboard: clipboard::Clipboard::default(),
                 serial: 0,
+                xwayland_root: None,
             },
             socket_path,
         })
@@ -334,19 +349,62 @@ impl WaylandServer {
     }
 
     fn insert_client(&mut self, stream: UnixStream) {
-        if let Err(error) = stream.set_nonblocking(true) {
-            eprintln!("wayland: client socket: {error}");
-            return;
+        if let Err(error) = self.insert(stream, false) {
+            eprintln!("wayland: cannot insert client: {error}");
         }
+    }
+
+    /// Moon's own Xwayland, on its end of a socket pair (WAYLAND_SOCKET):
+    /// see [`ClientInfo::xwayland`].
+    pub fn insert_xwayland(&mut self, stream: UnixStream) -> io::Result<()> {
+        self.insert(stream, true)
+    }
+
+    fn insert(&mut self, stream: UnixStream, xwayland: bool) -> io::Result<()> {
+        stream.set_nonblocking(true)?;
         let pid = peer_pid(&stream);
-        match self
-            .display
+        self.display
             .handle()
-            .insert_client(stream, Arc::new(ClientInfo { pid }))
-        {
-            Ok(_) => eprintln!("wayland: client connected pid={}", pid.unwrap_or(0)),
-            Err(error) => eprintln!("wayland: cannot insert client: {error}"),
+            .insert_client(stream, Arc::new(ClientInfo { pid, xwayland }))?;
+        eprintln!(
+            "wayland: {} connected pid={}",
+            if xwayland { "Xwayland" } else { "client" },
+            pid.unwrap_or(0)
+        );
+        Ok(())
+    }
+
+    /// Whether Xwayland has mapped its root (it is ready for input).
+    pub fn xwayland_root(&self) -> Option<SurfaceKey> {
+        self.state
+            .xwayland_root
+            .filter(|key| self.state.surface_by_key(*key).is_some())
+    }
+
+    /// Xwayland's frame callbacks fire at the panel's pace (its pixels
+    /// reach the panel through the X mirror, not its buffers).
+    pub fn xwayland_frame_done(&mut self, time_ms: u32) {
+        let keys: Vec<SurfaceKey> = self
+            .state
+            .surfaces
+            .values()
+            .filter(|data| data.xwayland && !data.frame_callbacks.is_empty())
+            .map(|data| data.key)
+            .collect();
+        for key in keys {
+            surface::frame_done(&mut self.state, key, time_ms);
         }
+        if !self.state.surfaces.is_empty() {
+            self.flush();
+        }
+    }
+
+    /// Whether Xwayland waits for a frame callback.
+    pub fn xwayland_wants_frame(&self) -> bool {
+        self.state
+            .surfaces
+            .values()
+            .any(|data| data.xwayland && !data.frame_callbacks.is_empty())
     }
 
     pub fn flush(&mut self) {
@@ -421,6 +479,16 @@ impl WaylandServer {
     pub fn touch_down(&mut self, surface: SurfaceKey, id: i32, x: f64, y: f64, time_ms: u32) {
         seat::touch_down(&mut self.state, surface, id, x, y, time_ms);
         self.flush();
+    }
+
+    /// A touch on the X root (screen pixels): Xwayland turns it into X
+    /// touch events for the window under it.
+    pub fn xwayland_touch_down(&mut self, id: i32, x: f64, y: f64, time_ms: u32) -> bool {
+        let Some(root) = self.xwayland_root() else {
+            return false;
+        };
+        self.touch_down(root, id, x, y, time_ms);
+        true
     }
 
     pub fn touch_motion(&mut self, id: i32, x: f64, y: f64, time_ms: u32) {

@@ -30,6 +30,9 @@ pub(crate) struct Toplevel {
     pub sent: Option<(i32, i32, bool, bool)>,
     /// Moon's wish, kept until the client's first commit asks for it.
     pub wanted: Option<(i32, i32, bool, bool)>,
+    /// Xwayland's root: sized in pixels (scale 1), and not one of Moon's
+    /// app windows.
+    pub xwayland: bool,
 }
 
 /// xdg_surface state per wl_surface.
@@ -188,6 +191,7 @@ impl Dispatch<XdgSurface, SurfaceKey> for WlState {
                 state.next_toplevel = state.next_toplevel.wrapping_add(1).max(1);
                 let id = ToplevelId(state.next_toplevel);
                 let pid = client.get_data::<ClientInfo>().and_then(|info| info.pid);
+                let xwayland = super::is_xwayland(client);
                 state.toplevels.insert(
                     id,
                     Toplevel {
@@ -195,15 +199,25 @@ impl Dispatch<XdgSurface, SurfaceKey> for WlState {
                         xdg_surface: resource.clone(),
                         xdg_toplevel: toplevel,
                         sent: None,
-                        wanted: None,
+                        // The X root covers the panel, active for good.
+                        wanted: xwayland
+                            .then_some((state.output_size.0, state.output_size.1, true, false)),
+                        xwayland,
                     },
                 );
                 assign_role(state, key, Placement::Toplevel(id));
-                state.outbox.push(Event::ToplevelCreated {
-                    id,
-                    surface: key,
-                    pid,
-                });
+                if xwayland {
+                    state.xwayland_root = Some(key);
+                    if let Some(root) = state.surface_by_key(key).map(|data| data.resource.clone()) {
+                        super::seat::xwayland_enter(state, &root);
+                    }
+                } else {
+                    state.outbox.push(Event::ToplevelCreated {
+                        id,
+                        surface: key,
+                        pid,
+                    });
+                }
             }
             xdg_surface::Request::GetPopup {
                 id,
@@ -418,7 +432,7 @@ pub(crate) fn configure(
         push(xdg_toplevel::State::Suspended);
     }
     // Moon places windows in pixels; clients are told surface units.
-    let scale = state.scale;
+    let scale = if toplevel.xwayland { 1 } else { state.scale };
     toplevel.xdg_toplevel.configure(
         (width + scale - 1) / scale,
         (height + scale - 1) / scale,
