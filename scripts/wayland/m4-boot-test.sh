@@ -35,7 +35,8 @@ OUT="$REPO/build/wayland/m4-boot-test-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"
 ROOT=/data/local/a26-linux
 BACKUP=/data/local/tmp/m4-backup
-adb() { command adb -s "$SERIAL" "$@"; }
+# adb never reads stdin here: the file loops below read theirs.
+adb() { command adb -s "$SERIAL" "$@" </dev/null; }
 su_sh() { adb shell "su -c '$*'"; }
 log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$OUT/run.log"; }
 die() { log "FAILED: $*"; restore; exit 1; }
@@ -48,9 +49,10 @@ a26-xorg-persistent-session.sh:$ROOT/usr/local/sbin/a26-xorg-persistent-session:
 
 remote_sha() { su_sh "sha256sum $1 2>/dev/null" | cut -d' ' -f1; }
 
-push_file() { # LOCAL DEVICE-PATH MODE
+push_file() { # LOCAL DEVICE-PATH MODE: installs and verifies by sha256
     adb push -q "$1" /data/local/tmp/m4-push >/dev/null
     su_sh "cp /data/local/tmp/m4-push $2.new && chown 0:0 $2.new && chmod $3 $2.new && mv -f $2.new $2 && rm -f /data/local/tmp/m4-push"
+    [ "$(remote_sha "$2")" = "$(shasum -a 256 "$1" | cut -d' ' -f1)" ] || die "$2 did not install"
 }
 
 set_config() { # KEY VALUE (empty VALUE: remove the key)
@@ -96,7 +98,15 @@ restore() {
     adb reboot || true
     if wait_boot; then
         snapshot restored
-        log "restored: Moon $(remote_sha $ROOT/opt/a26-shell/bin/a26-shell | cut -c1-12), supervisor $(remote_sha /data/adb/moon/moon-boot-supervisor.sh | cut -c1-12)"
+        log "restored: Moon $(remote_sha $ROOT/opt/a26-shell/bin/a26-shell | cut -c1-12)"
+        if [ "$KEEP" = 0 ]; then
+            echo "$FILES" | while IFS=: read -r name path mode; do
+                want="$(git -C "$REPO" show "origin/main:scripts/device/$name" | shasum -a 256 | cut -d' ' -f1)"
+                if [ "$(remote_sha "$path")" = "$want" ]; then log "  $name: main's"; else log "  $name: NOT main's"; fi
+            done
+            [ "$(remote_sha $ROOT/opt/a26-shell/bin/a26-shell)" = "$(remote_sha $BACKUP/a26-shell)" ] &&
+                log "  Moon: the backed-up one" || log "  Moon: NOT the backed-up one"
+        fi
     else
         log "the last boot did not report Moon ready; backup in $BACKUP"
     fi
@@ -104,7 +114,7 @@ restore() {
 
 # 0. Preflight.
 [ "$(adb shell getprop moon.session.ready | tr -d '\r')" = 1 ] || { echo "Moon is not ready" >&2; exit 1; }
-battery="$(adb shell cat /sys/class/power_supply/battery/capacity | tr -d '\r')"
+battery="$(su_sh cat /sys/class/power_supply/battery/capacity | tr -d "\r")"
 [ "$battery" -ge 40 ] || { echo "battery $battery % (needs 40)" >&2; exit 1; }
 su_sh "test -x $ROOT/usr/bin/Xwayland" || { echo "no Xwayland: moon-phone.sh xwayland-install" >&2; exit 1; }
 git -C "$REPO" fetch -q origin main

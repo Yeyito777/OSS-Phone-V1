@@ -46,9 +46,15 @@ if [ "${1:-}" = --xwayland ]; then
         echo "WINDOW_MANAGER=moon"
     } >"$STATUS"
     echo "session held for Moon's Xwayland up=$(cut -d' ' -f1 /proc/uptime)" >&2
+    # Ended by a signal (the supervisor's fallback to Xorg, the GPU
+    # fallback): clean up and return, so the takeover moves on. (cleanup
+    # alone would let the loop go on holding.)
+    sleeper=''
+    trap 'kill "$sleeper" 2>/dev/null; cleanup; exit 0' HUP INT TERM
     while :; do
         sleep 3600 &
-        wait $!
+        sleeper=$!
+        wait "$sleeper"
     done
 fi
 
