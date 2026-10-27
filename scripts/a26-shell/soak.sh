@@ -27,8 +27,7 @@ start)
     run="$BASE/$(date +%Y%m%d-%H%M%S)"
     adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-soak.sh" /data/local/tmp/moon-soak.sh >/dev/null
     su_run "mkdir -p $run && cp /data/local/tmp/moon-soak.sh $BASE/moon-soak.sh &&
-        /data/local/a26-linux/busybox.static setsid /data/local/a26-linux/busybox.static nohup \
-        /system/bin/sh $BASE/moon-soak.sh $run $hours $no_charge >/dev/null 2>&1 </dev/null &"
+        /system/bin/sh $BASE/moon-soak.sh --detach $run $hours $no_charge" </dev/null
     sleep 2
     echo "started $run (${hours} h, no_charge=$no_charge): pid $(su_run "cat $run/pid")"
     ;;

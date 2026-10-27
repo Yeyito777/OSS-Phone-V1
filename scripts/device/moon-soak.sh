@@ -10,6 +10,13 @@
 # whenever the battery falls below 25 %. `touch RUN_DIR/stop` ends the run.
 set -u
 
+ROOT=/data/local/a26-linux
+# --detach: start a copy of this script in its own session and return.
+if [ "${1:-}" = --detach ]; then
+    shift
+    "$ROOT/busybox.static" setsid /system/bin/sh "$0" "$@" </dev/null >/dev/null 2>&1 &
+    exit 0
+fi
 RUN="${1:?run directory required}"
 HOURS="${2:-24}"
 NO_CHARGE="${3:-0}"
@@ -62,14 +69,15 @@ PROCS="a26-shell moon-compositor Xorg moon-notifyd moon-audiod moon-permissiond 
 
 sample() {
     t=$(now)
-    mem="$(sed -n 's/^MemAvailable: *\([0-9]*\).*/\1/p' /proc/meminfo)"
+    mem="$(sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' /proc/meminfo)"
     echo "$t,$(cut -d' ' -f1 /proc/uptime),$(read_file $BATTERY/capacity),$(read_file $BATTERY/voltage_now),$(read_file $BATTERY/current_now),$(read_file $BATTERY/status),$(read_file /sys/class/power_supply/usb/online),$(read_file /sys/class/backlight/panel/brightness),$mem,$(cut -d' ' -f1 /proc/loadavg),$(getprop moon.boot.mode),$(read_file $BATTERY/temp)" >>"$RUN/samples.csv"
     for name in $PROCS; do
         for pid in $(pidof "$name" 2>/dev/null); do
             stat="$(cat /proc/$pid/stat 2>/dev/null)" || continue
             ticks=$(echo "${stat##*) }" | cut -d' ' -f12,13 | { read u s; echo $((u + s)); })
-            rss="$(sed -n 's/^VmRSS: *\([0-9]*\).*/\1/p' /proc/$pid/status)"
-            threads="$(sed -n 's/^Threads: *//p' /proc/$pid/status)"
+            # /proc/PID/status separates fields with tabs.
+            rss="$(sed -n 's/^VmRSS:[[:space:]]*\([0-9]*\).*/\1/p' /proc/$pid/status)"
+            threads="$(sed -n 's/^Threads:[[:space:]]*\([0-9]*\).*/\1/p' /proc/$pid/status)"
             fds=$(ls /proc/$pid/fd 2>/dev/null | wc -l)
             echo "$t,$name,$pid,$ticks,${rss:-0},${threads:-0},$fds" >>"$RUN/procs.csv"
         done
