@@ -9,7 +9,8 @@
 > PID-namespace-safe) replaces the vendor copy, and oss-init now treats the
 > first denied `/dev/kmsg` read as the container-live signal, logs through a
 > write fd opened before the policy load, and reboots at once if the hang-path
-> kill is refused. Bench + exact-binary checks pass; awaiting a phone slot.
+> kill is refused. **Ran 2026-10-27: PASS**: oss-init the real PID 1, Android
+> contained, Moon up on the patched Mali (`ONDEVICE-RESULTS-20261027-V5.md`).
 
 ## Why it is built this way (history in one paragraph)
 `adb reboot recovery` writes a sticky `boot-recovery` BCB, so recovery is
