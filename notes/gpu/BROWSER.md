@@ -194,6 +194,40 @@ the decoded NV12 frames for software compositing. Samsung's Codec2 HAL is
 the Android way, through binder from a bionic helper: more plumbing still.
 Worth it only after C, and only for battery during video.
 
+## The Venus spike (option C), so far
+
+Built (off-device, `scripts/venus/build.sh` into `build/venus/`):
+
+- `android/`: virglrenderer (main at e0a1caf) with the NDK: `virgl_test_server`,
+  `virgl_render_server`, `libvirglrenderer.so`, Venus only (`-Dvrend=false`,
+  so no libepoxy), Vulkan loaded at runtime (Android's `libvulkan.so`). Two
+  local adjustments: vtest is built without the GL renderer (upstream only
+  builds it with vrend), and two NDK stand-ins for AOSP headers Mesa's util
+  code includes on Android (`src/venus/ndk-shim`: `log/log.h`,
+  `cutils/properties.h`).
+- `debian/`: Mesa 25.2's Venus driver (`libvulkan_virtio.so`, x11 and
+  wayland WSI) built in a Debian bookworm arm64 container, the Vulkan loader
+  and the libraries they need from bookworm (bundled, so nothing is installed
+  in the Browser's root), and `vkfirst` (`src/venus/vkfirst.c`).
+
+The first-frame target is `vkfirst`: from the Browser's root, through Venus
+over the vtest socket, it clears a 1080x2340 image on the Mali, copies it
+into host-visible memory, checks the pixels and times the round trip.
+`scripts/venus/phone-test.sh` runs it (server started, files staged under
+`/tmp`, all removed afterwards); `--serve` leaves the server up for the
+Browser itself:
+
+    scripts/venus/phone-test.sh --serve
+    scripts/gpu/browser-variant.sh on --use-vulkan=native --enable-features=Vulkan \
+        --ignore-gpu-blocklist VK_ICD_FILENAMES=/tmp/venus/venus_icd.json \
+        VN_DEBUG=vtest VTEST_SOCKET_NAME=/tmp/.venus-test.sock LD_LIBRARY_PATH=/tmp/venus/lib
+
+Off-device the whole chain could not be exercised: on whale's arm64
+container with lavapipe as the "host" driver, the server fails to export
+host-visible memory (`virgl_renderer_resource_export_blob` -22), as
+lavapipe cannot export it; the Mali can (`VK_EXT_external_memory_dma_buf`),
+so the phone is the real test.
+
 ## Recommendation
 
 1. **Measure the baseline** on the phone (below), then **A** in the same

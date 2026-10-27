@@ -17,6 +17,7 @@
 !/src/moon-telephonyd/
 !/src/moon-gpu/
 !/src/oss-rebootmode-clear/
+!/src/venus/
 /src/a26-shell/target/
 /src/moon-telephonyd/target/
 
@@ -26,6 +27,7 @@
 !/scripts/direct-boot/
 !/scripts/kernel/
 !/scripts/gpu/
+!/scripts/venus/
 /scripts/device/*
 !/scripts/device/90-moon-autostart.sh
 !/scripts/device/moon-boot-supervisor.sh
