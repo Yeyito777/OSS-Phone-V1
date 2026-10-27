@@ -85,6 +85,7 @@ if [ -x "$ROOT/opt/a26-system/libexec/a26-wifi-stop" ]; then
     log "Wi-Fi stopped rc=$?"
 fi
 stop_exe "$ROOT/usr/libexec/Xorg" 3
+stop_exe "$ROOT/usr/bin/Xwayland" 3
 stop_exe "$ROOT/opt/moon-gpu/moon-compositor" 3
 
 # 3. A normal Android shutdown.
