@@ -62,6 +62,9 @@
 #include <linux/reboot.h>
 
 #include "rebootmode-clear.h"
+#include "bootcount-misc.h"
+#include <sched.h>
+#include <sys/mount.h>
 
 extern char **environ;
 
@@ -105,50 +108,6 @@ static void kmsg(const char *msg) {
     (void)close(fd);
 }
 
-/* ---- boot-attempt counter (BOOT-promotion safety) ------------------------
- * On the single-slot BOOT partition a failed new PID 1 cannot be caught in
- * userspace, so oss-init counts CONSECUTIVE boot attempts in a store that
- * survives a warm reset and a panic, and is zeroed by a healthy session
- * (scripts/device/moon-boot-confirm.sh). After BOOTCOUNT_MAX consecutive
- * failures it skips containment and execs the stock init (today's proven boot).
- *
- * The store is the oss-bootcount kernel module, loaded like oss-rebootmode-clear
- * with no filesystem dependency. On load it increments and logs
- *     oss-bootcount: count=<n> max=<m>
- * The module is present ONLY in a promoted BOOT image; it is absent from every
- * recovery-slot image, where bootcount_bump() returns -1 and oss-init contains
- * as before. So the skip engages only on BOOT, with the module in place. */
-#ifndef BOOTCOUNT_KO
-#define BOOTCOUNT_KO "/oss-bootcount.ko"
-#endif
-#ifndef BOOTCOUNT_MAX
-#define BOOTCOUNT_MAX 3
-#endif
-
-static int bootcount_bump(void) {
-#ifdef TEST_BOOTCOUNT
-    return TEST_BOOTCOUNT;            /* bench: force a count to test the skip */
-#else
-    int fd = open(BOOTCOUNT_KO, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return -1;            /* no module: recovery slot -> contain */
-    long r = syscall(SYS_finit_module, fd, "", 0);
-    int e = errno; (void)close(fd);
-    if (r != 0 && e != EEXIST) return -1;
-    int k = open("/dev/kmsg", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-    if (k < 0) return -1;
-    char buf[2048]; int count = -1;
-    for (;;) {                        /* /dev/kmsg yields one record per read */
-        ssize_t n = read(k, buf, sizeof(buf) - 1);
-        if (n <= 0) { if (n < 0 && errno == EPIPE) continue; break; }
-        buf[n] = '\0';
-        char *q = strstr(buf, "oss-bootcount: count=");
-        if (q) count = (int)strtol(q + 21, (char **)0, 10);
-    }
-    (void)close(k);
-    return count;
-#endif
-}
-
 static long now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -162,7 +121,10 @@ static void sleep_ms(long ms) {
 
 /* ---- terminal actions: never return -------------------------------------- */
 
+static void bc_helper_kill(void);
+
 static void real_reboot(int poweroff) {
+    bc_helper_kill();
     for (;;) {
         sync();
         if (poweroff)
@@ -178,6 +140,7 @@ static void real_reboot(int poweroff) {
  * stock init, never magiskinit. Held fd first (immune to any rootfs change),
  * then the path; if neither can be exec'd, reboot. */
 static void exec_stock_init(int fd_stock, char **argv, int allow_reboot) {
+    bc_helper_kill();
     /* The fd is O_CLOEXEC so the container never inherits it. Clear that now:
      * execveat(AT_EMPTY_PATH) on a close-on-exec fd fails with ENOENT whenever
      * the binary is handed to an interpreter as /dev/fd/N (seen on the binfmt
@@ -197,6 +160,188 @@ static void exec_stock_init(int fd_stock, char **argv, int allow_reboot) {
      * Download-mode escape (CANARY-RUNBOOK.md) recovers the phone. */
     kmsg("<3>oss-init: cannot exec the stock init and must not reboot; halting\n");
     for (;;) pause();
+}
+
+/* ---- boot-attempt counter in misc (BOOT-promotion safety) -----------------
+ * notes/stage2/PROMOTION-PLAN.md §2; record format docs/bootcount-misc-record.md;
+ * implementation bootcount-misc.h (the only writer).
+ *
+ * Timing: the misc partition does not exist at oss-init's first action. UFS
+ * (ufs-exynos-core.ko, needing 29 modules plus regulator/PHY providers) is
+ * loaded by the container's stock first stage; misc appears ~1.9 s, first
+ * stage switches root ~4.7 s (v5 on-device log). So a helper process, in its
+ * OWN private mount namespace (oss-init's namespace stays mount-free), waits for
+ * PARTNAME=misc in sysfs, FREEZES the container (SIGSTOP via pidfd), bumps the
+ * record, and reports; oss-init then thaws the container or kills it and skips
+ * containment. The freeze happens during module loading, before any dm device
+ * or mount exists, so the skip path sees the same state as an early container
+ * failure (already handled by fall_back).
+ *
+ * Decision (after the bump):
+ *   valid record, new count >= BC_MAX              -> skip containment
+ *   OSS_PROMOTED and no trustworthy count (absent, damaged, foreign, I/O or
+ *     verify error, wrong size, ambiguous)          -> skip containment
+ *   otherwise (incl. a normal boot with no/foreign store) -> contain as usual
+ * misc never appearing within the deadline: contain as usual in both modes (if
+ * UFS never comes up, no boot can mount anything; killing a container that is
+ * already past first stage would not help).
+ * Skip = today's proven boot: magiskinit as /init (as oss-pid1 does), the stock
+ * init via the held fd if that exec fails. A skipped boot carries no
+ * /debug_ramdisk/oss-contained marker, so moon-boot-confirm.sh does not clear
+ * the count: the boot stays skipped until someone clears it on purpose. */
+#ifndef OSS_PROMOTED
+#define OSS_PROMOTED 0      /* 1 only in a BOOT-promotion build */
+#endif
+#ifndef BC_FIND_DEADLINE_MS
+#define BC_FIND_DEADLINE_MS 15000
+#endif
+#ifndef SYS_pidfd_open
+#define SYS_pidfd_open 434
+#endif
+#ifndef SYS_pidfd_send_signal
+#define SYS_pidfd_send_signal 424
+#endif
+
+struct bc_result {
+    int done, status, count, stopped, wrote, found;  /* found: 0, -1 timeout, -2 ambiguous, -3 size */
+};
+static pid_t g_bc_helper = -1;
+
+static void bc_helper_kill(void) {
+    if (g_bc_helper > 0) {
+        (void)kill(g_bc_helper, SIGKILL);
+        (void)waitpid(g_bc_helper, 0, 0);
+        g_bc_helper = -1;
+    }
+}
+
+static int ctr_signal(pid_t ctr, int pfd, int sig) {
+    if (pfd >= 0 && syscall(SYS_pidfd_send_signal, pfd, sig, (void *)0, 0) == 0) return 0;
+    return kill(ctr, sig);
+}
+
+static void bc_helper_main(pid_t ctr, int pfd, int out) {
+    struct bc_result res = {.done = 1, .status = BC_NOSTORE, .found = -1};
+#ifdef TEST_SYSFS
+    const char *sysroot = TEST_SYSFS, *node = TEST_MISC_NODE;
+#else
+    const char *sysroot = "/sys", *node = "/mnt/oss-misc";
+    if (unshare(CLONE_NEWNS) < 0 || mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) < 0 ||
+        mount("sysfs", "/sys", "sysfs", 0, NULL) < 0) { res.status = BC_IO; goto report; }
+#endif
+    unsigned maj = 0, min = 0; char dn[64];
+    long end = now_ms() + BC_FIND_DEADLINE_MS;
+    int f;
+    for (;;) {
+        f = bc_find_misc(sysroot, &maj, &min, dn, sizeof dn);
+        if (f != -1 || now_ms() > end) break;
+        sleep_ms(50);
+    }
+    res.found = f;
+    if (f != 0) goto report;
+    if (ctr_signal(ctr, pfd, SIGSTOP) == 0) res.stopped = 1;     /* freeze while we decide */
+#ifndef TEST_SYSFS
+    if (mount("tmpfs", "/mnt", "tmpfs", 0, "mode=0700") < 0 ||
+        mknod(node, S_IFBLK | 0600, makedev(maj, min)) < 0) { res.status = BC_IO; goto report; }
+#endif
+    {
+        int direct, fd = bc_open(node, &direct);
+        if (fd < 0) { res.status = fd == -2 ? BC_NOSTORE : BC_IO; if (fd == -2) res.found = -3; goto report; }
+        struct bc_state st = bc_op(fd, BC_BUMP, direct, !OSS_PROMOTED, &res.wrote);
+        (void)close(fd);
+        res.status = st.status; res.count = (int)st.count;
+    }
+report:
+    (void)!write(out, &res, sizeof res);
+    _exit(0);
+}
+
+/* Magiskinit as /init: today's proven boot (oss-pid1's path). Never returns. */
+static void skip_containment(int fd_stock, char **argv, const char *why) {
+    char line[160];
+    snprintf(line, sizeof line, "<4>oss-init: skipping containment (%s); booting magiskinit as /init\n", why);
+    kmsg(line);
+    bc_helper_kill();
+    if (rename(MAGISK_INIT, "/init") == 0) {
+        execve("/init", argv, environ);
+        kmsg("<3>oss-init: exec of magiskinit failed; exec stock init\n");
+    } else {
+        kmsg("<3>oss-init: cannot put magiskinit at /init; exec stock init\n");
+    }
+    exec_stock_init(fd_stock, argv, 1);
+}
+
+/* Act on the helper's report. Returns only if the container goes on. A
+ * container that is already live (past first stage: dm devices, mounts) is
+ * never killed for the count: that would collide with its state. On the phone
+ * the report comes at ~1.9 s and liveness at ~6 s, so this only guards an
+ * abnormally late misc. */
+static void bc_decide(const struct bc_result *r, pid_t ctr, int pfd, int fd_stock, char **argv, int live) {
+    char line[200];
+    snprintf(line, sizeof line,
+             "<6>oss-init: bootcount status=%s count=%d found=%d wrote=%d froze=%d promoted=%d\n",
+             bc_status_name(r->status), r->count, r->found, r->wrote, r->stopped, OSS_PROMOTED);
+    kmsg(line);
+    const char *why = 0;
+    if (r->status == BC_OK && r->count >= BC_MAX)
+        why = "consecutive failed boots reached the limit";
+    else if (OSS_PROMOTED && r->status != BC_OK && !(r->status == BC_NOSTORE && r->found == -1))
+        why = "promoted boot without a trustworthy boot count";
+    if (why && live) {
+        snprintf(line, sizeof line, "<4>oss-init: would skip containment (%s), but the container is "
+                 "already live; not interrupting it\n", why);
+        kmsg(line);
+        why = 0;
+    }
+    if (why) {
+        (void)ctr_signal(ctr, pfd, SIGKILL);
+        (void)waitpid(ctr, 0, 0);
+        skip_containment(fd_stock, argv, why);
+    }
+    if (r->stopped) (void)ctr_signal(ctr, pfd, SIGCONT);
+}
+
+/* `oss-init --bootcount show|clear|init|bump`, from Android userspace (never as
+ * PID 1). Finds misc in /sys, opens /dev/block/<DEVNAME> after checking it is
+ * the same block device. OSS_BC_SYSROOT / OSS_BC_NODE override both (bench). */
+static int bootcount_cli(const char *opname) {
+    int op = !strcmp(opname, "show") ? BC_SHOW : !strcmp(opname, "clear") ? BC_CLEAR :
+             !strcmp(opname, "init") ? BC_INIT : !strcmp(opname, "bump") ? BC_BUMP : -1;
+    if (op < 0) { fprintf(stderr, "usage: oss-init --bootcount show|clear|init|bump\n"); return 2; }
+    const char *sysroot = getenv("OSS_BC_SYSROOT") ? getenv("OSS_BC_SYSROOT") : "/sys";
+    const char *forced = getenv("OSS_BC_NODE");
+    unsigned maj, min; char dn[64], node[96];
+    int f = bc_find_misc(sysroot, &maj, &min, dn, sizeof dn);
+    if (f != 0) {
+        printf("bootcount: status=nostore (%s)\n", f == -2 ? "ambiguous PARTNAME=misc" :
+               f == -3 ? "misc is not 1 MiB" : "no PARTNAME=misc");
+        return 2 + BC_NOSTORE;
+    }
+    if (forced) snprintf(node, sizeof node, "%s", forced);
+    else {
+        /* Android: /dev/block/<DEVNAME>; desktop Linux: /dev/<DEVNAME>. Either
+         * way it must be exactly the block device sysfs named. */
+        static const char *dirs[] = {"/dev/block/", "/dev/"};
+        int ok = 0;
+        for (int i = 0; i < 2 && !ok; i++) {
+            snprintf(node, sizeof node, "%s%s", dirs[i], dn);
+            struct stat sb;
+            ok = stat(node, &sb) == 0 && S_ISBLK(sb.st_mode) && sb.st_rdev == makedev(maj, min);
+        }
+        if (!ok) {
+            printf("bootcount: status=nostore (no block node for %s is %u:%u)\n", dn, maj, min);
+            return 2 + BC_NOSTORE;
+        }
+    }
+    int direct, fd = bc_open(node, &direct);
+    if (fd < 0) { printf("bootcount: status=%s (open %s)\n", fd == -2 ? "nostore" : "io", node); return 2 + (fd == -2 ? BC_NOSTORE : BC_IO); }
+    int wrote;
+    struct bc_state st = bc_op(fd, op, direct, 1, &wrote);
+    (void)close(fd);
+    printf("bootcount: status=%s slot=%s seq=%u count=%u wrote=%d slotA=%d slotB=%d direct=%d\n",
+           bc_status_name(st.status), st.cur == 0 ? "A" : st.cur == 1 ? "B" : "-",
+           st.seq, st.count, wrote, st.cls[0], st.cls[1], direct);
+    return (st.status == BC_OK || st.status == BC_NONE) ? 0 : 2 + st.status;
 }
 
 /* ---- kernel-log watcher --------------------------------------------------- */
@@ -241,6 +386,7 @@ static void watch_kmsg(struct watch *w) {
 
 /* The single decision point for a failed container. Never returns. */
 static void fall_back(const char *why, struct watch *w, int fd_stock, char **argv) {
+    bc_helper_kill();
     watch_kmsg(w); /* pick up anything logged just before the failure */
     if (w->reboot_safe) {
         kmsg("<4>oss-init: container failed after sec_reboot loaded; controlled reboot to BOOT\n");
@@ -349,6 +495,15 @@ static void container_main(char **argv) {
     if (unlink(STAGE_DIR "/init") < 0) CFAIL(14);
     if (rename(STAGE_DIR MAGISK_INIT, STAGE_DIR "/init") < 0) CFAIL(15);
     (void)unlink(STAGE_DIR STOCK_INIT);
+    /* Marker for Android: magiskinit copies overlay.d/sbin to /debug_ramdisk, so a
+     * contained boot shows /debug_ramdisk/oss-contained (moon-boot-confirm.sh
+     * clears the boot count only then; a skipped boot has no marker). */
+    (void)mkdir(STAGE_DIR "/overlay.d", 0750);
+    (void)mkdir(STAGE_DIR "/overlay.d/sbin", 0750);
+    {
+        int mf = open(STAGE_DIR "/overlay.d/sbin/oss-contained", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (mf >= 0) { (void)!write(mf, "oss-init v7 containment\n", 24); (void)close(mf); }
+    }
     /* Make the copy this namespace's root, as init's own SwitchRoot does. */
     if (chdir(STAGE_DIR) < 0) CFAIL(16);
     if (mount(STAGE_DIR, "/", NULL, MS_MOVE, NULL) < 0) CFAIL(17);
@@ -360,7 +515,8 @@ static void container_main(char **argv) {
 }
 
 int main(int argc, char **argv) {
-    (void)argc;
+    if (argc >= 3 && !strcmp(argv[1], "--bootcount") && getpid() != 1)
+        return bootcount_cli(argv[2]);
     /* FIRST, before anything that can fail: select a NORMAL boot in the PMU,
      * so any later panic, hang or reset returns to BOOT, not to this slot. */
     int clear_err = load_rebootmode_clear();
@@ -368,7 +524,7 @@ int main(int argc, char **argv) {
      * file, not a mount. Stock first-stage mounts its own tmpfs over /dev. */
     (void)mknod("/dev/kmsg", S_IFCHR | 0600, makedev(1, 11));
     g_kmsg_fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
-    kmsg("<6>oss-init: OSS-Phone init is the real PID 1 (v6, private-rootfs containment)\n");
+    kmsg("<6>oss-init: OSS-Phone init is the real PID 1 (v7, private-rootfs containment)\n");
 
     int fd_stock = open(STOCK_INIT, O_RDONLY | O_CLOEXEC);
     if (clear_err) {
@@ -379,18 +535,6 @@ int main(int argc, char **argv) {
     }
     kmsg("<6>oss-init: PMU reboot state set to NORMAL (oss-rebootmode-clear loaded)\n");
 
-    /* BOOT-promotion safety: after too many consecutive failed boots, fall back
-     * to the proven stock boot instead of attempting containment again. A no-op
-     * in the recovery slot (the module is absent there). */
-    int bc = bootcount_bump();
-    if (bc >= 0) {
-        char line[96];
-        kmsg(errno_line(line, sizeof(line), "<6>oss-init: consecutive boot attempt count=", bc));
-        if (bc >= BOOTCOUNT_MAX && fd_stock >= 0) {
-            kmsg("<4>oss-init: too many consecutive failed boots; skipping containment, exec stock init\n");
-            exec_stock_init(fd_stock, argv, 1);
-        }
-    }
     struct watch w = {.fd = open(KMSG_READ, O_RDONLY | O_NONBLOCK | O_CLOEXEC)};
 
     if (fd_stock < 0) {
@@ -403,10 +547,41 @@ int main(int argc, char **argv) {
     if (pid == 0) container_main(argv);          /* never returns */
     if (pid < 0) fall_back("clone failed", &w, fd_stock, argv);
 
+    /* Boot-attempt counter: helper waits for misc, freezes the container, bumps. */
+    int pfd = (int)syscall(SYS_pidfd_open, pid, 0);
+    int bc_pipe[2] = {-1, -1}, bc_have = 0;
+    struct bc_result bres = {0};
+    if (pipe2(bc_pipe, O_CLOEXEC | O_NONBLOCK) == 0) {
+        pid_t h = fork();
+        if (h == 0) { (void)close(bc_pipe[0]); bc_helper_main((pid_t)pid, pfd, bc_pipe[1]); }
+        if (h > 0) g_bc_helper = h;
+        (void)close(bc_pipe[1]);
+        if (h < 0) { (void)close(bc_pipe[0]); bc_pipe[0] = -1; }
+    }
+    if (g_bc_helper <= 0) {
+        bres.done = 1; bres.status = BC_IO; bres.found = -1;
+        bc_decide(&bres, (pid_t)pid, pfd, fd_stock, argv, 0);   /* no helper: promoted escalates */
+        bc_have = 1;
+    }
+
     long deadline = now_ms() + LIVENESS_DEADLINE_MS;
     for (;;) {
         int status = 0;
+        if (!bc_have && bc_pipe[0] >= 0 && read(bc_pipe[0], &bres, sizeof bres) == (ssize_t)sizeof bres) {
+            bc_have = 1;
+            watch_kmsg(&w);
+            bc_decide(&bres, (pid_t)pid, pfd, fd_stock, argv, w.live);
+        }
         pid_t r = waitpid(-1, &status, WNOHANG);
+        if (r > 0 && r == g_bc_helper) {
+            g_bc_helper = -1;
+            if (!bc_have && read(bc_pipe[0], &bres, sizeof bres) != (ssize_t)sizeof bres) {
+                /* The helper died without a report; it may have frozen the container. */
+                bres = (struct bc_result){.done = 1, .status = BC_IO, .found = -1, .stopped = 1};
+            }
+            if (!bc_have) { bc_have = 1; watch_kmsg(&w); bc_decide(&bres, (pid_t)pid, pfd, fd_stock, argv, w.live); }
+            continue;
+        }
         if (r == (pid_t)pid || (r < 0 && errno == ECHILD)) {
 #ifdef TEST_STDERR
             dprintf(2, "[oss-init test] container wait status 0x%x\n", status);

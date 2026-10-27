@@ -36,7 +36,7 @@
 static int load_rebootmode_clear_params(const char *params, int eexist_ok) {
 #ifdef TEST_FAKE_CLEAR
     /* Test bench only: a user namespace can never load a module. */
-    (void)params;
+    (void)params; (void)eexist_ok;
     return TEST_FAKE_CLEAR;
 #else
     int fd = open(CLEAR_KO, O_RDONLY | O_CLOEXEC);

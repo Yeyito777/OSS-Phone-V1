@@ -1,35 +1,33 @@
 #!/system/bin/sh
-# Clear the oss-init boot-attempt counter once the session is confirmed healthy.
+# Clear oss-init's boot-attempt counter once a CONTAINED session is healthy.
 #
-# Part of the BOOT-promotion safety net (notes/stage2/PROMOTION-PLAN.md). On a
-# promoted BOOT image oss-init increments a persistent counter very early and
-# skips containment after N consecutive failures. THIS script is what makes a
-# boot "count as success": Moon's boot supervisor runs it only after the
-# session is up and has stayed up for a soak window, so a boot that panics or
-# wedges before this point leaves the counter standing and escalates.
+# Part of the BOOT-promotion safety net (notes/stage2/PROMOTION-PLAN.md §2).
+# oss-init bumps a counter in the misc partition on every boot it supervises
+# and skips containment after 3 consecutive bumps without a clear. This script
+# is what makes a boot count as a success. moon-post-ready.sh starts it only
+# when /debug_ramdisk/oss-contained exists, a marker oss-init puts into the
+# container's ramdisk copy. A boot where oss-init skipped containment (or any
+# ordinary boot) has no marker, so its count is left alone: a skipped boot
+# stays skipped until someone clears the count on purpose.
 #
-# The counter lives in the oss-bootcount kernel module (see PROMOTION-PLAN.md
-# "Counter store"). Clearing it is a privileged write to its sysfs parameter;
-# if that is unavailable, reload the module with clear=1. Idempotent.
-#
-# Invoked by moon-boot (post-ready hook) as root, e.g.:
-#   (sleep "$OSS_BOOTOK_SOAK"; [ still-healthy ] && /data/adb/moon/moon-boot-confirm.sh) &
+# The single writer of the record is oss-init itself
+# (`oss-init --bootcount show|clear|init|bump`, format
+# docs/bootcount-misc-record.md); this script never touches misc directly.
 set -u
-SOAK="${OSS_BOOTOK_SOAK:-45}"           # seconds the session must stay up first
-SYSFS=/sys/module/oss_bootcount/parameters/count
-KO=/data/adb/moon/oss-bootcount.ko
-log() { echo "moon-boot-confirm: $*"; echo "moon-boot-confirm: $*" >/dev/kmsg 2>/dev/null || true; }
+PERSIST=/data/adb/moon
+OSS_INIT="$PERSIST/oss-init"
+SOAK="${OSS_BOOTOK_SOAK:-60}"    # seconds Moon must stay up before the boot counts as healthy
+MARK=/debug_ramdisk/oss-contained
 
-# Re-check health right before clearing: Moon ready and the display session up.
-[ "$(getprop moon.session.ready)" = 1 ] || { log "moon not ready; not clearing the boot counter"; exit 1; }
+log() { echo "moon-boot-confirm: $* [$(date --iso-8601=seconds 2>/dev/null || date) up=$(cut -d' ' -f1 /proc/uptime)]"; }
 
-if [ -w "$SYSFS" ]; then
-  echo 0 > "$SYSFS" && log "boot counter cleared via sysfs (healthy after ${SOAK}s)" && exit 0
-  log "sysfs write failed; trying module reload"
+[ -e "$MARK" ] || { log "not a contained boot (no $MARK); boot count left alone"; exit 0; }
+[ -x "$OSS_INIT" ] || { log "no $OSS_INIT; cannot clear the boot count"; exit 1; }
+sleep "$SOAK"
+if [ "$(getprop moon.session.ready)" != 1 ] || [ -z "$(pidof Xorg 2>/dev/null || true)" ]; then
+    log "session not healthy after ${SOAK}s; boot count stays"
+    exit 1
 fi
-if [ -f "$KO" ]; then
-  insmod "$KO" clear=1 2>/dev/null || rmmod oss_bootcount 2>/dev/null
-  log "boot counter cleared via module reload" && exit 0
-fi
-log "oss-bootcount not present (recovery-slot or pre-promotion image); nothing to clear"
-exit 0
+out="$("$OSS_INIT" --bootcount clear 2>&1)"; rc=$?
+log "$out (exit $rc)"
+exit $rc

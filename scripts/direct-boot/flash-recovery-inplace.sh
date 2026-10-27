@@ -36,9 +36,11 @@ declare -A KNOWN=(
   # below (Mali PID-namespace fix + oss-init SELinux fixes) and withdrawn.
   # Stage-2 v5 (4c0ea361) is superseded by v6 (reboot/power-off/failure
   # classification + boot-attempt-counter consumer) and withdrawn.
+  # Stage-2 v6 (f61349b3) is superseded by v7 (boot-attempt counter in the misc
+  # partition, docs/bootcount-misc-record.md) and withdrawn.
   [71d68ced3dccbb7d6eabfa695ef9792c856418267d4563a474db3a4f8f54edfc]='panic canary v3 (clear with require_mode=1; else stock recovery, no panic)'
   [cc406f02c52968354da0a67ace51a28b7ae138051dcf9cc75ac2af3c8a30b86e]='recovery-slot plain boot (oss-pid1 clear -> magiskinit -> Moon)'
-  [f61349b312a35672b36998e3a21895c70234f304101c85c07e192d23efdd4c4c]='recovery-slot stage-2 v6 (patched Mali; reboot/power-off/failure classification; boot-count consumer, no-op in slot)'
+  [0381b5ab28705edddadec8f741189a3f0cf6c8f09f1a603813197568acab06ab]='recovery-slot stage-2 v7 (v6 + boot-attempt counter in misc 0x40000/0x41000; skip -> magiskinit at 3)'
 )
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -42,6 +42,11 @@ moon_owns_phone() {
 
 boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
 log "start boot_id=$boot_id direct=$DIRECT"
+# Stage-2 boot-attempt counter (notes/stage2/PROMOTION-PLAN.md §2): only a boot
+# that oss-init contained carries the marker, so every other boot skips this.
+if [ -e /debug_ramdisk/oss-contained ] && [ -x "$PERSIST/moon-boot-confirm.sh" ]; then
+    "$PERSIST/moon-boot-confirm.sh" >>"$PERSIST/boot-confirm.log" 2>&1 &
+fi
 # The supervisor starts this with setsid; the restore path ends the group.
 echo $$ >"$RUNTIME/post-ready.pid"
 
