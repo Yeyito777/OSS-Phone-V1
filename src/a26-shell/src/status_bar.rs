@@ -15,6 +15,14 @@ use crate::ui::{self, BLACK, StatusInfo};
 /// Physical top inset reserved for the A26 camera cutout and Moon status UI.
 pub const HEIGHT: u16 = 124;
 
+/// The camera cutout's bounding box (pixels, top centre): Samsung's
+/// `config_mainBuiltInDisplayCutout` for the A26
+/// (`M 0,0 H -24.18 V 34.13 H 24.18 V 0 H 0 Z @dp` in
+/// product/overlay/framework-res__a26xsub__auto_generated_rro_product.apk) at
+/// 450 dpi (2.8125 px/dp): x 472..608, y 0..96. Banners and other floating
+/// content keep below it.
+pub const CUTOUT_BOTTOM: f32 = 96.0;
+
 /// The status strip shown above apps. It is black so the camera notch
 /// disappears into it; on the lock and home screens Moon draws the same
 /// status content directly over the wallpaper instead.

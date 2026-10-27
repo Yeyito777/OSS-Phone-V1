@@ -36,8 +36,9 @@ const BODY_SIZE: f32 = 42.0;
 const LINE: f32 = 54.0;
 const CARD_GAP: f32 = 18.0;
 
-// Banners drop in from above the screen to just below its top edge.
-pub const BANNER_TOP: f32 = 36.0;
+/// Just below the camera cutout, over the lower part of the status bar (as
+/// iPhone banners sit just below the Dynamic Island).
+pub const BANNER_TOP: f32 = crate::status_bar::CUTOUT_BOTTOM + 10.0;
 /// The banner layer: the tallest card plus room for its shadow.
 pub const BANNER_LAYER_H: f32 = 300.0;
 const BANNER_HIDDEN: f32 = -(BANNER_TOP + BANNER_LAYER_H);

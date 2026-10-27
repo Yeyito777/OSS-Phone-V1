@@ -1505,11 +1505,12 @@ impl Renderer {
         }
         // The centre or the ringing screen over an app: the app's snapshot
         // lies beneath them.
+        // (Also on the frame where an overlay over the app has just closed:
+        // frames are sampled ahead, at `t`, so the overlay may already be
+        // gone there while the app is not back on screen yet. The home
+        // screen must never flash in between.)
         let app_beneath = AppId::from_view(state.view).filter(|_| {
-            state.alerts_cover_app(t)
-                && state.launch().is_none()
-                && state.gesture.is_none()
-                && state.returning.is_none()
+            state.launch().is_none() && state.gesture.is_none() && state.returning.is_none()
         });
         let base = match (app_beneath, state.view) {
             (Some(app), _) => Some(self.snapshots[app.index()].unwrap_or(self.wall)),
