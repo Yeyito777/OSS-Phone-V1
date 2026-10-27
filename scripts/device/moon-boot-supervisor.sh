@@ -401,10 +401,17 @@ start_moon() {
     [ "$(config_uint WAYLAND_APPS 0)" != 1 ] || wayland_env=MOON_WAYLAND_DIR=/run/moon-wayland
     # Under Xwayland, Moon's Wayland server is always on (Xwayland is its
     # client) and Moon reads the touchscreen itself.
+    # XWAYLAND_BIN (an absolute path in the chroot) only exists to test the
+    # fallback to Xorg with a binary that cannot serve X.
     xwayland_env=''
     if xwayland_session; then
         wayland_env=MOON_WAYLAND_DIR=/run/moon-wayland
-        xwayland_env='MOON_XWAYLAND=/usr/bin/Xwayland MOON_XWAYLAND_DISPLAY=:0'
+        xwayland_bin="$(sed -n 's/^XWAYLAND_BIN=//p' "$CONFIG" 2>/dev/null | tail -1)"
+        case "$xwayland_bin" in
+            /*) case "$xwayland_bin" in *[!A-Za-z0-9/._-]*) xwayland_bin=/usr/bin/Xwayland ;; esac ;;
+            *) xwayland_bin=/usr/bin/Xwayland ;;
+        esac
+        xwayland_env="MOON_XWAYLAND=$xwayland_bin MOON_XWAYLAND_DISPLAY=:0"
     fi
     "$BB" nohup "$BB" setsid /system/bin/sh "$ROOT/a26-enter-chroot.sh" \
         /usr/bin/env DISPLAY=:0 A26_SHELL_CONFIG=/etc/a26-shell/config.json $gpu_env $wayland_env \

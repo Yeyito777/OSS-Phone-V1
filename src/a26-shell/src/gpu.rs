@@ -1870,11 +1870,19 @@ fn diff_into(
 
 /// Cleans the CPU caches of a dmabuf the CPU wrote, for the GPU and the
 /// display (DMA_BUF_IOCTL_SYNC works on the buffer, whoever wrote it).
+/// MOON_DMABUF_SYNC=write (clean only; READ also invalidates) or none
+/// selects a cheaper variant for measurement (scripts/wayland: heapbench).
 fn flush_for_device(fd: RawFd) {
-    for flags in [
-        DMA_BUF_SYNC_READ | DMA_BUF_SYNC_WRITE,
-        DMA_BUF_SYNC_READ | DMA_BUF_SYNC_WRITE | DMA_BUF_SYNC_END,
-    ] {
+    static ACCESS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let access = *ACCESS.get_or_init(|| match std::env::var("MOON_DMABUF_SYNC").as_deref() {
+        Ok("none") => 0,
+        Ok("write") => DMA_BUF_SYNC_WRITE,
+        _ => DMA_BUF_SYNC_READ | DMA_BUF_SYNC_WRITE,
+    });
+    if access == 0 {
+        return;
+    }
+    for flags in [access, access | DMA_BUF_SYNC_END] {
         // SAFETY: DMA_BUF_IOCTL_SYNC reads one u64 from `flags`.
         unsafe { libc::ioctl(fd, DMA_BUF_IOCTL_SYNC as _, &flags) };
     }

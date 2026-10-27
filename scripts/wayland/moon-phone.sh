@@ -5,7 +5,7 @@
 #   scripts/wayland/moon-phone.sh install       back up the phone's Moon, install this
 #                                               branch's Moon, the demo app and the System
 #                                               app's Wayland build (beside the installed one)
-#   scripts/wayland/moon-phone.sh start [demo|system] [evdev] [debug] [box] [dmabuf]
+#   scripts/wayland/moon-phone.sh start [demo|system] [evdev] [debug] [box] [dmabuf] [sync-write|sync-none]
 #                                               restart Moon with Wayland on (the demo, or
 #                                               the Wayland System build, in the System slot)
 #   scripts/wayland/moon-phone.sh stop          restart Moon with Wayland off
@@ -17,6 +17,9 @@
 #                                               milestone 4: Moon on Xwayland instead of the
 #                                               GPU session's headless Xorg (needs install)
 #   scripts/wayland/moon-phone.sh reboot        the way back from xwayland-start
+#   scripts/wayland/moon-phone.sh heapbench [ROUNDS]
+#                                               dma-heap vs memfd paint, read and cache
+#                                               flush costs (src/moon-wl-demo/src/bin)
 #   scripts/wayland/moon-phone.sh ctl ARGS...   a26-shellctl on the phone
 #   scripts/wayland/moon-phone.sh log [N]       the last N lines of Moon's log
 #
@@ -47,6 +50,7 @@ install)
     target=aarch64-unknown-linux-musl/release
     scp -q "whale:$WHALE_TREE/src/a26-shell/target/$target/a26-shell" "$CACHE/a26-shell"
     scp -q "whale:$WHALE_TREE/src/moon-wl-demo/target/$target/moon-wl-demo" "$CACHE/moon-wl-demo"
+    scp -q "whale:$WHALE_TREE/src/moon-wl-demo/target/$target/heapbench" "$CACHE/heapbench"
     scp -q "whale:$WHALE_SYSTEM/target/$target/a26-system" "$CACHE/a26-system-wayland"
     # One backup: the Moon that was installed before the first install.
     su_sh "[ -e $BIN/a26-shell.before-wayland ] || cp -p $BIN/a26-shell $BIN/a26-shell.before-wayland"
@@ -55,6 +59,7 @@ install)
     push_root "$CACHE/moon-wl-demo" "$ROOT/opt/moon-wl-demo/bin/moon-wl-demo" 0755
     push_root "$CACHE/a26-system-wayland" "$ROOT/opt/a26-system/bin/a26-system-wayland" 0755
     push_root "$HERE/device/moon-wayland-test.sh" "$DEV/moon-wayland-test.sh" 0755
+    push_root "$CACHE/heapbench" "$DEV/heapbench" 0755
     su_sh "sha256sum $BIN/a26-shell $BIN/a26-shell.before-wayland $ROOT/opt/moon-wl-demo/bin/moon-wl-demo"
     echo "installed; the running Moon is unchanged until start/stop or a reboot"
     ;;
@@ -98,7 +103,8 @@ reboot)
     done
     su_sh "echo mode=\$(getprop moon.boot.mode) ready=\$(getprop moon.session.ready) moon=\$(pidof a26-shell) xorg=\$(pidof Xorg) compositor=\$(pidof moon-compositor)"
     ;;
+heapbench) su_sh "$DEV/heapbench ${2:-30}" ;;
 ctl) shift; su_sh "$ROOT/busybox.static chroot $ROOT /opt/a26-shell/bin/a26-shellctl $*" ;;
 log) su_sh "tail -n ${2:-40} $ROOT/root/a26-shell.log" ;;
-*) sed -n '2,23p' "$0"; exit 2 ;;
+*) sed -n '2,26p' "$0"; exit 2 ;;
 esac

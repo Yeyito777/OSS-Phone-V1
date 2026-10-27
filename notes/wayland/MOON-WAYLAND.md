@@ -533,8 +533,43 @@ The display path is no longer the limit. What is left for 120 Hz:
   be bounded to the damage.
 
 Also seen: twice, right after Moon restarted, an animating direct-mode
-client got no frames until a screen off/on cycle. That is unexplained, to
-investigate.
+client got no frames until a screen off/on cycle.
+- **Cause:** Moon woke the touchscreen and backlight at startup, but not
+  the display pipeline (the compositor's CRTC, or Xorg's DPMS) that the
+  Moon before it had turned off. This affects main too: any restart while
+  the screen is asleep.
+- **Status:** fixed in f9c0dce. Reproduced with
+  `mock-compositor.py --powered-off`: 0 frames flipped before the fix, 37
+  after.
+
+**Next device checks** for the remaining paint and flush cost:
+- `moon-phone.sh heapbench` measures memfd, `system` and `system-uncached`:
+  paint, read-back, each `DMA_BUF_IOCTL_SYNC` variant and the paint after
+  it, the mapping's VmFlags, and whether Android's partial sync exists. It
+  needs the phone: whale's heap is root-only and x86 is cache-coherent.
+- `start demo debug dmabuf sync-write` (clean only, no invalidate) and
+  `sync-none` compare Moon's flush variants end to end.
+
+### Merge gate: `scripts/wayland/m4-boot-test.sh` (about 15 minutes)
+
+xwayland-m4 changes boot scripts, so it merges only after three real boots
+through the supervisor:
+1. **Boot A, XWAYLAND=1:** Moon must run on Xwayland, with no Xorg.
+2. **Boot B, broken Xwayland:** `XWAYLAND_BIN=/bin/false`. Moon exits at
+   once, and the supervisor must fall back to headless Xorg in the same
+   boot.
+3. **Boot C, XWAYLAND unset:** the session must be main's.
+
+Around the boots:
+- **Preflight:** the script refuses unless the phone's four boot scripts
+  are main's, by sha256.
+- **Backup:** it backs up the config, those scripts and Moon to the phone
+  and to the host.
+- **Install:** it installs the branch's scripts with `install.sh`'s paths
+  and modes.
+- **Afterwards:** it restores everything (or keeps the scripts with
+  `--keep`), and a last boot must come up in Moon.
+- **On a failed check:** it restores first, then stops.
 
 **M4b (next): rootless Xwayland, Moon as its X window manager.**
 - Each X window (the Browser, and Moon's own windows at first) has its own
