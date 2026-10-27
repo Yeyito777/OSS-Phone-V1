@@ -5,6 +5,14 @@
 //! The level follows only when every reading for 1 s (brighter) or 4 s
 //! (darker) lies outside a ±20 % band around the light it was last set for;
 //! the new level comes from the log-lux average, and is ramped to.
+//!
+//! The sensor sits under the panel, so readings taken while it is lit are
+//! compensated for its light (`compensation.rs`) and followed with an
+//! up-only bias (docs/auto-brightness-compensation.md §5): brighter only
+//! when even the low end of the estimate is (and stays so at the new
+//! level's larger leak), at most once per 10 s; darker only when even the
+//! high end is; not at all in a dark room with a large leak. The reading
+//! taken on each wake while the panel is still dark is trusted as is.
 
 use std::fs;
 use std::io;
@@ -14,9 +22,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::compensation::{Calibration, Estimate, WakeWindow};
 use crate::display::{DisplayRequest, DisplayView};
 use crate::input::Backlight;
-use crate::light::LightSensor;
+use crate::light::{self, LightReading, LightSensor};
 use crate::model::ShellState;
 
 /// (lux, level) anchor points, interpolated in log-lux.
@@ -39,6 +48,20 @@ const SMOOTHING: f32 = 0.4;
 /// Ramp speed in levels per second; a full swing takes ~1.5 s, small ones less.
 const RAMP_LEVELS_PER_S: f32 = 60.0;
 pub const RAMP_STEP: Duration = Duration::from_millis(33);
+/// Lit readings raise the level at most this often (no runaway).
+const LIT_RISE_EVERY: Duration = Duration::from_secs(10);
+/// On a wake with auto on, the backlight stays dark until the first reading
+/// (normally ~0.1 s), at most this long.
+pub const WAKE_HOLD: Duration = Duration::from_millis(300);
+/// At screen-off, how long to wait for the dark-panel reading.
+const CLOSE_WAIT: Duration = Duration::from_millis(500);
+/// The sensor integrates for up to ~0.2 s: a lit reading counts only if the
+/// backlight was steady that long before it.
+const SETTLE_NS: u64 = 300_000_000;
+/// No reading for this long while on: the sensor is reported unavailable.
+const SILENT_LIMIT: Duration = Duration::from_secs(20);
+/// The CSV log of readings rotates past this size.
+const LOG_LIMIT: u64 = 1 << 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -132,6 +155,7 @@ pub struct AutoBrightness {
     target: f32,
     current: f32,
     last_step: Option<Instant>,
+    last_lit_rise: Option<Instant>,
 }
 
 impl AutoBrightness {
@@ -147,6 +171,7 @@ impl AutoBrightness {
             target: level,
             current: level,
             last_step: None,
+            last_lit_rise: None,
         }
     }
 
@@ -177,6 +202,7 @@ impl AutoBrightness {
         self.anchor = None;
         self.outside_since = None;
         self.last_lux = None;
+        self.last_lit_rise = None;
     }
 
     pub fn screen_off(&mut self) {
@@ -229,6 +255,80 @@ impl AutoBrightness {
         self.anchor = Some(smoothed);
         self.outside_since = None;
         self.retarget(self.auto_level(smoothed), now, false)
+    }
+
+    /// A reading taken with the panel lit, compensated for its light.
+    /// `at_level` re-estimates the same reading as if the panel were at a
+    /// given level (for the no-runaway check). Returns true when the target
+    /// level changed.
+    pub fn lit_reading(
+        &mut self,
+        estimate: Estimate,
+        now: Instant,
+        at_level: impl Fn(f32) -> Estimate,
+    ) -> bool {
+        self.last_lux = Some(estimate.ambient.round() as u32);
+        if estimate.untrusted() {
+            self.outside_since = None;
+            return false;
+        }
+        let ambient = (estimate.ambient + 1.0).log10();
+        self.smoothed = Some(match self.smoothed {
+            None => ambient,
+            Some(previous) => previous + SMOOTHING * (ambient - previous),
+        });
+        if !self.settings.auto {
+            return false;
+        }
+        let low = (estimate.low() + 1.0).log10();
+        let high = (estimate.high() + 1.0).log10();
+        let Some(anchor) = self.anchor else {
+            // No dark-panel reading this wake: start from the low end.
+            self.anchor = Some(low);
+            return self.retarget(self.auto_level(low), now, false);
+        };
+        let band = (1.0 + BAND).log10();
+        let brighter = low > anchor + band;
+        let darker = high < anchor - band;
+        if !brighter && !darker {
+            self.outside_since = None;
+            return false;
+        }
+        let since = match self.outside_since {
+            Some((since, direction)) if direction == brighter => since,
+            _ => {
+                self.outside_since = Some((now, brighter));
+                now
+            }
+        };
+        let wait = if brighter {
+            BRIGHTER_AFTER
+        } else {
+            DARKER_AFTER
+        };
+        if now.duration_since(since) < wait {
+            return false;
+        }
+        let new_anchor = if brighter {
+            if self
+                .last_lit_rise
+                .is_some_and(|at| now.duration_since(at) < LIT_RISE_EVERY)
+            {
+                return false;
+            }
+            // The estimate must survive the larger leak the rise would cause.
+            let worst = (at_level(self.auto_level(low)).low() + 1.0).log10();
+            if worst <= anchor + band {
+                return false;
+            }
+            self.last_lit_rise = Some(now);
+            worst.min(low)
+        } else {
+            high
+        };
+        self.anchor = Some(new_anchor);
+        self.outside_since = None;
+        self.retarget(self.auto_level(new_anchor), now, false)
     }
 
     /// The user's brightness (`brightness set N`). With auto on, re-anchors
@@ -330,20 +430,44 @@ pub struct PublicDisplay {
     pub sensor: SensorState,
 }
 
+/// Where the sensor is in its screen-on/off cycle.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Phase {
+    Off,
+    /// Woken with auto on: the backlight stays dark until the first reading.
+    Holding {
+        until: Instant,
+    },
+    On,
+    /// Screen off, panel dark: waiting for the reading that closes the wake.
+    Closing {
+        until: Instant,
+    },
+}
+
 /// Moon's brightness backend: the light sensor while the screen is on, the
 /// automatic level, the backlight and the persisted settings.
 pub struct BrightnessControl {
     pub auto: AutoBrightness,
     sensor: Option<LightSensor>,
+    sensor_ok: bool,
+    phase: Phase,
     awake: bool,
     path: PathBuf,
     persisted: Settings,
     written: Option<u16>,
+    calibration: Calibration,
+    calibration_path: PathBuf,
+    log_path: PathBuf,
+    window: Option<WakeWindow>,
+    last_reading: Option<Instant>,
+    started: Option<Instant>,
 }
 
 impl BrightnessControl {
     /// `current` is the backlight Moon found, adopted as the level when
-    /// there are no saved settings yet.
+    /// there are no saved settings yet. The calibration and the reading log
+    /// live next to `path`.
     pub fn new(path: PathBuf, current: Option<(u16, u16)>) -> Self {
         let settings = Settings::load(&path).unwrap_or_else(|| Settings {
             brightness: current.map_or(40, |(value, max)| level_for(value, max)),
@@ -353,13 +477,23 @@ impl BrightnessControl {
         if sensor.is_none() {
             eprintln!("ambient light sensor not found; automatic brightness unavailable");
         }
+        let calibration_path = path.with_file_name("light-calibration.json");
+        let log_path = path.with_file_name("light-log.csv");
         Self {
             auto: AutoBrightness::new(settings),
             sensor,
+            sensor_ok: true,
+            phase: Phase::Off,
             awake: false,
-            path,
             persisted: settings,
             written: None,
+            calibration: Calibration::load(&calibration_path).unwrap_or_default(),
+            calibration_path,
+            log_path,
+            path,
+            window: None,
+            last_reading: None,
+            started: None,
         }
     }
 
@@ -368,7 +502,21 @@ impl BrightnessControl {
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {
-        self.auto.next_deadline()
+        let phase = match self.phase {
+            Phase::Holding { until } | Phase::Closing { until } => Some(until),
+            _ => None,
+        };
+        let silent = (self.phase == Phase::On && self.sensor_ok)
+            .then(|| {
+                self.last_reading
+                    .or(self.started)
+                    .map(|at| at + SILENT_LIMIT)
+            })
+            .flatten();
+        [self.auto.next_deadline(), phase, silent]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     pub fn public(&self) -> PublicDisplay {
@@ -377,7 +525,7 @@ impl BrightnessControl {
             auto: self.auto.settings.auto,
             auto_offset: self.auto.settings.auto_offset,
             lux: self.auto.lux(),
-            sensor: if self.sensor.is_none() {
+            sensor: if self.sensor.is_none() || !self.sensor_ok {
                 SensorState::Unavailable
             } else {
                 self.auto.sensor
@@ -395,41 +543,41 @@ impl BrightnessControl {
     /// Once per loop: follows the screen state, drains in-shell requests,
     /// reads the sensor, ramps, writes the backlight when Moon may (screen
     /// on, no power fade, no Auto-Lock dim), persists, refreshes the view.
+    /// On a wake with auto on it holds the fade-in dark until the first
+    /// reading (`state.fade` starts later).
     pub fn service(
         &mut self,
         state: &mut ShellState,
-        backlight: Option<&mut Backlight>,
+        mut backlight: Option<&mut Backlight>,
         fading: bool,
         now: Instant,
     ) {
         if state.screen_awake && !self.awake {
-            let started = match self.sensor.as_mut() {
-                Some(sensor) => match sensor.start() {
-                    Ok(()) => true,
-                    Err(error) => {
-                        eprintln!("ambient light sensor start failed: {error}");
-                        false
-                    }
-                },
-                None => false,
-            };
-            self.auto.screen_on(started);
-            self.awake = true;
+            self.wake(state, now);
         } else if !state.screen_awake && self.awake {
-            if let Some(sensor) = self.sensor.as_mut() {
-                sensor.stop();
-            }
-            self.auto.screen_off();
-            self.awake = false;
+            self.sleep(now);
+        }
+        if let Phase::Holding { until } = self.phase {
+            // Idempotent: also covers a fade-in started after the wake.
+            hold_fade(state, until);
         }
         for request in std::mem::take(&mut state.display_requests) {
             self.request(request, now);
         }
-        if let Some(lux) = self.sensor.as_mut().and_then(LightSensor::read) {
-            self.auto.reading(lux, now);
+        let readings = self
+            .sensor
+            .as_mut()
+            .map(LightSensor::read)
+            .unwrap_or_default();
+        let max = backlight.as_deref().map_or(255, Backlight::max);
+        for reading in readings {
+            self.last_reading = Some(now);
+            self.sensor_ok = true;
+            self.handle(reading, backlight.as_deref(), max, state, now);
         }
+        self.timeouts(state, now);
         self.auto.step(now);
-        if let Some(backlight) = backlight {
+        if let Some(backlight) = backlight.as_mut() {
             let value = backlight_for(f32::from(self.auto.level()), backlight.max());
             backlight.set_saved(value);
             if state.screen_awake && !fading && !state.idle_dimmed {
@@ -454,6 +602,193 @@ impl BrightnessControl {
             auto: public.auto,
             sensor_available: public.sensor != SensorState::Unavailable,
         });
+    }
+
+    fn wake(&mut self, state: &mut ShellState, now: Instant) {
+        self.awake = true;
+        self.window = None;
+        let started = match self.sensor.as_mut() {
+            Some(sensor) => match sensor.start() {
+                Ok(()) => true,
+                Err(error) => {
+                    eprintln!("ambient light sensor start failed: {error}");
+                    false
+                }
+            },
+            None => false,
+        };
+        self.auto.screen_on(started);
+        self.started = started.then_some(now);
+        self.last_reading = None;
+        self.phase = if started && self.auto.settings.auto && self.sensor_ok {
+            hold_fade(state, now + WAKE_HOLD);
+            Phase::Holding {
+                until: now + WAKE_HOLD,
+            }
+        } else {
+            Phase::On
+        };
+    }
+
+    fn sleep(&mut self, now: Instant) {
+        self.awake = false;
+        self.auto.screen_off();
+        let closable = self
+            .window
+            .as_ref()
+            .is_some_and(|window| window.closable(light::boottime_ns()));
+        let retriggered = closable
+            && self
+                .sensor
+                .as_mut()
+                .is_some_and(|sensor| sensor.retrigger().is_ok());
+        if retriggered {
+            self.phase = Phase::Closing {
+                until: now + CLOSE_WAIT,
+            };
+        } else {
+            self.stop_sensor();
+        }
+    }
+
+    fn stop_sensor(&mut self) {
+        if let Some(sensor) = self.sensor.as_mut() {
+            sensor.stop();
+        }
+        self.window = None;
+        self.phase = Phase::Off;
+    }
+
+    fn handle(
+        &mut self,
+        reading: LightReading,
+        backlight: Option<&Backlight>,
+        max: u16,
+        state: &mut ShellState,
+        now: Instant,
+    ) {
+        match self.phase {
+            Phase::Off => {}
+            Phase::Closing { .. } => {
+                let dark = backlight
+                    .and_then(|device| device.value_at(reading.at_ns))
+                    .is_none_or(|value| value == 0);
+                if reading.first && dark {
+                    let accepted = self
+                        .window
+                        .take()
+                        .is_some_and(|window| window.close(reading.lux, &mut self.calibration));
+                    self.log("a1", reading, 0, None);
+                    if accepted && let Err(error) = self.calibration.save(&self.calibration_path) {
+                        eprintln!("light calibration not saved: {error}");
+                    }
+                    self.stop_sensor();
+                }
+            }
+            Phase::Holding { .. } | Phase::On => {
+                // The dark-panel reading of this wake: trusted as ambient.
+                let dark = backlight
+                    .and_then(|device| device.value_at(reading.at_ns))
+                    .is_some_and(|value| value <= max / 30);
+                if reading.first && self.window.is_none() && dark {
+                    let bl = backlight
+                        .and_then(|d| d.value_at(reading.at_ns))
+                        .unwrap_or(0);
+                    let ambient = (reading.lux as f32 - self.calibration.leak(bl, max))
+                        .max(0.0)
+                        .round() as u32;
+                    self.window = Some(WakeWindow::new(ambient, reading.at_ns));
+                    self.auto.reading(ambient, now);
+                    self.log("a0", reading, bl, None);
+                    release_fade(state, now);
+                    self.phase = Phase::On;
+                    return;
+                }
+                let Some(bl) =
+                    backlight.and_then(|device| device.steady_at(reading.at_ns, SETTLE_NS))
+                else {
+                    return;
+                };
+                if bl == 0 {
+                    return;
+                }
+                if let Some(window) = self.window.as_mut() {
+                    window.sample(reading.lux, reading.at_ns, bl, max);
+                }
+                let calibration = self.calibration;
+                let estimate = calibration.estimate(reading.lux, bl, max);
+                self.auto.lit_reading(estimate, now, |level| {
+                    calibration.estimate(reading.lux, backlight_for(level, max).max(bl), max)
+                });
+                self.log("lit", reading, bl, Some(estimate));
+            }
+        }
+    }
+
+    fn timeouts(&mut self, state: &mut ShellState, now: Instant) {
+        match self.phase {
+            Phase::Holding { until } if now >= until => {
+                // No reading in time: light up anyway, without calibration.
+                release_fade(state, now);
+                self.phase = Phase::On;
+            }
+            Phase::Closing { until } if now >= until => self.stop_sensor(),
+            Phase::On => {
+                let silent_since = self.last_reading.or(self.started);
+                if self.sensor_ok
+                    && silent_since.is_some_and(|at| now.duration_since(at) >= SILENT_LIMIT)
+                {
+                    eprintln!("ambient light sensor: no reading for 20 s; unavailable");
+                    self.sensor_ok = false;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Appends a reading to the CSV log (for checking the fit offline).
+    fn log(&self, kind: &str, reading: LightReading, bl: u16, estimate: Option<Estimate>) {
+        use std::io::Write;
+        if fs::metadata(&self.log_path).is_ok_and(|meta| meta.len() > LOG_LIMIT) {
+            let _ = fs::rename(&self.log_path, self.log_path.with_extension("csv.1"));
+        }
+        let Ok(mut file) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.log_path)
+        else {
+            return;
+        };
+        let (leak, ambient, margin) = estimate.map_or((0.0, reading.lux as f32, 0.0), |e| {
+            (e.leak, e.ambient, e.margin)
+        });
+        let _ = writeln!(
+            file,
+            "{},{kind},{},{bl},{leak:.1},{ambient:.1},{margin:.1},{},{:.1}",
+            reading.at_ns,
+            reading.lux,
+            self.auto.level(),
+            self.calibration.k
+        );
+    }
+}
+
+/// Keeps a starting fade-in dark until `until`.
+fn hold_fade(state: &mut ShellState, until: Instant) {
+    if let Some(fade) = state.fade.as_mut()
+        && !fade.out
+    {
+        fade.started = fade.started.max(until);
+    }
+}
+
+/// Starts a held fade-in now.
+fn release_fade(state: &mut ShellState, now: Instant) {
+    if let Some(fade) = state.fade.as_mut()
+        && !fade.out
+        && fade.started > now
+    {
+        fade.started = now;
     }
 }
 
@@ -567,6 +902,59 @@ mod tests {
         assert_eq!(a.level(), 100);
         a.set_auto(false, t);
         assert_eq!(a.settings.brightness, 100);
+    }
+
+    /// A lit reading at `bl` under the default calibration (k = 110).
+    fn lit(a: &mut AutoBrightness, lux: u32, bl: u16, now: Instant) -> bool {
+        let c = Calibration::default();
+        a.lit_reading(c.estimate(lux, bl, 665), now, |level| {
+            c.estimate(lux, backlight_for(level, 665).max(bl), 665)
+        })
+    }
+
+    #[test]
+    fn lit_readings_rise_only_beyond_the_leak_and_never_run_away() {
+        let mut a = auto();
+        let t = Instant::now();
+        // Wake in a 50 lx room (dark panel): level 30.
+        a.reading(50, t);
+        assert_eq!(a.level(), 30);
+        // Lit at full backlight: 160 lx measured is ~50 lx ambient + leak.
+        for i in 1..=6 {
+            assert!(!lit(&mut a, 160, 665, t + Duration::from_secs(6 * i)));
+        }
+        // The lights go on: 900 lx measured at backlight 167 (leak ~14).
+        let s = t + Duration::from_secs(60);
+        assert!(!lit(&mut a, 900, 167, s));
+        assert!(lit(&mut a, 900, 167, s + Duration::from_secs(6)));
+        let level = a.target;
+        assert!(level > 55.0, "level {level}");
+        // Another rise within 10 s is refused.
+        a.anchor = Some((300f32).log10());
+        assert!(!lit(&mut a, 5000, 167, s + Duration::from_secs(8)));
+        assert!(!lit(&mut a, 5000, 167, s + Duration::from_secs(12)));
+        assert!(lit(&mut a, 5000, 167, s + Duration::from_secs(18)));
+    }
+
+    #[test]
+    fn dark_rooms_and_uncertain_leaks_hold_the_level() {
+        let mut a = auto();
+        let t = Instant::now();
+        a.reading(5, t);
+        let level = a.level();
+        // A dark room at full backlight: the reading is mostly leak.
+        for i in 1..=6 {
+            assert!(!lit(&mut a, 120, 665, t + Duration::from_secs(6 * i)));
+        }
+        assert_eq!(a.level(), level);
+        // Darker only when even the high end is below the band.
+        let mut a = auto();
+        a.reading(200, t);
+        assert!(!lit(&mut a, 230, 400, t + Duration::from_secs(6)));
+        assert!(!lit(&mut a, 230, 400, t + Duration::from_secs(12)));
+        assert!(!lit(&mut a, 20, 30, t + Duration::from_secs(18)));
+        assert!(lit(&mut a, 20, 30, t + Duration::from_secs(24)));
+        assert!(a.target < 45.0);
     }
 
     #[test]

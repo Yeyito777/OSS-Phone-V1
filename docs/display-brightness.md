@@ -67,24 +67,28 @@ The level maps to the panel backlight on a perceptual (square) curve, from 1
 The sensor backend (Samsung sensor hub, `light_sensor`) is an implementation
 detail of Moon and may change; clients use only the commands and state above.
 
-## Status (2026-10-26): `sensor` is `unavailable` on the phone
+## Status (2026-10-26): compensated readings, v1
 
-Automatic brightness is implemented but has no usable light reading in Moon
-mode yet, so `sensor` reports `unavailable` (auto behaves as manual; the UI
-hides the toggle):
+The light sensor (AMS TCS3701) sits under the panel and measures the
+screen's own light too; Android's sensors HAL holds its IIO device. Moon
+therefore follows docs/auto-brightness-compensation.md (v1):
 
-- Android's sensors HAL (`vendor.sensors-hal-2-0-multihal`) keeps every
-  sensor-hub IIO device open even without clients, and an IIO device opens
-  only once (EBUSY). Stopping the HAL in Moon mode is not done: it has no
-  lazy start, so a handback that skipped the restore script would leave
-  Android's framework waiting for it.
-- The light sensor (AMS TCS3701) sits under the panel. Its raw channels
-  (`/sys/class/sensors/light_sensor/raw_data`) and the hub's own lux follow
-  the backlight (dark room: r = 13 / 392 / 2491 and hub lux 0 / 17 / 58 at
-  levels 0 / 44 / 100), because the hub only compensates when the panel
-  brightness (and screen content) is injected, which only the HAL does.
-  Brightness driven from them is a positive feedback loop.
-
-A working source needs the hub's compensated lux: e.g. Moon injecting the
-panel brightness into the hub and a kernel-side node exposing the last light
-event's `lux`, or a HAL-free IIO device.
+- **Readings:** the hub's lux from the kernel log (`light.rs`): the first
+  three events after each switch-on (~0.1 s) and the hub's periodic line
+  (~6 s). `sensor` is `unavailable` after 20 s without a reading.
+- **Wake:** with auto on, the fade-in waits (≤ 0.3 s) for the first reading,
+  taken with the panel dark: that is the ambient light, applied at once.
+- **While lit:** readings are compensated for the panel's light,
+  `leak = k · (backlight / max)^1.5`, with an uncertainty `0.3 · leak + 5`
+  lx; brighter only on the low end of the estimate (and only if it holds at
+  the brighter level's leak; at most once per 10 s), darker only on the high
+  end, and not at all below 20 lx when the leak is over half the reading.
+  `lux` in the state is the ambient estimate.
+- **Self-calibration:** `k` (seed 110) is learned from wakes whose ambient
+  light was the same at the wake and at the next screen-off (≤ 2 min later;
+  the sensor is re-switched with the panel dark to read it), from readings in
+  the first 30 s. Stored in `/var/lib/a26-shell/light-calibration.json`;
+  every reading is logged to `/var/lib/a26-shell/light-log.csv` (1 MB,
+  rotated).
+- **Not yet:** screen-content terms (`Y_roi`, `Y_screen`), the dark spot
+  over the sensor, and the faster `raw_data` path (spec §4, §6).

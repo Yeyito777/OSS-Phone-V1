@@ -6,6 +6,7 @@ mod banner;
 mod brightness;
 mod calls;
 mod clock;
+mod compensation;
 mod compositor;
 mod config;
 mod control_centre;

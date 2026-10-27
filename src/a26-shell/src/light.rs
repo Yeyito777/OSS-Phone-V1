@@ -1,131 +1,135 @@
-//! The ambient light sensor through Samsung's sensor hub (`shub`).
+//! The ambient light sensor through Samsung's sensor hub (`shub`), without
+//! IIO (docs/auto-brightness-compensation.md §1).
 //!
-//! The hub exposes each sensor as an IIO device (`light_sensor`); a sensor is
-//! switched on and off by writing `type * 10 + enable` to
-//! /sys/class/sensors/ssp_sensor/enable (light is type 5) and its rate is set
-//! with the hub's batch ioctl on /dev/batch_io. Every IIO record starts with
-//! the calibrated lux (u32, little endian); the driver packs the record and
-//! its 64-bit timestamp into one scan element. The sensor runs only while the
-//! screen is on.
+//! Android's sensors HAL keeps every hub IIO device open even in Moon mode,
+//! and an IIO device opens only once, so Moon reads the hub's lux from the
+//! kernel log instead:
 //!
-//! An IIO device opens only once, and Android's sensors HAL keeps them all
-//! open even with no clients (it does in Moon mode): then `start` fails with
-//! EBUSY and automatic brightness is unavailable. There is no fallback: the
-//! sensor (TCS3701) sits under the panel, and both the factory `raw_data`
-//! channels and the hub's lux follow the backlight (measured: r = 13 / 392 /
-//! 2491 at levels 0 / 44 / 100 in a dark room) unless the panel brightness
-//! is injected into the hub, which only the HAL does. Driving a level from
-//! them is a positive feedback loop.
+//! - the driver logs the first three light events after the sensor is
+//!   switched on (`[SHUB] Light Sensor : lux=N …`), within ~0.1 s: the wake
+//!   reading;
+//! - while any hub sensor runs, the hub's debug work logs the last light
+//!   event about every 6 s (`[SHUB] light_sensor(5) : N(TIMESTAMP_NS) …`).
+//!
+//! The sensor is switched with /sys/class/sensors/ssp_sensor/enable
+//! (`type * 10 + on`, light is type 5; the hub counts references, so this
+//! coexists with the HAL) and runs only while the screen is on. The lux is
+//! the hub's own, which includes the panel's light over the sensor; the
+//! brightness backend compensates for it (`compensation.rs`).
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::PathBuf;
+use std::path::Path;
 
 const LIGHT_TYPE: u32 = 5;
 const ENABLE: &str = "/sys/class/sensors/ssp_sensor/enable";
+const KMSG: &str = "/dev/kmsg";
 const BATCH: &str = "/dev/batch_io";
-const IIO_SYSFS: &str = "/sys/bus/iio/devices";
-const IIO_NAME: &str = "light_sensor";
-/// 200 ms between readings: responsive, and ~5 wakeups/s only while the
-/// screen is on.
+/// The hub's sampling period while on (it reports on change).
 const PERIOD_NS: i64 = 200_000_000;
+
+/// One lux value from the hub.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LightReading {
+    pub lux: u32,
+    /// When the hub measured it (CLOCK_BOOTTIME ns): the event's timestamp
+    /// for the periodic line, the log record's time for the first events.
+    pub at_ns: u64,
+    /// One of the events logged right after the sensor was switched on.
+    pub first: bool,
+}
+
 pub struct LightSensor {
-    device: PathBuf,
-    sysfs: PathBuf,
-    record: usize,
-    file: Option<File>,
-    pending: Vec<u8>,
+    kmsg: Option<File>,
+    normalized: bool,
 }
 
 impl LightSensor {
-    /// Finds the hub's light sensor; None when this kernel has none.
+    /// The hub's light sensor; None when this kernel has none.
     pub fn find() -> Option<Self> {
-        let entries = fs::read_dir(IIO_SYSFS).ok()?;
-        for entry in entries.flatten() {
-            let sysfs = entry.path();
-            let name = fs::read_to_string(sysfs.join("name")).unwrap_or_default();
-            if name.trim() != IIO_NAME {
-                continue;
-            }
-            let node = entry.file_name();
-            let record = record_size(&sysfs).unwrap_or(12);
-            return Some(Self {
-                device: PathBuf::from("/dev").join(node),
-                sysfs,
-                record,
-                file: None,
-                pending: Vec::new(),
-            });
-        }
-        None
+        (Path::new(ENABLE).exists() && Path::new("/sys/class/sensors/light_sensor").exists())
+            .then_some(Self {
+                kmsg: None,
+                normalized: false,
+            })
     }
 
     pub fn raw_fd(&self) -> Option<RawFd> {
-        self.file.as_ref().map(AsRawFd::as_raw_fd)
+        self.kmsg.as_ref().map(AsRawFd::as_raw_fd)
     }
 
-    /// Starts the sensor and opens its data. Errors (EBUSY: the HAL holds
-    /// it) leave it stopped.
+    /// Switches the sensor on and follows the kernel log from now.
     pub fn start(&mut self) -> io::Result<()> {
-        if self.file.is_some() {
+        if self.kmsg.is_some() {
             return Ok(());
         }
-        let buffer = self.sysfs.join("buffer/enable");
-        if fs::read_to_string(&buffer).is_ok_and(|v| v.trim() == "0") {
-            // Enable every scan element, then the buffer (the hub driver
-            // normally leaves it enabled).
-            if let Ok(elements) = fs::read_dir(self.sysfs.join("scan_elements")) {
-                for element in elements.flatten() {
-                    let path = element.path();
-                    if path.to_string_lossy().ends_with("_en") {
-                        let _ = fs::write(&path, "1");
-                    }
+        if !self.normalized {
+            // A Moon that died with the sensor on left a reference behind:
+            // without dropping it, switching on would not be the first
+            // reference and the hub would not log the first events.
+            for _ in 0..4 {
+                if !light_enabled() {
+                    break;
                 }
+                let _ = write_enable(false);
             }
-            let _ = fs::write(&buffer, "1");
+            self.normalized = true;
         }
-        let file = OpenOptions::new()
+        let mut kmsg = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
-            .open(&self.device)?;
+            .open(KMSG)?;
+        kmsg.seek(SeekFrom::End(0))?;
         set_period(PERIOD_NS);
         write_enable(true)?;
-        self.pending.clear();
-        self.file = Some(file);
+        self.kmsg = Some(kmsg);
         Ok(())
     }
 
-    pub fn stop(&mut self) {
-        if self.file.take().is_some() {
-            let _ = write_enable(false);
+    /// Switches the sensor off and on again, so the hub logs fresh first
+    /// events (about 0.1 s later): a reading on demand.
+    pub fn retrigger(&mut self) -> io::Result<()> {
+        if self.kmsg.is_none() {
+            return Err(io::Error::from(io::ErrorKind::NotConnected));
         }
-        self.pending.clear();
+        write_enable(false)?;
+        write_enable(true)
     }
 
-    /// Drains queued records; the newest lux, if any arrived.
-    pub fn read(&mut self) -> Option<u32> {
-        let file = self.file.as_mut()?;
-        let mut buffer = [0u8; 1024];
-        let mut newest = None;
-        loop {
-            match file.read(&mut buffer) {
+    pub fn stop(&mut self) {
+        if self.kmsg.take().is_some() {
+            let _ = write_enable(false);
+        }
+    }
+
+    /// The readings logged since the last call.
+    pub fn read(&mut self) -> Vec<LightReading> {
+        let mut readings = Vec::new();
+        let Some(kmsg) = self.kmsg.as_mut() else {
+            return readings;
+        };
+        // One record per read(2); EAGAIN when drained, EPIPE when records
+        // were overwritten before we read them (then the next one follows).
+        let mut buffer = [0u8; 2048];
+        for _ in 0..512 {
+            match kmsg.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(count) => {
-                    self.pending.extend_from_slice(&buffer[..count]);
-                    while self.pending.len() >= self.record {
-                        let record: Vec<u8> = self.pending.drain(..self.record).collect();
-                        newest = Some(u32::from_le_bytes([
-                            record[0], record[1], record[2], record[3],
-                        ]));
+                    if let Some(reading) = std::str::from_utf8(&buffer[..count])
+                        .ok()
+                        .and_then(parse_record)
+                    {
+                        readings.push(reading);
                     }
                 }
+                Err(error) if error.raw_os_error() == Some(libc::EPIPE) => continue,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
             }
         }
-        newest
+        readings
     }
 }
 
@@ -135,9 +139,17 @@ impl Drop for LightSensor {
     }
 }
 
-/// Switches the light sensor on or off (reference-counted by the hub). One
-/// write(2): the node returns more than was written (64 for "51\n"), which
-/// `write_all` (`fs::write`) would treat as a slice overrun and panic on.
+/// Is the light sensor on (bit 5 of the hub's enabled-sensor mask)?
+fn light_enabled() -> bool {
+    fs::read_to_string(ENABLE)
+        .ok()
+        .and_then(|text| text.trim().parse::<u64>().ok())
+        .is_some_and(|mask| mask & (1 << LIGHT_TYPE) != 0)
+}
+
+/// Switches the light sensor on or off. One write(2): the node returns more
+/// than was written (64 for "51\n"), which `write_all` (`fs::write`) would
+/// treat as a slice overrun and panic on.
 fn write_enable(on: bool) -> io::Result<()> {
     let command = format!("{}\n", LIGHT_TYPE * 10 + u32::from(on));
     OpenOptions::new()
@@ -147,44 +159,27 @@ fn write_enable(on: bool) -> io::Result<()> {
         .map(drop)
 }
 
-/// Bytes per IIO record. Samsung's hub packs the whole record (event plus
-/// timestamp) into one element named `timestamp`; otherwise the data
-/// channels, aligned to 8, plus the 8-byte timestamp.
-fn record_size(sysfs: &std::path::Path) -> Option<usize> {
-    let elements = fs::read_dir(sysfs.join("scan_elements")).ok()?;
-    let mut data = 0;
-    let mut timestamp = 0;
-    for element in elements.flatten() {
-        let name = element.file_name().to_string_lossy().into_owned();
-        if !name.ends_with("_type") {
-            continue;
-        }
-        let bytes = parse_type_bytes(&fs::read_to_string(element.path()).ok()?)?;
-        if name.contains("timestamp") {
-            timestamp = bytes;
-        } else {
-            data += bytes;
-        }
+/// A /dev/kmsg record (`PRI,SEQ,TS_US,FLAGS;MESSAGE\n…`) -> a light reading.
+fn parse_record(record: &str) -> Option<LightReading> {
+    let (header, message) = record.split_once(';')?;
+    let message = message.lines().next()?;
+    let record_us: u64 = header.split(',').nth(2)?.parse().ok()?;
+    if let Some(rest) = message.split("[SHUB] Light Sensor : lux=").nth(1) {
+        let lux = rest.split_whitespace().next()?.parse().ok()?;
+        return Some(LightReading {
+            lux,
+            at_ns: record_us * 1000,
+            first: true,
+        });
     }
-    match (data, timestamp) {
-        (0, 0) => None,
-        (0, packed) => Some(packed),
-        (data, 0) => Some(data),
-        (data, timestamp) => Some(data.div_ceil(8) * 8 + timestamp),
-    }
-}
-
-/// `le:s<real>/<storage>[X<repeat>]>><shift>` -> storage/8 * repeat bytes.
-fn parse_type_bytes(text: &str) -> Option<usize> {
-    let text = text.trim();
-    let after_slash = text.split_once('/')?.1;
-    let (storage, rest) = match after_slash.split_once('X') {
-        Some((storage, rest)) => (storage, rest.split(">>").next()?),
-        None => (after_slash.split(">>").next()?, "1"),
-    };
-    let storage: usize = storage.parse().ok()?;
-    let repeat: usize = rest.parse().ok()?;
-    Some(storage / 8 * repeat)
+    let rest = message.split("[SHUB] light_sensor(5) : ").nth(1)?;
+    let (lux, rest) = rest.split_once('(')?;
+    let at_ns = rest.split(')').next()?.trim().parse().ok()?;
+    Some(LightReading {
+        lux: lux.trim().parse().ok()?,
+        at_ns,
+        first: false,
+    })
 }
 
 /// The hub's batch ioctl: (0xFC << 8) | sensor type, with
@@ -216,17 +211,49 @@ fn set_period(period_ns: i64) {
     }
 }
 
+/// CLOCK_BOOTTIME in ns: hub event timestamps, and kernel log record times
+/// while the phone has not suspended (Moon mode does not, short of the
+/// opt-in deep suspend, which ends in a reboot).
+pub fn boottime_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime writes one timespec into a valid pointer.
+    unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) };
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn iio_type_strings() {
-        assert_eq!(parse_type_bytes("le:s8/8X44>>0\n"), Some(44));
-        assert_eq!(parse_type_bytes("le:s32/32>>0"), Some(4));
-        assert_eq!(parse_type_bytes("be:u16/16X3>>0"), Some(6));
-        assert_eq!(parse_type_bytes("garbage"), None);
-        // The hub's packed light record: u32 lux + s64 timestamp.
-        assert_eq!(parse_type_bytes("le:s96/96>>0\n"), Some(12));
+    fn kernel_log_light_lines() {
+        assert_eq!(
+            parse_record(
+                "6,4012,198930292,-;[SHUB] Light Sensor : lux=28 brightness=0 r=563 g=116 b=0 c=0 atime=0 again=0\n"
+            ),
+            Some(LightReading {
+                lux: 28,
+                at_ns: 198_930_292_000,
+                first: true
+            })
+        );
+        assert_eq!(
+            parse_record(
+                "6,5000,1132009327,-;[SHUB] light_sensor(5) : 19(1121814710029) (0ms, 0ms)\n SUBSYSTEM=x\n"
+            ),
+            Some(LightReading {
+                lux: 19,
+                at_ns: 1_121_814_710_029,
+                first: false
+            })
+        );
+        assert_eq!(
+            parse_record("6,1,2,-;[SHUB] accelerometer_sensor(1) : 3(4) (0ms, 0ms)\n"),
+            None
+        );
+        assert_eq!(parse_record("garbage"), None);
     }
 }
