@@ -1091,7 +1091,7 @@ impl Renderer {
         };
         if let Some(key) = takeover {
             self.power
-                .update(conn, compositor, key_of(&key), |canvas| {
+                .update(conn, compositor, key_of(&("takeover", &key)), |canvas| {
                     power::draw_takeover(canvas, &key);
                 })?;
         } else if let Some(menu) = &state.power.menu {
@@ -1101,7 +1101,7 @@ impl Renderer {
             };
             let drawn = key.clone();
             self.power
-                .update(conn, compositor, key_of(&key), |canvas| {
+                .update(conn, compositor, key_of(&("menu", &key)), |canvas| {
                     power::draw_menu(canvas, &drawn);
                 })?;
             let action = menu.action;
