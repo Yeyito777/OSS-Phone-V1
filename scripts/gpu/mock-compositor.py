@@ -80,7 +80,8 @@ class Mock:
         self.paths = {}
         self.log = open(args.log, "a") if args.log else sys.stderr
         self.client = None
-        self.powered = True
+        # --powered-off: as a previous client left it (the screen off).
+        self.powered = not args.powered_off
         self.shot_requested = False
         self.version = 2
         self.report_idle = set()  # v4: surfaces that asked for MG_SURFACE_IDLE
@@ -373,6 +374,8 @@ if __name__ == "__main__":
     parser.add_argument("--log")
     parser.add_argument("--max-version", type=int, default=4,
                         help="drop clients that say hello with a newer version (2: an old compositor)")
+    parser.add_argument("--powered-off", action="store_true",
+                        help="start with the display off, as a client that turned the screen off left it")
     parser.add_argument("--textures", action="store_true",
                         help="show client surfaces from copies updated only by their damage, "
                              "as moon-compositor's textures are")

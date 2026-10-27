@@ -4,6 +4,7 @@
 #
 #   scripts/gpu/mock-run.sh start    # build Moon, start Xvfb :93, mock, Moon
 #   scripts/gpu/mock-run.sh ctl ...  # a26-shellctl against this Moon
+#   scripts/gpu/mock-run.sh restart-moon  # only Moon again (mock and Xvfb kept)
 #   scripts/gpu/mock-run.sh shot OUT # the mock's current frame as PNG/PPM
 #   scripts/gpu/mock-run.sh stop
 #
@@ -66,8 +67,25 @@ PY
     tail -n 5 "$DIR/moon.log"
 }
 
+# Only Moon again, the rest (mock, Xvfb) kept, as the supervisor restarts
+# it: whatever the Moon before left (the screen off) stays.
+restart_moon() {
+    if [[ -f "$DIR/moon.pid" ]]; then
+        kill "$(cat "$DIR/moon.pid")" 2>/dev/null || true
+        sleep 0.5
+    fi
+    MOON_GPU_SOCKET="$DIR/compositor.sock" MOON_STATUS_ROOT="$DIR/sys" \
+        DISPLAY="$DISPLAY_NUMBER" A26_SYSTEM_APP="${A26_SYSTEM_APP:-$(command -v xev)}" \
+        setsid "$BIN/a26-shell" --config "$DIR/config.json" \
+        >"$DIR/moon.log" 2>&1 </dev/null &
+    echo $! >"$DIR/moon.pid"
+    sleep 1
+    tail -n 5 "$DIR/moon.log"
+}
+
 case "${1:-}" in
     start) start ;;
+    restart-moon) restart_moon ;;
     stop) stop ;;
     ctl)
         shift
@@ -89,7 +107,7 @@ Image.open(sys.argv[1]).save(sys.argv[2])' "$DIR/frame.ppm" "$output" 2>/dev/nul
         tail -n 1 "$DIR/mock.log"
         ;;
     *)
-        echo "usage: $0 start|ctl ...|shot OUTPUT|stop" >&2
+        echo "usage: $0 start|restart-moon|ctl ...|shot OUTPUT|stop" >&2
         exit 2
         ;;
 esac
