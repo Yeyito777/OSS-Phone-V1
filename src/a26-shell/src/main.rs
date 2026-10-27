@@ -39,6 +39,7 @@ mod volume;
 mod wallpaper;
 mod wayland;
 mod wl_apps;
+mod xwayland;
 
 use std::env;
 use std::error::Error;
@@ -197,6 +198,25 @@ fn main() -> Result<(), Box<dyn Error>> {
         // SAFETY: Moon is still single-threaded here; nothing reads the
         // environment concurrently. Apps inherit the same local time.
         unsafe { env::set_var("TZ", zone) };
+    }
+    // MOON_XWAYLAND (milestone 4): no Xorg. Moon's Wayland server binds
+    // first and Moon starts Xwayland (this binary, or a wrapper taking its
+    // arguments) rootful at MOON_XWAYLAND_GEOMETRY, the panel's size, then
+    // connects to it like to Xorg. Any failure here ends Moon, and the
+    // supervisor falls back to the Xorg session.
+    let mut early_wayland = None;
+    let mut xwayland_server = None;
+    if let (Ok(command), Some(dir)) = (env::var("MOON_XWAYLAND"), env::var_os("MOON_WAYLAND_DIR")) {
+        let geometry = env::var("MOON_XWAYLAND_GEOMETRY").unwrap_or_else(|_| "1080x2340".into());
+        let size = geometry
+            .split_once('x')
+            .and_then(|(w, h)| Some((w.parse::<u16>().ok()?, h.parse::<u16>().ok()?)))
+            .ok_or("MOON_XWAYLAND_GEOMETRY must be WIDTHxHEIGHT")?;
+        let dir = PathBuf::from(dir);
+        std::fs::create_dir_all(&dir)?;
+        let mut server = wl_apps::bind_server(&dir, size.0, size.1)?;
+        xwayland_server = Some(xwayland::Xwayland::start(&mut server, &command, size)?);
+        early_wayland = Some(server);
     }
     let (conn, screen_number) = RustConnection::connect(None)?;
     let screen = &conn.setup().roots[screen_number];
@@ -459,10 +479,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut wayland = match env::var_os("MOON_WAYLAND_DIR") {
         Some(dir) => {
             let dir = PathBuf::from(dir);
-            match std::fs::create_dir_all(&dir)
-                .map_err(Box::<dyn Error>::from)
-                .and_then(|()| wl_apps::WaylandApps::new(&conn, root, width, height, &dir))
-            {
+            let server = match early_wayland.take() {
+                Some(server) => wl_apps::WaylandApps::with_server(&conn, root, width, height, server),
+                None => std::fs::create_dir_all(&dir)
+                    .map_err(Box::<dyn Error>::from)
+                    .and_then(|()| wl_apps::WaylandApps::new(&conn, root, width, height, &dir)),
+            };
+            match server {
                 Ok(server) => {
                     // MOON_WAYLAND_APPS names the apps that speak Wayland
                     // (comma-separated; default: the System app).
@@ -554,6 +577,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             eprintln!("deep suspend disabled by config; screen-off keeps Moon resident");
             (None, persisted)
         }
+        // The deep-suspend helper replaces Xorg and Moon; under Xwayland
+        // (milestone 4) there is no Xorg for it to replace.
+        Ok((_, persisted)) if xwayland_server.is_some() => {
+            eprintln!("deep suspend unavailable under Xwayland; screen-off keeps Moon resident");
+            (None, persisted)
+        }
         Ok((port, persisted)) => {
             eprintln!("deep suspend handoff ready (DPU quiesce, mem/deep, power+RTC wake)");
             (Some(port), persisted)
@@ -569,9 +598,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     // MOON_TOUCH=evdev: Moon reads the touchscreen itself (multi-touch
     // protocol B) instead of taking XInput 2 raw touches from Xorg; the
     // step towards sessions without Xorg. MOON_TOUCH_DEVICE names it.
-    let mut evdev_touch = if env::var("MOON_TOUCH").is_ok_and(|value| value == "evdev") {
+    // MOON_TOUCH_REPLAY=FIFO:MAXX,MAXY reads events written to a FIFO
+    // instead (off-device tests; a uinput device would reach the host's
+    // own desktop).
+    // Under Xwayland nobody else reads the touchscreen: evdev it is.
+    let mut evdev_touch = if env::var("MOON_TOUCH").is_ok_and(|value| value == "evdev")
+        || xwayland_server.is_some()
+    {
         let name = env::var("MOON_TOUCH_DEVICE").unwrap_or_else(|_| "sec_touchscreen".into());
-        match touch::Touchscreen::find(&name, width, height) {
+        let replay = env::var("MOON_TOUCH_REPLAY").ok().and_then(|value| {
+            let (path, max) = value.rsplit_once(':')?;
+            let (x, y) = max.split_once(',')?;
+            Some((path.to_owned(), (x.parse().ok()?, y.parse().ok()?)))
+        });
+        let device = match replay {
+            Some((path, max)) => touch::Touchscreen::replay(Path::new(&path), max, width, height),
+            None => touch::Touchscreen::find(&name, width, height),
+        };
+        match device {
             Ok(device) => {
                 eprintln!("touch: reading {} directly", device.path().display());
                 Some(device)
@@ -617,6 +661,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Passes a screen-off has waited for the app to be released.
     let mut sleep_retries = 0_u32;
     while !state.should_exit {
+        if let Some(server) = xwayland_server.as_mut()
+            && let Some(status) = server.exited()
+        {
+            // Moon's X server is gone, and Moon's X side with it.
+            return Err(format!("Xwayland exited: {status}").into());
+        }
         while let Some(event) = conn.poll_for_event()? {
             if let Some(server) = wayland.as_mut()
                 && server.handle_x_event(&event)
@@ -749,6 +799,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             match device.poll() {
                 Ok(contacts) => {
                     for contact in contacts {
+                        // Xwayland gets every touch, as Xorg did from the
+                        // device; Moon's own handling runs alongside.
+                        if xwayland_server.is_some()
+                            && let Some(server) = wayland.as_mut()
+                        {
+                            server.xwayland_touch(contact);
+                        }
                         match contact {
                             touch::Contact::Begin(id, x, y) => touch_begin(
                                 &conn,

@@ -5,6 +5,11 @@ LOG=/root/Xorg.persistent.log
 STATUS=/root/xorg-session.status
 # --gpu: moon-compositor owns the panel; Xorg runs headless (dummy driver) and
 # reaches the screen through Moon's X mirror (notes/gpu/DESIGN.md).
+# --xwayland (milestone 4, notes/wayland/MOON-WAYLAND.md): no X server here.
+# moon-compositor owns the panel and Moon starts Xwayland itself as its X
+# server on :0; this session only reports that and holds the session (the
+# supervisor ends it to fall back to --gpu, headless Xorg, if Moon cannot
+# start on Xwayland).
 CONFIGDIR=/etc/X11/xorg.conf.d
 [ "${1:-}" != --gpu ] || CONFIGDIR=/etc/X11/xorg-gpu.conf.d
 rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 "$STATUS"
@@ -13,8 +18,10 @@ mkdir -p /tmp/.X11-unix /run
 xpid=''
 cleanup() {
     trap - EXIT HUP INT TERM
-    # A GPU-to-software fallback replaces only Xorg: keep Wi-Fi up.
-    if [ -x /opt/a26-system/libexec/a26-wifi-stop ] && [ ! -e /run/moon-gpu/fallback ]; then
+    # A GPU-to-software or Xwayland-to-Xorg fallback replaces only the X
+    # session: keep Wi-Fi up.
+    if [ -x /opt/a26-system/libexec/a26-wifi-stop ] && [ ! -e /run/moon-gpu/fallback ] &&
+        [ ! -e /run/moon-gpu/xwayland-fallback ]; then
         /opt/a26-system/libexec/a26-wifi-stop 2>/dev/null || true
     fi
     if [ -n "$xpid" ] && kill -0 "$xpid" 2>/dev/null; then
@@ -26,9 +33,30 @@ cleanup() {
         kill -KILL "$xpid" 2>/dev/null || true
         wait "$xpid" 2>/dev/null || true
     fi
-    rm -f /run/a26-xorg.pid
+    rm -f /run/a26-xorg.pid /run/a26-xwayland-session.pid
 }
 trap cleanup EXIT HUP INT TERM
+
+if [ "${1:-}" = --xwayland ]; then
+    echo "$$" >/run/a26-xwayland-session.pid
+    {
+        echo "XORG_READY=1"
+        echo "XSERVER=xwayland"
+        echo "DISPLAY=:0"
+        echo "WINDOW_MANAGER=moon"
+    } >"$STATUS"
+    echo "session held for Moon's Xwayland up=$(cut -d' ' -f1 /proc/uptime)" >&2
+    # Ended by a signal (the supervisor's fallback to Xorg, the GPU
+    # fallback): clean up and return, so the takeover moves on. (cleanup
+    # alone would let the loop go on holding.)
+    sleeper=''
+    trap 'kill "$sleeper" 2>/dev/null; cleanup; exit 0' HUP INT TERM
+    while :; do
+        sleep 3600 &
+        sleeper=$!
+        wait "$sleeper"
+    done
+fi
 
 Xorg :0 \
     -configdir "$CONFIGDIR" \

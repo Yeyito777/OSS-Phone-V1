@@ -147,22 +147,18 @@ impl WaylandApps {
         height: u16,
         runtime_dir: &Path,
     ) -> Result<Self, Box<dyn Error>> {
-        let app_height = height.saturating_sub(crate::status_bar::HEIGHT).max(1);
-        // Apps draw at the panel's density: 3 pixels per unit by default
-        // (the A26 is 386 dpi; Moon's own UI uses 2.77 px per iPhone point).
-        let scale = std::env::var("MOON_WAYLAND_SCALE")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .filter(|scale| (1..=4).contains(scale))
-            .unwrap_or(3);
-        let server = WaylandServer::bind(
-            runtime_dir,
-            "wayland-0",
-            (width, height),
-            (width, app_height),
-            120_000,
-            scale,
-        )?;
+        let server = bind_server(runtime_dir, width, height)?;
+        Self::with_server(conn, root, width, height, server)
+    }
+
+    /// Around a server bound before X was up (Xwayland's, milestone 4).
+    pub fn with_server<C: Connection>(
+        conn: &C,
+        root: u32,
+        width: u16,
+        height: u16,
+        server: WaylandServer,
+    ) -> Result<Self, Box<dyn Error>> {
         let gc = conn.generate_id()?;
         conn.create_gc(gc, root, &CreateGCAux::new().graphics_exposures(0))?;
         Ok(Self {
@@ -879,6 +875,12 @@ impl WaylandApps {
                 shm.height as u32,
                 shm.stride as u32,
                 shm.argb,
+                // Only whole dmabufs (offset 0) with 64-byte rows: the Mali
+                // may refuse to import other pitches (a v3 compositor would
+                // not even say so), and the compositor puts nothing else on
+                // a plane. Others take the copy path (a dmabuf maps like a
+                // memfd).
+                shm.pool.dmabuf && shm.offset == 0 && shm.stride % 64 == 0,
             ) {
                 Ok(surface) => {
                     self.client_surfaces
@@ -1285,6 +1287,25 @@ impl WaylandApps {
         None
     }
 
+    /// A touchscreen contact (milestone 4): to Xwayland, which hands it to
+    /// the X window under it as Xorg did. Its ids stay apart from the ids
+    /// the proxies give native apps.
+    pub fn xwayland_touch(&mut self, contact: crate::touch::Contact) {
+        const BASE: i32 = 1 << 20;
+        let time = wayland::now_ms();
+        match contact {
+            crate::touch::Contact::Begin(id, x, y) => {
+                self.server
+                    .xwayland_touch_down(BASE + id as i32, f64::from(x), f64::from(y), time);
+            }
+            crate::touch::Contact::Update(id, x, y) => {
+                self.server
+                    .touch_motion(BASE + id as i32, f64::from(x), f64::from(y), time);
+            }
+            crate::touch::Contact::End(id) => self.server.touch_up(BASE + id as i32, time),
+        }
+    }
+
     fn visible(&self, mut key: SurfaceKey) -> bool {
         for _ in 0..16 {
             let Some(proxy) = self.proxies.get(&key) else {
@@ -1371,6 +1392,31 @@ fn owner_from_pid(pid: u32) -> Option<AppId> {
             .into_iter()
             .find(|app| app.cgroup_name() == name)
     })
+}
+
+/// Moon's Wayland server for a `width` x `height` panel, with the app area
+/// below the status strip for new toplevels.
+pub fn bind_server(
+    runtime_dir: &Path,
+    width: u16,
+    height: u16,
+) -> Result<WaylandServer, Box<dyn Error>> {
+    let app_height = height.saturating_sub(crate::status_bar::HEIGHT).max(1);
+    // Apps draw at the panel's density: 3 pixels per unit by default (the
+    // A26 is 386 dpi; Moon's own UI uses 2.77 px per iPhone point).
+    let scale = std::env::var("MOON_WAYLAND_SCALE")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|scale| (1..=4).contains(scale))
+        .unwrap_or(3);
+    Ok(WaylandServer::bind(
+        runtime_dir,
+        "wayland-0",
+        (width, height),
+        (width, app_height),
+        120_000,
+        scale,
+    )?)
 }
 
 /// Adds `new` to a damage list; past a handful of rectangles it becomes

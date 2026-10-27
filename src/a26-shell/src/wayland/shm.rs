@@ -25,9 +25,12 @@ pub struct ShmPool {
     /// (size, generation): a resize bumps the generation, and a segment
     /// attached at an older size must be attached again.
     pub size: Mutex<(i32, u32)>,
-    /// The file cannot shrink (F_SEAL_SHRINK): safe for moon-compositor,
-    /// a separate process that would die of SIGBUS, to map.
+    /// The file cannot shrink (F_SEAL_SHRINK, or a dmabuf): safe for
+    /// moon-compositor, a separate process that would die of SIGBUS, to map.
     pub sealed: bool,
+    /// A dma-heap buffer rather than a memfd: moon-compositor shows it in
+    /// place (no upload per frame) once Moon has cleaned the CPU caches.
+    pub dmabuf: bool,
 }
 
 impl ShmPool {
@@ -92,7 +95,9 @@ impl Dispatch<WlShm, ()> for WlState {
                 resource.post_error(wl_shm::Error::InvalidFd, "pool larger than its file");
                 return;
             }
-            let sealed = seal_shrink(&fd);
+            // A dmabuf cannot shrink at all.
+            let dmabuf = is_dmabuf(&fd);
+            let sealed = dmabuf || seal_shrink(&fd);
             data_init.init(
                 id,
                 Arc::new(ShmPool {
@@ -100,6 +105,7 @@ impl Dispatch<WlShm, ()> for WlState {
                     fd,
                     size: Mutex::new((size, 0)),
                     sealed,
+                    dmabuf,
                 }),
             );
         }
@@ -182,6 +188,13 @@ fn file_size(fd: &OwnedFd) -> Option<i64> {
     let mut stat: libc::stat = unsafe { std::mem::zeroed() };
     let result = unsafe { libc::fstat(fd.as_raw_fd(), &mut stat) };
     (result == 0).then_some(stat.st_size)
+}
+
+/// Whether the pool's fd is a dmabuf (a client allocated it from a dma
+/// heap): its /proc link reads `/dmabuf:...` or `anon_inode:dmabuf`.
+fn is_dmabuf(fd: &OwnedFd) -> bool {
+    std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd()))
+        .is_ok_and(|target| target.to_string_lossy().contains("dmabuf"))
 }
 
 /// Best effort: a client that did not allow sealing keeps an unsealed pool.

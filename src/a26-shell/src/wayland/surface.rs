@@ -42,6 +42,8 @@ pub(crate) struct SurfaceData {
     /// xdg_surface bookkeeping lives in shell.rs; this only says the
     /// surface may show content (it acked a configure, or is a subsurface).
     pub can_show: bool,
+    /// Xwayland's (see `ClientInfo::xwayland`): its buffers go straight back.
+    pub xwayland: bool,
 }
 
 pub(crate) fn create_globals(handle: &DisplayHandle) {
@@ -65,7 +67,7 @@ impl GlobalDispatch<WlCompositor, ()> for WlState {
 impl Dispatch<WlCompositor, ()> for WlState {
     fn request(
         state: &mut Self,
-        _client: &Client,
+        client: &Client,
         _resource: &WlCompositor,
         request: wl_compositor::Request,
         _data: &(),
@@ -78,8 +80,9 @@ impl Dispatch<WlCompositor, ()> for WlState {
                 state.next_key = state.next_key.wrapping_add(1).max(1);
                 let key = SurfaceKey(state.next_key);
                 state.keys.insert(key, surface.id());
+                let xwayland = super::is_xwayland(client);
                 if surface.version() >= 6 {
-                    surface.preferred_buffer_scale(state.scale);
+                    surface.preferred_buffer_scale(if xwayland { 1 } else { state.scale });
                 }
                 state.surfaces.insert(
                     surface.id(),
@@ -97,6 +100,7 @@ impl Dispatch<WlCompositor, ()> for WlState {
                         pending_position: None,
                         children: Vec::new(),
                         can_show: false,
+                        xwayland,
                     },
                 );
             }
@@ -301,6 +305,18 @@ fn commit(state: &mut WlState, resource: &WlSurface) {
     }
     let scale = data.scale;
     let mut event = None;
+    if data.xwayland {
+        // Moon mirrors the X root instead: the buffer is not read, and its
+        // frame callbacks are never answered, so after its first commit
+        // Xwayland stops copying the root into buffers (it has no
+        // configure either, see shell::on_commit). X clients pace
+        // themselves: Chromium animates at its own rate either way.
+        if let Some(Some(buffer)) = attached {
+            buffer.release();
+        }
+        state.feedbacks.commit(key, None);
+        return;
+    }
     if data.placement.is_some() && data.can_show {
         match attached {
             Some(Some(buffer)) => match buffer.data::<Arc<ShmBuffer>>() {

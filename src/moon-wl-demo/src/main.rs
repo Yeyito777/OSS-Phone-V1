@@ -7,7 +7,7 @@
 //! Everything it receives is logged to stderr (except password text).
 
 use std::fs::File;
-use std::os::fd::{AsFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::time::Instant;
 
 use wayland_client::protocol::{
@@ -44,6 +44,9 @@ struct Buffer {
     /// The content generation painted into it (box mode repaints only the
     /// band while this is current).
     generation: u64,
+    /// MOON_DEMO_DMABUF: its own dma-heap buffer and pool (offset 0).
+    memory: Option<memmap::Map>,
+    pool: Option<wl_shm_pool::WlShmPool>,
 }
 
 struct App {
@@ -85,6 +88,8 @@ struct App {
     box_draw: bool,
     generation: u64,
     paint_ms: Vec<f32>,
+    /// The buffer size the buffers were made for.
+    allocated: usize,
 }
 
 mod memmap {
@@ -174,6 +179,7 @@ fn main() {
         box_draw: std::env::var("MOON_DEMO_DRAW").is_ok_and(|draw| draw == "box"),
         generation: 0,
         paint_ms: Vec::new(),
+        allocated: 0,
     };
     queue.roundtrip(&mut app).expect("registry roundtrip");
     let (Some(compositor), Some(wm)) = (app.compositor.clone(), app.wm.clone()) else {
@@ -223,16 +229,59 @@ impl App {
     }
 
     fn ensure_buffers(&mut self, qh: &QueueHandle<Self>) {
-        let size = (self.width * self.height * 4) as usize;
+        // Rows of 64 bytes: what the Mali imports and the display planes
+        // scan out (1080 pixels: 4352 bytes, as the X mirror's).
+        let stride = (self.width * 4 + 63) & !63;
+        let size = (stride * self.height) as usize;
         let slot = size.div_ceil(4096) * 4096;
-        if self.memory.as_ref().is_some_and(|memory| memory.len == slot * 2) {
+        if self.allocated == slot {
             return;
         }
         for buffer in self.buffers.drain(..) {
             buffer.buffer.destroy();
+            if let Some(pool) = buffer.pool {
+                pool.destroy();
+            }
         }
         if let Some(pool) = self.pool.take() {
             pool.destroy();
+        }
+        self.memory = None;
+        self.allocated = slot;
+        // MOON_DEMO_DMABUF=1: each buffer is a whole dma-heap buffer (offset
+        // 0), which Moon shows in place instead of uploading.
+        if std::env::var("MOON_DEMO_DMABUF").is_ok_and(|value| value == "1") {
+            match (0..2).map(|_| dma_heap_alloc(slot)).collect::<std::io::Result<Vec<_>>>() {
+                Ok(fds) => {
+                    for (index, fd) in fds.into_iter().enumerate() {
+                        let pool = self
+                            .shm
+                            .as_ref()
+                            .expect("wl_shm")
+                            .create_pool(fd.as_fd(), slot as i32, qh, ());
+                        let buffer = pool.create_buffer(
+                            0,
+                            self.width,
+                            self.height,
+                            stride,
+                            wl_shm::Format::Xrgb8888,
+                            qh,
+                            index,
+                        );
+                        self.buffers.push(Buffer {
+                            buffer,
+                            offset: 0,
+                            busy: false,
+                            generation: u64::MAX,
+                            memory: Some(memmap::Map::new(fd, slot).expect("map the dmabuf")),
+                            pool: Some(pool),
+                        });
+                    }
+                    eprintln!("demo: buffers are dma-heap buffers ({slot} bytes each)");
+                    return;
+                }
+                Err(error) => eprintln!("demo: no dma-heap buffers ({error}); memfd pool"),
+            }
         }
         let name = std::ffi::CString::new("moon-wl-demo").unwrap();
         // SAFETY: a fresh memfd; ownership moves into OwnedFd.
@@ -259,7 +308,7 @@ impl App {
                 (index * slot) as i32,
                 self.width,
                 self.height,
-                self.width * 4,
+                stride,
                 wl_shm::Format::Xrgb8888,
                 qh,
                 index,
@@ -269,6 +318,8 @@ impl App {
                 offset: index * slot,
                 busy: false,
                 generation: u64::MAX,
+                memory: None,
+                pool: None,
             });
         }
         self.memory = Some(memmap::Map::new(fd, slot * 2).expect("map the pool"));
@@ -284,7 +335,9 @@ impl App {
         let Some(index) = self.buffers.iter().position(|buffer| !buffer.busy) else {
             return;
         };
-        let (width, height) = (self.width as usize, self.height as usize);
+        // Painted row by row at the buffer's padded row length; the columns
+        // past `self.width` are padding nobody shows.
+        let (width, height) = ((((self.width * 4 + 63) & !63) / 4) as usize, self.height as usize);
         let offset = self.buffers[index].offset;
         if self.dirty {
             self.generation += 1;
@@ -294,7 +347,9 @@ impl App {
             || !self.dots.is_empty()
             || self.buffers[index].generation != self.generation;
         let started = Instant::now();
-        let mut canvas = std::mem::take(&mut self.memory).expect("mapped");
+        let own = self.buffers[index].memory.take();
+        let shared = own.is_none();
+        let mut canvas = own.or_else(|| self.memory.take()).expect("mapped");
         let band = {
             let pixels = canvas.pixels(offset, width * height);
             if full {
@@ -304,7 +359,11 @@ impl App {
                 self.paint_band(pixels, width, height)
             }
         };
-        self.memory = Some(canvas);
+        if shared {
+            self.memory = Some(canvas);
+        } else {
+            self.buffers[index].memory = Some(canvas);
+        }
         if self.animate {
             self.paint_ms.push(started.elapsed().as_secs_f32() * 1000.0);
         }
@@ -467,6 +526,32 @@ fn background(y: usize, height: usize, wave: f32) -> u32 {
     let g = (24.0 + 30.0 * (1.0 - t)) as u32;
     let b = (60.0 + 90.0 * t) as u32;
     0xff00_0000 | (r.min(255) << 16) | (g.min(255) << 8) | b.min(255)
+}
+
+/// A dma-heap buffer of `len` bytes from /dev/dma_heap/system
+/// (DMA_HEAP_IOCTL_ALLOC), read-write and close-on-exec.
+fn dma_heap_alloc(len: usize) -> std::io::Result<OwnedFd> {
+    #[repr(C)]
+    struct Allocation {
+        len: u64,
+        fd: u32,
+        fd_flags: u32,
+        heap_flags: u64,
+    }
+    let heap = std::fs::File::open("/dev/dma_heap/system")?;
+    let mut allocation = Allocation {
+        len: len as u64,
+        fd: 0,
+        fd_flags: (libc::O_RDWR | libc::O_CLOEXEC) as u32,
+        heap_flags: 0,
+    };
+    // SAFETY: DMA_HEAP_IOCTL_ALLOC fills `allocation.fd` on success.
+    const DMA_HEAP_IOCTL_ALLOC: libc::c_ulong = 0xc018_4800;
+    if unsafe { libc::ioctl(heap.as_raw_fd(), DMA_HEAP_IOCTL_ALLOC as _, &mut allocation) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: the kernel just returned this descriptor to us.
+    Ok(unsafe { OwnedFd::from_raw_fd(allocation.fd as i32) })
 }
 
 fn fill(pixels: &mut [u32], width: usize, height: usize, rect: (i32, i32, i32, i32), color: u32) {

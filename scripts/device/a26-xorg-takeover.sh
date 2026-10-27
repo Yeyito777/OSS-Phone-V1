@@ -119,11 +119,20 @@ echo "DRM card released; entering Alpine Xorg supervisor up=$(uptime_now)"
 # Xorg runs headless. Anything short of a ready compositor is the software
 # path, Xorg on the panel, exactly as before.
 GPU_SESSION=/data/adb/moon/moon-gpu-session.sh
+# Xwayland instead of Xorg (XWAYLAND=1 in /data/adb/moon/config, milestone 4,
+# notes/wayland/MOON-WAYLAND.md): only on the GPU path, only with Xwayland in
+# the chroot, and never again this boot once Moon fell back from it.
+XWAYLAND_FALLBACK=/data/local/tmp/moon-gpu/xwayland-fallback
 session_arg=''
-rm -f "$STATE/gpu-fallback"
+rm -f "$STATE/gpu-fallback" "$XWAYLAND_FALLBACK"
 if [ -x "$GPU_SESSION" ] && /system/bin/sh "$GPU_SESSION" start; then
     session_arg=--gpu
     echo "GPU compositor ready up=$(uptime_now)"
+    if [ "$(sed -n 's/^XWAYLAND=//p' /data/adb/moon/config 2>/dev/null | tail -1)" = 1 ] &&
+        [ -x "$ROOT/usr/bin/Xwayland" ]; then
+        session_arg=--xwayland
+        echo "X server: Moon's Xwayland up=$(uptime_now)"
+    fi
 fi
 while :; do
     A26_ROOT="$ROOT" A26_BUSYBOX="$ROOT/busybox.static" \
@@ -136,6 +145,13 @@ while :; do
     if [ -n "$session_arg" ] && [ -e /data/local/tmp/moon-gpu/fallback ]; then
         echo "GPU compositor failed; restarting Xorg on the panel up=$(uptime_now)"
         session_arg=''
+        continue
+    fi
+    # Moon could not run on Xwayland (moon-boot-supervisor.sh): the same GPU
+    # session with headless Xorg, as without XWAYLAND.
+    if [ "$session_arg" = --xwayland ] && [ -e "$XWAYLAND_FALLBACK" ]; then
+        echo "Moon failed on Xwayland; starting headless Xorg up=$(uptime_now)"
+        session_arg=--gpu
         continue
     fi
     break

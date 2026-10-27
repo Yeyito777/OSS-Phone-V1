@@ -103,6 +103,7 @@ const CARD_RADIUS: f32 = crate::interaction::CARD_RADIUS;
 /// linux/dma-buf.h).
 const DMA_HEAP_IOCTL_ALLOC: libc::c_ulong = 0xc018_4800;
 const DMA_BUF_IOCTL_SYNC: libc::c_ulong = 0x4008_6200;
+const DMA_BUF_SYNC_READ: u64 = 1;
 const DMA_BUF_SYNC_WRITE: u64 = 2;
 const DMA_BUF_SYNC_END: u64 = 4;
 
@@ -490,6 +491,8 @@ enum Surface {
         height: u32,
         stride: u32,
         argb: bool,
+        /// A dma-heap buffer (shown in place) rather than a memfd.
+        dmabuf: bool,
     },
     /// The live X mirror as a node's source (`MG_MIRROR_ID`): an app's
     /// window moving inside one of Moon's frames.
@@ -1461,6 +1464,7 @@ impl GpuBackend {
     /// `offset`). The compositor copies it on each damage (GPU tier) or
     /// reads it while drawing (CPU tier), so the buffer stays the client's
     /// only once a later frame no longer shows it.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_client_surface(
         &mut self,
         fd: &OwnedFd,
@@ -1469,6 +1473,7 @@ impl GpuBackend {
         height: u32,
         stride: u32,
         argb: bool,
+        dmabuf: bool,
     ) -> io::Result<SurfaceId> {
         let fd = fd.try_clone()?;
         let id = self.insert(Surface::Client {
@@ -1478,6 +1483,7 @@ impl GpuBackend {
             height,
             stride,
             argb,
+            dmabuf,
         });
         self.announce_client(id);
         Ok(id)
@@ -1491,23 +1497,31 @@ impl GpuBackend {
             height,
             stride,
             argb,
+            dmabuf,
         })) = self.surfaces.get(id.0)
         else {
             return;
         };
+        // A dmabuf is imported and shown in place (no upload); a memfd is
+        // copied on each damage, behind the SIGBUS guard from v4 on.
         let mut msg = Msg::new(MSG_SURFACE_SHM);
         msg.u32(wire(id))
             .u32(*width)
             .u32(*height)
             .u32(*stride)
             .u32(if *argb { FORMAT_ARGB } else { FORMAT_XRGB })
-            .u32(if self.version >= FOREIGN_VERSION {
+            .u32(if *dmabuf {
+                SURFACE_DMABUF
+            } else if self.version >= FOREIGN_VERSION {
                 SURFACE_FOREIGN
             } else {
                 0
             })
             .u32(*offset);
         let raw = fd.as_raw_fd();
+        if *dmabuf {
+            flush_for_device(raw);
+        }
         let all = [Damage {
             x0: 0,
             y0: 0,
@@ -1522,6 +1536,15 @@ impl GpuBackend {
     /// The client drew `rects` (buffer pixels) into the surface's buffer.
     pub fn client_damage(&mut self, id: SurfaceId, rects: &[Damage]) {
         if !rects.is_empty() {
+            if let Some(Some(Surface::Client {
+                fd, dmabuf: true, ..
+            })) = self.surfaces.get(id.0)
+            {
+                // The client wrote it through the CPU caches; the GPU and
+                // the display read memory (as the compositor does for the
+                // mirror).
+                flush_for_device(fd.as_raw_fd());
+            }
             self.damage_sent_ns = monotonic_ns();
             self.send_damage(MSG_SURFACE_DAMAGE, wire(id), rects);
         }
@@ -1843,6 +1866,27 @@ fn diff_into(
     }
     closed.append(&mut open);
     closed
+}
+
+/// Cleans the CPU caches of a dmabuf the CPU wrote, for the GPU and the
+/// display (DMA_BUF_IOCTL_SYNC works on the buffer, whoever wrote it).
+/// A clean is all the device needs after CPU writes (WRITE: 0.49 ms for a
+/// full-screen buffer on the phone; READ|WRITE also invalidates: 0.71 ms).
+/// MOON_DMABUF_SYNC=rw or none select the others, for measurement.
+fn flush_for_device(fd: RawFd) {
+    static ACCESS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let access = *ACCESS.get_or_init(|| match std::env::var("MOON_DMABUF_SYNC").as_deref() {
+        Ok("none") => 0,
+        Ok("rw") => DMA_BUF_SYNC_READ | DMA_BUF_SYNC_WRITE,
+        _ => DMA_BUF_SYNC_WRITE,
+    });
+    if access == 0 {
+        return;
+    }
+    for flags in [access, access | DMA_BUF_SYNC_END] {
+        // SAFETY: DMA_BUF_IOCTL_SYNC reads one u64 from `flags`.
+        unsafe { libc::ioctl(fd, DMA_BUF_IOCTL_SYNC as _, &flags) };
+    }
 }
 
 fn monotonic_ns() -> u64 {

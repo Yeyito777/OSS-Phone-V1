@@ -99,7 +99,7 @@ impl GlobalDispatch<WlSeat, ()> for WlState {
 impl Dispatch<WlSeat, ()> for WlState {
     fn request(
         state: &mut Self,
-        _client: &Client,
+        client: &Client,
         _resource: &WlSeat,
         request: wl_seat::Request,
         _data: &(),
@@ -119,8 +119,17 @@ impl Dispatch<WlSeat, ()> for WlState {
                 if keyboard.version() >= 4 {
                     keyboard.repeat_info(0, 0);
                 }
-                // A keyboard bound while its client is focused enters at once.
-                if let Some(focus) = state.seat.focus.clone()
+                // A keyboard bound while its client is focused enters at once;
+                // Xwayland's is always on its root (see `xwayland_enter`).
+                let focus = if super::is_xwayland(client) {
+                    state
+                        .xwayland_root
+                        .and_then(|key| state.surface_by_key(key))
+                        .map(|data| data.resource.clone())
+                } else {
+                    state.seat.focus.clone()
+                };
+                if let Some(focus) = focus
                     && focus.id().same_client_as(&keyboard.id())
                 {
                     let serial = state.next_serial();
@@ -193,6 +202,20 @@ impl Dispatch<WlPointer, ()> for WlState {
         _handle: &DisplayHandle,
         _data_init: &mut DataInit<'_, Self>,
     ) {
+    }
+}
+
+/// Xwayland's keyboard focus is its root, for good: X decides which X
+/// window gets the keys (Moon sets X focus as the window manager), and the
+/// keys themselves come through XTEST. Xwayland delivers no key events
+/// while it has no Wayland keyboard focus.
+pub(crate) fn xwayland_enter(state: &mut WlState, root: &WlSurface) {
+    let serial = state.next_serial();
+    for keyboard in &state.seat.keyboards {
+        if keyboard.id().same_client_as(&root.id()) {
+            keyboard.enter(serial, root, Vec::new());
+            keyboard.modifiers(serial, 0, 0, 0, 0);
+        }
     }
 }
 
@@ -396,7 +419,7 @@ impl GlobalDispatch<WlOutput, ()> for WlState {
     fn bind(
         state: &mut Self,
         _handle: &DisplayHandle,
-        _client: &Client,
+        client: &Client,
         resource: New<WlOutput>,
         _data: &(),
         data_init: &mut DataInit<'_, Self>,
@@ -420,7 +443,7 @@ impl GlobalDispatch<WlOutput, ()> for WlState {
             state.refresh_mhz,
         );
         if output.version() >= 2 {
-            output.scale(state.scale);
+            output.scale(if super::is_xwayland(client) { 1 } else { state.scale });
         }
         if output.version() >= 4 {
             output.name("DSI-1".into());

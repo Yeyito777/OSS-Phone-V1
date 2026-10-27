@@ -6,8 +6,8 @@ use std::os::fd::{AsFd, FromRawFd, OwnedFd};
 use std::sync::{Arc, Mutex};
 
 use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
-    wl_touch,
+    wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_output, wl_registry, wl_seat, wl_shm,
+    wl_shm_pool, wl_surface, wl_touch,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, delegate_noop};
 use wayland_protocols::wp::presentation_time::client::{wp_presentation, wp_presentation_feedback};
@@ -34,6 +34,10 @@ struct Client {
     committed: Arc<Mutex<String>>,
     presentation: Option<wp_presentation::WpPresentation>,
     presented: Vec<(u64, u32, u32)>,
+    output_scale: Option<i32>,
+    preferred_scale: Option<i32>,
+    keyboard_enters: usize,
+    frames_done: usize,
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for Client {
@@ -58,6 +62,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Client {
                 "wl_seat" => c.seat = Some(r.bind(name, version, qh, ())),
                 "zwp_text_input_manager_v3" => c.text = Some(r.bind(name, 1, qh, ())),
                 "wp_presentation" => c.presentation = Some(r.bind(name, 1, qh, ())),
+                "wl_output" => {
+                    r.bind::<wl_output::WlOutput, (), Client>(name, version, qh, ());
+                }
                 _ => {}
             }
         }
@@ -145,13 +152,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for Client {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_keyboard::Event::Key {
-            key,
-            state: wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed),
-            ..
-        } = e
-        {
-            c.keys.push(key);
+        match e {
+            wl_keyboard::Event::Key {
+                key,
+                state: wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed),
+                ..
+            } => c.keys.push(key),
+            wl_keyboard::Event::Enter { .. } => c.keyboard_enters += 1,
+            _ => {}
         }
     }
 }
@@ -202,7 +210,50 @@ impl Dispatch<wp_presentation_feedback::WpPresentationFeedback, ()> for Client {
 
 delegate_noop!(Client: ignore wp_presentation::WpPresentation);
 delegate_noop!(Client: ignore wl_compositor::WlCompositor);
-delegate_noop!(Client: ignore wl_surface::WlSurface);
+impl Dispatch<wl_surface::WlSurface, ()> for Client {
+    fn event(
+        c: &mut Self,
+        _: &wl_surface::WlSurface,
+        e: wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_surface::Event::PreferredBufferScale { factor } = e {
+            c.preferred_scale = Some(factor);
+        }
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for Client {
+    fn event(
+        c: &mut Self,
+        _: &wl_output::WlOutput,
+        e: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_output::Event::Scale { factor } = e {
+            c.output_scale = Some(factor);
+        }
+    }
+}
+
+impl Dispatch<wl_callback::WlCallback, ()> for Client {
+    fn event(
+        c: &mut Self,
+        _: &wl_callback::WlCallback,
+        e: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = e {
+            c.frames_done += 1;
+        }
+    }
+}
 delegate_noop!(Client: ignore wl_shm::WlShm);
 delegate_noop!(Client: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(Client: ignore wl_seat::WlSeat);
@@ -219,12 +270,25 @@ struct Harness {
 
 impl Harness {
     fn new(name: &str) -> Self {
+        Self::with(name, 1, false)
+    }
+
+    /// `xwayland`: the client is Moon's Xwayland (a socket pair, as Moon
+    /// starts it), on a server with app scale `scale`.
+    fn with(name: &str, scale: i32, xwayland: bool) -> Self {
         let dir = std::env::temp_dir().join(format!("moon-wl-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let server =
-            WaylandServer::bind(&dir, "wayland-0", (1080, 2340), (1080, 2216), 120_000, 1).unwrap();
-        let stream = std::os::unix::net::UnixStream::connect(dir.join("wayland-0")).unwrap();
+        let mut server =
+            WaylandServer::bind(&dir, "wayland-0", (1080, 2340), (1080, 2216), 120_000, scale)
+                .unwrap();
+        let stream = if xwayland {
+            let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+            server.insert_xwayland(ours).unwrap();
+            theirs
+        } else {
+            std::os::unix::net::UnixStream::connect(dir.join("wayland-0")).unwrap()
+        };
         let connection = Connection::from_socket(stream).unwrap();
         let queue = connection.new_event_queue();
         connection.display().get_registry(&queue.handle(), ());
@@ -581,4 +645,48 @@ mod clipboard {
         std::fs::File::from(read).read_to_string(&mut text).unwrap();
         assert_eq!(text, "copied text");
     }
+}
+
+#[test]
+fn xwayland_root_is_never_mapped_and_takes_touch_and_its_keyboard() {
+    let mut h = Harness::with("xwayland", 3, true);
+    let qh = h.queue.handle();
+    // Xwayland binds its keyboard before or after its root; either way the
+    // keyboard ends up on the root.
+    let seat = h.client.seat.clone().unwrap();
+    let _keyboard = seat.get_keyboard(&qh, ());
+    let _touch = seat.get_touch(&qh, ());
+    let surface = h
+        .client
+        .compositor
+        .as_ref()
+        .unwrap()
+        .create_surface(&qh, ());
+    let xdg = h
+        .client
+        .wm
+        .as_ref()
+        .unwrap()
+        .get_xdg_surface(&surface, &qh, ());
+    let _toplevel = xdg.get_toplevel(&qh, ());
+    surface.commit();
+    h.pump();
+    // Scale 1; never configured (Moon mirrors the X root), not an app.
+    assert_eq!(h.client.output_scale, Some(1));
+    assert_eq!(h.client.preferred_scale, Some(1));
+    assert!(h.client.configures.is_empty());
+    assert!(h.server.take_events().is_empty());
+    assert_eq!(h.client.keyboard_enters, 1);
+    assert!(h.server.xwayland_root().is_some());
+
+    // Touches land on the root in pixels.
+    assert!(h.server.xwayland_touch_down(5, 540.0, 1000.0, 1));
+    h.server.touch_up(5, 2);
+    h.pump();
+    assert_eq!(h.client.touches, vec!["down 5 540 1000", "up 5"]);
+
+    // A second keyboard (bound after the root) enters at once too.
+    let _again = seat.get_keyboard(&qh, ());
+    h.pump();
+    assert_eq!(h.client.keyboard_enters, 2);
 }

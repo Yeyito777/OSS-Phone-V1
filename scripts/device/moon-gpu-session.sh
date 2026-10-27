@@ -138,8 +138,11 @@ keep)
         rm -f "$RUN/active"
         : >"$RUN/fallback"
         : >"$XORG_STATE/gpu-fallback"
-        xpid="$(cat "$ROOT/run/a26-xorg.pid" 2>/dev/null || true)"
-        case "$xpid" in ''|*[!0-9]*) ;; *) kill -TERM "$xpid" 2>/dev/null ;; esac
+        # (Under Xwayland, milestone 4, the session is held without Xorg.)
+        for pidfile in a26-xorg.pid a26-xwayland-session.pid; do
+            xpid="$(cat "$ROOT/run/$pidfile" 2>/dev/null || true)"
+            case "$xpid" in ''|*[!0-9]*) ;; *) kill -TERM "$xpid" 2>/dev/null ;; esac
+        done
         break
     done
     ;;
