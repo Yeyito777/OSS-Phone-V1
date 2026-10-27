@@ -188,6 +188,20 @@ windows (`notes/gpu/DESIGN.md`).
 | GPU-drawn | 337 mA | 10 % |
 | Planes | **273 mA** | 7 % |
 
+**Power menu, battery screens and System pages**
+(`notes/ui-polish/BASIC-OS-DEVICE-ROUND.md`, the same per-animation
+summaries):
+
+| Animation | Frames | Missed vblanks |
+| --- | --- | --- |
+| Power menu opens / closes | 65–70 / 60–61 | 1 / 0 |
+| System page push / pop | 45 / 46 | 0 / 1 |
+| Charging card | 55 | 0 |
+
+- A restart from the menu reached the lock screen 50–51 s after the slide.
+- On the real key, holds opened the menu at 0.99–1.0 s (the threshold is
+  0.9 s); presses of 0.79 s and 0.93 s put the screen to sleep.
+
 ## Install
 
 See [docs/INSTALL.md](docs/INSTALL.md):
