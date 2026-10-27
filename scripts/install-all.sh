@@ -56,7 +56,7 @@ su_run() { adb -s "$SERIAL" shell "/data/local/tmp/su -c '$1'" | tr -d '\r'; }
 
 # --- 1. preflight -----------------------------------------------------------
 step "preflight ($SERIAL)"
-[[ "$(su_run id -u)" == 0 ]] || { echo "no root through /data/local/tmp/su" >&2; exit 1; }
+[[ "$(su_run "id -u")" == 0 ]] || { echo "no root through /data/local/tmp/su" >&2; exit 1; }
 missing=0
 for path in \
     "$ROOT/busybox.static" "$ROOT/etc/alpine-release" "$ROOT/usr/libexec/Xorg" \
