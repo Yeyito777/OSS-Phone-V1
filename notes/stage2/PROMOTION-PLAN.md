@@ -58,110 +58,99 @@ complete fix is a reason channel:
 
 ---
 
-## 2. BOOT-promotion safety: a boot-attempt counter
+## 2. BOOT-promotion safety: a boot-attempt counter (built: oss-init v7)
 
 The one property the recovery slot gave us for free — a failed boot auto-returns
-to the known-good BOOT — does not exist on the single BOOT partition. We
-reconstruct an A/B-like "fall back to the last-good boot after N failures" in
-software:
+to the known-good BOOT — does not exist on the single BOOT partition. v7
+reconstructs an A/B-like "fall back to the last-good boot after N failures":
 
-1. **Very early** (before containment, right after the PMU clear) oss-init reads
-   and increments a persistent counter: `bootcount_bump()`.
-2. If the counter is **>= N** (default 3), oss-init **skips containment entirely
-   and execs the stock init** — today's proven boot (`8c0461ee`), uncontained.
-   The phone always reaches a working system; promotion can never hard-brick it.
-3. A **healthy session clears** the counter (`moon-boot-confirm.sh`), so the
-   count reflects *consecutive* failures, not lifetime boots.
-4. The existing in-boot fallbacks still apply within each attempt (early failure
-   → stock init in the same boot; late failure → controlled reboot to BOOT;
-   module-load failure → stock init).
+1. On every boot oss-init supervises, it **bumps a persistent counter**.
+2. If the new count is **>= 3**, oss-init **skips containment** and boots
+   **magiskinit as `/init`** — today's proven boot (Magisk + Moon), the path
+   oss-pid1 proved on the device — with the stock init via the held fd only if
+   that exec fails. The phone always reaches a working system.
+3. A **healthy contained session clears** the counter
+   (`scripts/device/moon-boot-confirm.sh`, after a 60 s soak window), so the
+   count is *consecutive* failures. A skipped boot has no
+   `/debug_ramdisk/oss-contained` marker and does **not** clear: a skipped
+   phone stays on the proven boot until someone clears the count on purpose
+   (`oss-init --bootcount clear`).
+4. The in-boot fallbacks still apply (early failure → stock init; late failure →
+   controlled reboot to BOOT; PMU-clear failure → stock init).
 
-Built now: the oss-init consumer (`bootcount_bump()`, the skip, bench cases
-`bootcount-skip`/`bootcount-ok`) and the clear hook (`scripts/device/moon-boot-confirm.sh`).
-The consumer is a **no-op until the store module is present** (open of
-`/oss-bootcount.ko` fails → returns -1 → contain as usual), so it is inert in
-every recovery-slot image and only engages on a promoted BOOT image.
+### Store: the misc partition (kernel agent, record format v1)
+No PMU register could be proven unused (bootloader, EL3 and firmware may touch
+them), so the counter lives on flash: `docs/bootcount-misc-record.md`. Two 4 KiB
+A/B slots at misc `0x40000`/`0x41000` (confirmed all-zero on the live phone;
+the only non-zero misc blocks are `0x8000` and `0x7f000`), a 32-byte CRC'd
+record, newest valid `seq` wins. **Persists across cold power-off** (safer: a
+user power-cycling a boot loop still escalates). Restoring the whole-partition
+`misc-bcb-clear.img` zeroes it (a reset; on a promoted image it escalates, see
+below).
 
-### Counter store — where it lives (evaluated)
+Hard write rules, enforced in `bootcount-misc.h` (the only writer): only full
+4 KiB blocks at exactly `0x40000` or `0x41000`; never the BCB or any block that
+is neither zero nor ours; `O_DSYNC` + `fsync`, then read back (O_DIRECT on the
+block device) and compare. Our own torn/damaged record (magic, zeros after byte
+32, bad CRC) is overwritable; anything else non-zero is foreign → write nothing.
 
-Requirements: writable by a tiny static binary **very early**, before any real
-filesystem or `/dev` is set up; **survives a warm reset and a kernel panic** (a
-boot loop must escalate); ideally **clears on a cold power-off** (a deliberate
-power-cycle = fresh start); never collides with bootloader/Samsung usage.
+### Timing (why the bump is not at the first action)
+At oss-init's first action **there is no misc device**: UFS is a vendor module
+(`ufs-exynos-core.ko`, 29 symbol dependencies plus regulator/PHY providers),
+loaded by the container's stock first stage. v5 log: oss-init 0.72 s, UFS module
+1.67 s, partition scan 1.94 s, switch root 4.69 s. So:
+- oss-init clones the container as before, plus a **helper** in its own private
+  mount namespace (oss-init's own namespace stays mount-free). The helper mounts
+  sysfs, polls for `PARTNAME=misc` (exactly one entry, exactly 1 MiB), and
+  **freezes the container** with a pidfd `SIGSTOP`.
+- It `mknod`s the node (from sysfs `MAJOR`/`MINOR`, never hard-coded) in a
+  private tmpfs, bumps, and reports through a pipe.
+- oss-init thaws the container (`SIGCONT`) or kills it and takes the skip path.
 
-| Store | Early write? | Survives warm reset / panic | Cold-boot behaviour | Verdict |
-| --- | --- | --- | --- | --- |
-| **(a) PMU alive-domain scratch register**, via a kernel module (as oss-rebootmode-clear already does) | **Yes** — a module needs no fs/dev; it runs at oss-init's first action | **Yes** — proven: the reboot-mode registers in this domain survived reset AND panic (`RECOVERY-PERSISTENCE-ROOTCAUSE.md`) | **Clears** (alive domain loses power) — matches "power-cycle = clean slate" | **Recommended** |
-| **(b) Reserved area of the misc partition** (raw flash, away from the BCB) | Needs a block-device node before the by-name symlinks exist — oss-init would `mknod` the UFS node by major:minor, fragile; or defer the increment until after a mount (too late) | Yes (flash) | Persists — a cold power-cycle does NOT reset it; a bootlooping phone the user power-cycles keeps escalating (could be desired or not) | Fallback if no free PMU register; needs a proven-unused offset |
-| **(c) `/data` (or `/metadata`) file** | **No** — `/data` is FBE/metadata-encrypted and only mountable after Android's vold/keystore come up; `/metadata` is ext4 and needs a real mount + ext4 writer | n/a | n/a | **Rejected for the early increment.** Usable only for the *clear* side, which already runs in userspace |
+The freeze lands during module loading, before any dm device or mount: the same
+state as an early container failure. A container that is already live when the
+report arrives is never killed. If misc never appears within 15 s, both modes
+contain as usual: without UFS no boot can mount anything.
+**Residual:** a failure in the ~1.2 s before misc appears is not counted. That
+window holds oss-init's own clear + clone (proven on device three times) and
+stock first-stage module loading (same kernel and modules as today's boot).
+Container failures there already fall back to the stock init in the same boot
+(no reboot, so no loop).
 
-**Recommendation: (a), a PMU scratch register**, because it is the only store
-oss-init can touch at its very first action with no filesystem and no device
-node — the same reason oss-rebootmode-clear is a module — and its warm-reset-
-survives / cold-boot-clears semantics are exactly an A/B retry counter. (b) is
-the fallback if the kernel agent finds no truly free register; it needs a
-documented, Samsung-unused misc offset and an early `mknod` of the misc block
-device.
+### Normal vs promoted
+| Store state at the decision | slot build (`OSS_PROMOTED=0`) | promoted BOOT build (`-DOSS_PROMOTED=1`) |
+| --- | --- | --- |
+| valid record, new count < 3 | contain | contain |
+| valid record, new count >= 3 | skip | skip |
+| absent / only damaged | create count 1, contain | **skip** (no write) |
+| foreign slot | no write, contain | **skip** |
+| I/O or verify error, wrong size, ambiguous | contain | **skip** |
+| misc not found in 15 s | contain | contain |
+A promoted image therefore needs a valid record before its first boot:
+`oss-init --bootcount init` is part of the promotion procedure (§4).
 
-### `oss-bootcount.ko` — interface for the kernel agent
+### Verified (off-device)
+`test/run-bootcount-tests.sh`, 131 checks, all pass:
+- **file:** oss-init as PID 1 with a file-backed misc and a fake sysfs. Cases:
+  fresh, second, limit, capped, foreign, torn, damaged, late misc, limit after
+  live, no sysfs, wrong size, ambiguous, and promoted absent/valid/foreign/
+  damaged/no-sysfs.
+- **cli:** including seq wrap-around and foreign refusal.
+- **device:** a real block device (GPT partition named `misc`, `losetup -P`).
+  The CLI and the production helper path ran as root in a private namespace:
+  real sysfs `PARTNAME=misc`, real `mknod`, O_DIRECT, freeze, skip.
 
-A sibling of oss-rebootmode-clear; gets its regmap from the DT syscon; touches
-**one** alive-domain scratch register that nothing else uses (candidate: an
-unused `SYSIP_DAT*` / spare `*INFORM*` word — the agent to pick and prove free,
-as was done for 0x810/0x808/0x80c). Behaviour on `finit_module`:
-
-- Read the register as `[ MAGIC:16 | COUNT:16 ]`. If MAGIC != ours, treat COUNT
-  as 0 (first use / after a cold boot that cleared it).
-- Default load: `count = min(count+1, 0xffff)`, write back with our MAGIC, and
-  `pr_info("oss-bootcount: count=%u max=%u\n", count, OSS_BOOTCOUNT_MAX)`.
-  oss-init parses that line (already implemented).
-- `clear=1` param (or a writable sysfs param `count`): set COUNT=0, keep MAGIC,
-  log `oss-bootcount: cleared`. This is what `moon-boot-confirm.sh` calls.
-- `dry_run=1`: read and log only.
-- Expose `count` and `max` as `0444`/`0644` module params for sysfs read/clear.
-- KMI-clean, core imports only, like oss-rebootmode-clear.
-
-When this module exists and is pinned into a BOOT-promotion image (and only
-then), the skip engages. Pick N with the kernel agent; **N = 3** is the default
-in oss-init (`BOOTCOUNT_MAX`) and the module should agree.
-
----
+Every case checks that no byte outside `0x40000`–`0x41fff` changed; the images
+carry a non-zero BCB, `0x8000` and `0x7f000`. The shipped aarch64 binary's CLI
+(qemu) writes records the zlib reference accepts.
 
 ## 3. Soak test (recovery slot first, before any BOOT write)
 
-Run the current v6 recovery-slot image (`f61349b3`) — and, once the counter
-module exists, a v6+counter slot image — through a full shakeout from the slot,
-where a failure still auto-recovers. Promotion is gated on all of this passing.
-
-For each item, collect `/proc/sec_log` (oss-init + module lines), `logcat -b all`,
-`dmesg`, and the relevant `dumpsys`:
-
-1. **Repeated boots** — flash + `reboot-recovery` ≥ 10 times; every boot reaches
-   Moon; oss-init declares the container live each time; no fallback line.
-2. **Screen on/off** — several lock/unlock and timeout cycles; display wakes;
-   SurfaceFlinger stays up (0 crashes); no Mali context errors.
-3. **Audio** — playback + the audio bridge (`moon-audiod`) alive through a
-   screen-off/on cycle.
-4. **Wi-Fi** — associate, DHCP, a reachability check; survives suspend/resume.
-5. **Telephony** — `moon-telephonyd` up; RIL connected; SIM state sane (airplane
-   on/off if no SIM).
-6. **Notifications + alarms** — post a notification; set an alarm a few minutes
-   out and confirm it fires (exercises wakelocks/RTC from inside containment).
-7. **Long uptime** — leave it up ≥ 2 h idle; no oss-init deadline/reboot, no OOM
-   of the container, no SurfaceFlinger restart.
-8. **Android handback inside containment** — `adb reboot` (contained reboot →
-   lands on BOOT, v6 logs "requested reboot"); contained **power-off**
-   (`svc power shutdown` / `reboot -p`) actually powers the phone off (v6 logs
-   "requested power-off"); a forced container crash recovers via the proven
-   fallback.
-9. **Counter behaviour** (once the module exists, still from the slot): after a
-   healthy boot `moon-boot-confirm.sh` zeroes the count; inject N early failures
-   and confirm oss-init then skips containment and boots stock; confirm a cold
-   power-off (store (a)) resets the count.
-
-Record results in `notes/stage2/SOAK-<date>.md`. Any item failing stops promotion.
-
----
+Runbook: `notes/stage2/SOAK-RUNBOOK.md` (v7 slot image `0381b5ab`). Repeated boots,
+screen on/off, audio, Wi-Fi, telephony, notifications and alarms, long uptime,
+contained reboot / power-off / crash handback, and the counter (bump, clear,
+escalation at 3, foreign-slot interlock) — all from the recovery slot, where a
+failure still auto-recovers. Promotion is gated on every item passing.
 
 ## 4. Exact `flash-boot-inplace.sh` changes to allow an oss-init BOOT image
 
@@ -181,16 +170,15 @@ Precise changes:
 
 3. **Image interlock, all required** (host-side + phone-side), or refuse:
    - sha256 ∈ `OSS_INIT_BOOT`;
-   - the ramdisk `/init` references `oss-rebootmode-clear.ko` AND `oss-bootcount`
-     (grep the extracted `/init`, as `build-recovery-slot.sh` already greps),
-     i.e. it clears the PMU first and increments the counter;
-   - `/oss-bootcount.ko` is present in the ramdisk and its sha256 matches the
-     pinned module;
-   - the counter-store module's on-device presence is confirmed (the kernel
-     carries it / it loads), and `moon-boot-confirm.sh` is installed at
-     `/data/adb/moon/` — so the "clear on health" half of the net exists before
-     the "count on boot" half is trusted;
-   - `BOOTCOUNT_MAX` in the image agrees with the module.
+   - the ramdisk `/init` references `oss-rebootmode-clear.ko` and carries the
+     promoted counter (its strings include `promoted boot without a trustworthy
+     boot count`), i.e. it clears the PMU first and was built `-DOSS_PROMOTED=1`;
+   - the clear half exists before the count half is trusted:
+     `/data/adb/moon/oss-init` is the same binary as the image's `/init`
+     (sha256), and `moon-boot-confirm.sh` + the `moon-post-ready.sh` hook are installed;
+   - **the misc record is valid with count 0** (`oss-init --bootcount init`, then
+     `show` → `status=ok … count=0`), because a promoted image escalates on an
+     absent record; and slots A/B are not foreign.
 
 4. **A verified stock-BOOT rollback must pre-exist**: the script already backs up
    the current BOOT to phone + host and read-back-verifies; additionally require
@@ -214,8 +202,7 @@ even though the counter is designed to make hands unnecessary.
 ---
 
 ## 5. Open items before the first BOOT write
-- Kernel agent: `oss-bootcount.ko` (store (a), a proven-free register) + its
-  on-device read/increment/clear test, like oss-rebootmode-clear's.
+- ~~Counter store~~: done in v7 (misc record v1, `bootcount-misc.h`).
 - A BOOT-promotion image build (oss-init `/init` + both modules pinned) — a new
   builder akin to `build-slot-image.sh` but targeting BOOT, still unflashed.
 - The reason channel (§1) if a contained power-off must power off in all cases.

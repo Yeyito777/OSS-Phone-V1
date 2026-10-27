@@ -165,3 +165,20 @@ Bench: 13 cases pass, including `contained-reboot`, `contained-poweroff`,
 Exact-binary checks: effective mali `f36fd339`, rebootmode `.ko` `7130cf3c`,
 `/init` carries the v6 reboot/power-off/bootcount strings and the
 `oss-bootcount` reference, qemu `/init` takes the `execveat` fallback, no panic.
+
+### v7 (2026-10-27): boot-attempt counter in misc
+`recovery-slot-stage2-v7` (`0381b5ab…`). The v6 module-based counter is replaced
+by the kernel agent's misc record v1 (`docs/bootcount-misc-record.md`),
+implemented in `bootcount-misc.h`. A helper process freezes the container once
+misc appears (~1.9 s), bumps, and oss-init thaws the container or skips to
+magiskinit at count 3. Design and the normal/promoted table: PROMOTION-PLAN.md §2.
+- **Bench:** `test/run-bootcount-tests.sh` passes all 131 checks:
+  - file-backed misc and fake sysfs, the CLI;
+  - a real `losetup -P` GPT block device, through the CLI and the production
+    helper path;
+  - nothing outside `0x40000`–`0x41fff` changed in any case.
+- **Containment bench:** `test/run-tests.sh` passes its 11 cases.
+- **Exact binary:** `/init` == `oss-init-v7` (`db6b8679`). The image carries the
+  patched Mali and rebootmode v2, and the qemu fallback is clean. The aarch64
+  CLI's records are accepted by the zlib reference.
+

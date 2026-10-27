@@ -31,10 +31,12 @@ merged ramdisk, the real magiskinit and stock init):
 | `overlay.d/oss-contain.rc` | liveness line on `/dev/kmsg` (no mount) |
 | `build-slot-image.sh` | today's BOOT + oss-init (`containment`) or oss-pid1 (`plain`) → recovery-slot image |
 | `rebootmode-clear.h` | the shared first action: load `oss-rebootmode-clear.ko` |
+| `bootcount-misc.h` | boot-attempt counter in misc (record v1, `docs/bootcount-misc-record.md`); the only writer |
 | `oss-pid1.c` | plain-slot `/init`: clear, put magiskinit back at `/init`, exec it |
 | `canary/build-recovery-slot.sh` | any BOOT + vendor_boot → a v2 recovery-slot image (+ marker) |
 | `canary/build-canary-recovery.sh`, `canary/*.c` | the panic canary and `reboot-recovery` |
 | `test/run-tests.sh`, `test/stub-*.c` | the off-device test bench |
+| `test/run-bootcount-tests.sh`, `test/misc-tool.py` | counter bench: file, CLI, real block device |
 
 ```sh
 # research host (whale): aarch64 gcc, magiskboot, mkbootimg/unpack_bootimg,
@@ -44,6 +46,7 @@ scripts/native-init/build-slot-image.sh OUT_DIR plain         # recovery-slot-mo
 scripts/native-init/canary/build-canary-recovery.sh OUT_DIR   # canary v2 + reboot-recovery
 # (canary/build-recovery-slot.sh OUT_DIR PAYLOAD NAME is called by build-slot-image.sh)
 scripts/native-init/test/run-tests.sh all            # containment matrix + no-clear and handoff cases
+scripts/native-init/test/run-bootcount-tests.sh all  # misc boot counter (device tier needs sudo + losetup)
 ```
 Outputs are deterministic and whitelisted by sha256 in
 `scripts/direct-boot/flash-recovery-inplace.sh`; built images are git-ignored

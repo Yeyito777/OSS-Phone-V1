@@ -85,3 +85,32 @@ Nothing outside `0x40000`–`0x41fff` is ever written.
   the counter must survive.
 - **Wear:** at most two 4 KiB writes per boot (bump, clear), on a UFS
   partition with wear levelling. Negligible.
+
+## Implementation (oss-init v7, `scripts/native-init/bootcount-misc.h`)
+
+Implemented as specified, with two deliberate refinements:
+
+1. **When the bump happens.** The misc partition does not exist at oss-init's
+   first action: UFS is a vendor module (`ufs-exynos-core.ko`, 29 symbol
+   dependencies plus regulator/PHY providers) that the container's stock first
+   stage loads; misc appears at ~1.9 s and first stage switches root at ~4.7 s
+   (v5 on-device log). So oss-init starts the container as usual and a helper,
+   in its own private mount namespace, waits for `PARTNAME=misc`, **freezes the
+   container** (pidfd `SIGSTOP`), bumps, and reports; oss-init then thaws the
+   container or kills it and takes the skip path. The freeze lands during
+   module loading, before any dm device or mount, i.e. the same state as an
+   early container failure. A container that is already live is never killed
+   for the count.
+2. **Our own damaged slot is not "foreign".** Literally, "neither valid nor all
+   zero ⇒ someone else uses it" would turn one torn write of ours into a
+   permanently disabled store. A slot that starts with `OSSBOOTC`, has only
+   zeros after byte 32, but fails the version/size/CRC check is classified
+   DAMAGED: treated as no record, and overwritable. Anything else non-zero is
+   FOREIGN (nothing written).
+
+Skip target: magiskinit as `/init` (today's proven boot, as oss-pid1 does), the
+stock init via the held fd only if that exec fails. A promoted build
+(`-DOSS_PROMOTED=1`) also skips when there is no trustworthy count (absent,
+damaged, foreign, I/O or verify error, wrong size, ambiguous); misc never
+appearing within 15 s contains as usual in both modes. Single writer:
+`oss-init --bootcount show|clear|init|bump`.
