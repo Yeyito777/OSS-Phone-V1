@@ -1,8 +1,30 @@
 # GPU acceleration for the Browser (vimbrowser on the A26)
 
-Research and proposal, 2026-10-26. Nothing here is measured on the phone
-yet (no phone slot); the tools for it are ready (below). Estimates are
-labelled as such.
+Research and proposal, 2026-10-26, with first measurements on the phone
+(below). Estimates are labelled as such.
+
+## Measured (2026-10-27, `scripts/gpu/browser-bench.py`, 10 s of swipes on a Wikipedia article, GPU mode, planes off)
+
+| Run | Screen updates | page rAF | GPU process | renderers | browser | Xorg | Moon | moon-compositor | total |
+|---|---|---|---|---|---|---|---|---|---|
+| stock launcher | 47.4/s | 58.2/s | 15.5 % | 33.2 % | 0.7 % | 2.5 % | 11.5 % | 13.6 % | 76.9 % of a core |
+| `--disable-gpu-compositing` | 45.9/s | 58.4/s | 15.9 % | 32.3 % | 0.5 % | 2.4 % | 11.7 % | 13.8 % | 76.6 % |
+
+Chromium's own GPU report (DevTools `SystemInfo.getInfo`, stock launcher)
+explains why A changes nothing: `gpu_compositing` is already
+`disabled_software` (Chromium never composites on SwiftShader), while
+`rasterization` is `enabled`, on "ANGLE (Google, Vulkan 1.3.0 (SwiftShader
+Device ...))": tiles are rastered by Skia on GL on SwiftShader's Vulkan,
+i.e. emulated GPU raster on the CPU, in the GPU process. The next flag to
+measure is therefore `--disable-gpu-rasterization` (Skia's native CPU
+raster in the renderers). `webgl` is `enabled_readback`, `vulkan`
+`disabled_off`, video decode `disabled_software`.
+
+The Mali's Vulkan driver (`moon-gpu-vkprobe`): Vulkan 1.1.177 (loader
+1.3.0), and all three extensions Venus needs on an Android host:
+`VK_EXT_external_memory_dma_buf`, `VK_EXT_image_drm_format_modifier`,
+`VK_EXT_queue_family_foreign` (plus `VK_KHR_external_memory_fd`, semaphore
+and fence fds, timeline semaphores).
 
 ## How the Browser draws today
 
@@ -67,7 +89,7 @@ GPU raster and compositing with no Chromium or CEF rebuild.
 
 | | Option | Gain (estimate) | Effort | Risk |
 |---|---|---|---|---|
-| A | Chromium's software compositor instead of SwiftShader GL | Removes the emulated-GL composite: tens of % less CPU while scrolling | hours | low |
+| A | Chromium's software compositor instead of SwiftShader GL | none: measured, Chromium already composites in software (above); the emulated cost is GPU raster, see A' | hours | low |
 | B | Zero-copy presentation into moon-compositor (Wayland) | Removes the X and mirror copies: 2 x 10 MB per update | weeks | medium |
 | C | Real GPU raster and compositing through Venus (Vulkan remoting) | Raster and composite leave the CPU: the largest win on heavy pages | 1 week spike, weeks to ship | high |
 | D | Hardware video decode (MFC over V4L2, or Codec2) | Video decode leaves the CPU | weeks | high (kernel panics) |
