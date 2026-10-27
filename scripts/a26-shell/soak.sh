@@ -16,7 +16,7 @@ source "$PROJECT_ROOT/scripts/a26-shell/common.sh"
 SERIAL="$(a26_resolve_serial)"
 BASE=/data/local/tmp/moon-soak
 su_run() { adb -s "$SERIAL" shell "/data/local/tmp/su -c '$1'" | tr -d '\r'; }
-latest() { su_run "ls -1 $BASE 2>/dev/null | tail -1"; }
+latest() { su_run "ls -1d $BASE/2* 2>/dev/null | grep -v aborted | tail -1" | sed 's|.*/||'; }
 
 case "${1:-}" in
 start)
