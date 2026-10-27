@@ -243,6 +243,30 @@ How to read the result:
 - If `damage->uploaded` is several ms for 2.4 MP, the compositor's
   upload is the cost.
 
+### Phone re-check (2026-10-26, rebased on main 0001a93)
+
+**Screen-off through the power fade:** no rejection with the X11 System
+app (Wayland off), nor with the Wayland demo in direct mode. Direct mode
+leaves in the same pass, the app goes to the background, and the phase
+reaches `screen_off`.
+
+**Direct-mode timing**, ms mean (max):
+
+| | Full-screen demo | Box client |
+|---|---|---|
+| Frame rate | 60.3 fps (2 vblanks per frame) | **120.5 fps (1 per frame)** |
+| Client draw (frame done -> commit) | 2.6 (3.7), paint 2.2 | 0.5 (1.4), paint 0.15 |
+| Upload (damage -> UPLOADED) | 2.85 (4.0) for 2.4 MP | 1.2 (1.6) for 0.26 MP |
+| Compositor render | 3.2 (5.0) | 2.9 (4.4) |
+| Flip -> frame done | 1.0 (2.1) | 0.8 (2.1) |
+
+The path holds 120 Hz. A full-screen redraw does not:
+1.0 + 2.6 + 2.85 + 3.2 = 9.7 ms, against 8.33 ms.
+
+The upload is about 1 ms fixed plus about 0.75 ms per MP. A cheaper draw
+alone would not be enough: with the demo's draw removed, the fixed costs
+still leave about 1.3 ms for the client.
+
 Not run: `evdev` touch, screen off/on via the power key, and the switcher
 card.
 
