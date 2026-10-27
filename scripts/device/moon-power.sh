@@ -45,7 +45,10 @@ stop_exe() {
     wait=$2
     pids=''
     for pid in $(pidof "${exe##*/}" 2>/dev/null); do
-        [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$exe" ] && pids="$pids $pid"
+        # A binary replaced since the process started reads "... (deleted)".
+        case "$(readlink "/proc/$pid/exe" 2>/dev/null)" in
+            "$exe"|"$exe (deleted)") pids="$pids $pid" ;;
+        esac
     done
     [ -n "$pids" ] || return 0
     kill -TERM $pids 2>/dev/null
