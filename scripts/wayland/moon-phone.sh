@@ -5,7 +5,7 @@
 #   scripts/wayland/moon-phone.sh install       back up the phone's Moon, install this
 #                                               branch's Moon, the demo app and the System
 #                                               app's Wayland build (beside the installed one)
-#   scripts/wayland/moon-phone.sh start [demo|system] [evdev] [debug]
+#   scripts/wayland/moon-phone.sh start [demo|system] [evdev] [debug] [box]
 #                                               restart Moon with Wayland on (the demo, or
 #                                               the Wayland System build, in the System slot)
 #   scripts/wayland/moon-phone.sh stop          restart Moon with Wayland off

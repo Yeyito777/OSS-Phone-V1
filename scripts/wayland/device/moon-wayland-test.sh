@@ -2,14 +2,16 @@
 # Experiment only (milestone 1 on the phone): run Moon with its Wayland
 # server on, without touching /data/adb/moon or the boot path.
 #
-#   su -c 'sh /data/local/tmp/a26-wayland/moon-wayland-test.sh start [demo|system] [evdev] [debug]'
+#   su -c 'sh /data/local/tmp/a26-wayland/moon-wayland-test.sh start [demo|system] [evdev] [debug] [box]'
 #   su -c 'sh /data/local/tmp/a26-wayland/moon-wayland-test.sh stop'
 #
 # start: stops the running Moon session and starts the installed Moon again
 # exactly as the supervisor does (same chroot wrapper, same GPU socket when
 # the GPU session is up), plus MOON_WAYLAND_DIR; `demo` puts the native demo
 # app in the System slot, `system` the System app's Wayland build, `evdev`
-# has Moon read the touchscreen itself, `debug` logs protocol events. The supervisor's liveness probe keeps
+# has Moon read the touchscreen itself, `debug` logs protocol events and
+# direct-frame timing, `box` makes the demo's animation a cheap damaged
+# band. The supervisor's liveness probe keeps
 # working (same control socket) and its pidfile names the new session, so
 # a failure still takes the normal recovery and fallback paths.
 # stop: the same restart without the Wayland environment. A reboot also
@@ -65,6 +67,7 @@ case "${1:-}" in
                 system) extra="$extra A26_SYSTEM_APP=/opt/a26-system/bin/a26-system-wayland" ;;
                 evdev) extra="$extra MOON_TOUCH=evdev" ;;
                 debug) extra="$extra MOON_WAYLAND_DEBUG=1" ;;
+                box) extra="$extra MOON_DEMO_DRAW=box" ;;
                 *) echo "unknown option $option" >&2; exit 2 ;;
             esac
         done
@@ -75,5 +78,5 @@ case "${1:-}" in
         stop_session
         start_session '' 2>&1 | tee -a "$LOG"
         ;;
-    *) echo "usage: $0 start [demo|system] [evdev] [debug] | stop" >&2; exit 2 ;;
+    *) echo "usage: $0 start [demo|system] [evdev] [debug] [box] | stop" >&2; exit 2 ;;
 esac

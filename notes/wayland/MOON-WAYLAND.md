@@ -181,22 +181,67 @@ the same path as a finger: Xorg, XI2, the proxy window, wl_touch.
   (System page with the Activity and About cards).
 - `restore` put back the exact Moon and System binaries (by sha256).
 
-Found on the phone:
-- The animating demo runs at 60.3 fps in direct mode (16.59 ms mean
-  interval), not 120. The cause is not measured yet. The likely costs are:
-  - the full-screen CPU redraw at 1080x2217 each frame
-  - moon-compositor importing a fresh foreign buffer each frame
-  Either can push a frame past 8.3 ms, so the frame callback misses every
-  other vblank. Next: time the demo's draw and the compositor's per-frame
-  upload.
-- When Auto-Lock fires with a Wayland app in the foreground, the first
-  screen-off transaction is rejected with "unsafe shell state", and a later
-  retry succeeds. `safe_to_power_down` still sees the app's window as
-  managed or active at that moment. Not yet checked with an X11 app.
+Found on the phone, and what came of it:
+- **The first screen-off attempt is rejected ("unsafe shell state") and the
+  lock screen comes back on.** This is fixed (8ab2451). The cause was not
+  Wayland: it happened with X11 apps too, and reproduces off-device with
+  both.
+  - A finished power fade locks inside `state.tick()`, which runs after
+    the loop has reconciled the registry for the app view.
+  - The screen-off transaction in the same pass then still sees the app
+    active, and its window managed.
+  - Now the registry is reconciled again when the tick leaves the app.
+    The app is unmapped and frozen before the lock frame and the safety
+    check.
+  - A directly shown Wayland app leaves direct mode in that same pass,
+    and the check refuses while any app buffer is still on screen.
+- **The animating demo runs at 60 fps in direct mode.** This is
+  instrumented. One path-side delay is fixed (d499449). The remaining
+  attribution needs the phone (see below).
+  - Frame callbacks waited for the X path's free-running 120 Hz grid:
+    1.1 ms mean, 2.1 ms max after the flip. Now they go out at the flip.
+  - The rest is cost: draw + upload + render must fit in 8.33 ms. The
+    mock with `--render-ms 4 --upload-ms-per-mpx 1.5` reproduces the
+    phone: the full-screen demo runs at 60.0 fps, and the box client
+    (0.26 MP of damage) at 120.
+- **Found while instrumenting: partial damage was wrong in direct mode.**
+  This is fixed (d499449).
+  - Each wl_buffer's texture got only its own commit's damage, which is
+    relative to the *other* buffer.
+  - So foot showed every other letter, with stale cursor blocks. The
+    full-damage demo hid it, and so did the mock until `--textures`.
 - Not specific to Wayland (main has it too): keys typed on Moon's keyboard
-  don't reset Auto-Lock. `begin_raw_keyboard_contact` never calls
-  `note_input`, so the screen locks 30 s after the last non-keyboard touch,
-  even mid-typing.
+  don't reset Auto-Lock (`begin_raw_keyboard_contact` never calls
+  `note_input`). The UI agent has this one.
+
+### Direct-mode timing (`MOON_PROFILE=1` or `MOON_WAYLAND_DEBUG=1`)
+
+Every 2 s Moon logs `wayland: direct timing N frames` with mean/max ms
+for each step:
+
+| Field | What it measures |
+|---|---|
+| `frame-done->commit` | The client's draw (plus socket hops) |
+| `commit->sent` | Moon |
+| `damage->uploaded` | The compositor's texture upload (MG_UPLOADED reply) |
+| `sent->flip` | The upload, the render (`render`), and the wait for vblank |
+| `flip->frame-done` | Moon's frame-callback latency |
+| `vblanks/frame` | Vblanks per frame (1 means every vblank) |
+
+The demo's fps line also carries its paint time.
+`MOON_DEMO_DRAW=box` is the cheap client: a box in one band, so it
+measures the display path. Phone re-check:
+
+```
+moon-phone.sh start demo debug        # animate: full-screen numbers
+moon-phone.sh start demo debug box    # the same with the cheap client
+```
+
+How to read the result:
+- If full-screen `frame-done->commit` is several ms and box mode holds
+  120, the demo's drawing is the cost.
+- If `damage->uploaded` is several ms for 2.4 MP, the compositor's
+  upload is the cost.
 
 Not run: `evdev` touch, screen off/on via the power key, and the switcher
 card.
