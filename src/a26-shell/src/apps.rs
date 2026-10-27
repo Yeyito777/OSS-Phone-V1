@@ -114,6 +114,11 @@ impl Application {
 
 pub struct AppRegistry {
     applications: [Application; AppId::COUNT],
+    /// The Wayland server's environment, and the apps that get it (only
+    /// apps known to speak Wayland: a toolkit that merely can, like
+    /// Chromium's, must not be moved onto it by accident).
+    wayland_env: Vec<(String, String)>,
+    wayland_apps: Vec<AppId>,
     active: Option<AppId>,
     leases: LeaseManager,
 }
@@ -139,7 +144,14 @@ impl AppRegistry {
             ],
             active: None,
             leases: LeaseManager::default(),
+            wayland_env: Vec::new(),
+            wayland_apps: Vec::new(),
         }
+    }
+
+    pub fn set_wayland_env(&mut self, env: Vec<(String, String)>, apps: Vec<AppId>) {
+        self.wayland_env = env;
+        self.wayland_apps = apps;
     }
 
     pub fn active(&self) -> Option<AppId> {
@@ -324,6 +336,11 @@ impl AppRegistry {
         let Some(active) = desired else {
             return update;
         };
+        let child_env = if self.wayland_apps.contains(&active) {
+            self.wayland_env.clone()
+        } else {
+            Vec::new()
+        };
         let application = self.app_mut(active);
         match application.lifecycle {
             AppLifecycle::Background if application.windows.is_empty() => {
@@ -358,6 +375,7 @@ impl AppRegistry {
                         "DISPLAY",
                         env::var("DISPLAY").unwrap_or_else(|_| ":0".into()),
                     )
+                    .envs(child_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
                     .stdin(Stdio::null());
                 if let Err(error) = application.freezer.configure_spawn(&mut command) {
                     eprintln!(

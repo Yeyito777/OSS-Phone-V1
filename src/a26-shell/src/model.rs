@@ -252,6 +252,10 @@ pub struct ShellState {
     pub redraw: bool,
     pub should_exit: bool,
     pub managed_windows: Vec<u32>,
+    /// Managed windows that are proxies of Wayland toplevels: keys for them
+    /// go to the Wayland server (`wayland_keys`) instead of XTEST.
+    pub wayland_windows: Vec<u32>,
+    pub wayland_keys: Vec<crate::keyboard::KeyboardInput>,
     pub keyboard: KeyboardState,
     pub lock_face: LockFace,
     pub last_lock_input: Instant,
@@ -367,6 +371,8 @@ impl ShellState {
             redraw: true,
             should_exit: false,
             managed_windows: Vec::new(),
+            wayland_windows: Vec::new(),
+            wayland_keys: Vec::new(),
             keyboard: KeyboardState::default(),
             lock_face: LockFace::Clock,
             last_lock_input: Instant::now(),

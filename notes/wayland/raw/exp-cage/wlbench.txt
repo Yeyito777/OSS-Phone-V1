@@ -1,0 +1,7 @@
+wlbench mpx=0.25 op=scale buf=shm: frames=966 presented=964 discarded=0 zero-copy=0 refresh=8.33 ms; interval mean=8.30 p50=8.29 p95=8.54 max=9.02 ms, missed refreshes=0 (0.0%), client draw mean=0.80 max=2.77 ms, 120.5 fps
+wlbench mpx=0.50 op=scale buf=shm: frames=967 presented=965 discarded=0 zero-copy=0 refresh=8.33 ms; interval mean=8.30 p50=8.29 p95=8.55 max=9.11 ms, missed refreshes=0 (0.0%), client draw mean=1.48 max=4.85 ms, 120.5 fps
+wlbench mpx=0.75 op=scale buf=shm: frames=966 presented=964 discarded=0 zero-copy=0 refresh=8.33 ms; interval mean=8.30 p50=8.29 p95=8.55 max=9.07 ms, missed refreshes=0 (0.0%), client draw mean=2.24 max=7.35 ms, 120.5 fps
+wlbench mpx=1.07 op=scale buf=shm: frames=966 presented=964 discarded=0 zero-copy=0 refresh=8.33 ms; interval mean=8.30 p50=8.30 p95=8.54 max=8.86 ms, missed refreshes=0 (0.0%), client draw mean=3.10 max=8.48 ms, 120.5 fps
+wlbench mpx=1.50 op=scale buf=shm: frames=965 presented=963 discarded=0 zero-copy=0 refresh=8.33 ms; interval mean=8.30 p50=8.30 p95=8.55 max=16.58 ms, missed refreshes=1 (0.1%), client draw mean=4.28 max=9.46 ms, 120.4 fps
+wlbench mpx=2.00 op=scale buf=shm: frames=962 presented=960 discarded=0 zero-copy=0 refresh=8.33 ms; interval mean=8.32 p50=8.30 p95=8.57 max=16.60 ms, missed refreshes=3 (0.3%), client draw mean=5.63 max=10.82 ms, 120.2 fps
+wlbench mpx=2.53 op=scale buf=shm: frames=865 presented=863 discarded=0 zero-copy=0 refresh=8.33 ms; interval mean=9.28 p50=8.30 p95=16.62 max=17.06 ms, missed refreshes=102 (10.6%), client draw mean=6.69 max=12.10 ms, 107.8 fps

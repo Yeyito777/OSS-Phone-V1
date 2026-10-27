@@ -16,8 +16,16 @@ x11rb = { version = "0.14", features = ["xinput", "randr", "dpms", "dri3", "pres
 fontdue = { version = "0.9", default-features = false, features = ["std", "simd"] }
 png = "0.17"
 ttf-parser = { version = "0.25", default-features = false, features = ["std", "opentype-layout"] }
+# The Wayland server (pure-Rust backend, linked statically like the rest).
+wayland-server = "0.31"
+wayland-protocols = { version = "0.32", features = ["server", "unstable"] }
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+[dev-dependencies]
+# Protocol tests drive the Wayland server with a real client in-process.
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "server", "unstable"] }

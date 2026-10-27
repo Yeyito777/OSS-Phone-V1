@@ -1,0 +1,5280 @@
+{
+  "\/dev\/dri\/card0": {
+    "driver": {
+      "name": "exynos-drmdpu",
+      "desc": "Samsung SoC DRM",
+      "version": {
+        "major": 1,
+        "minor": 0,
+        "patch": 0,
+        "date": "20110530"
+      },
+      "kernel": {
+        "sysname": "Linux",
+        "release": "5.10.223-android12-9-30597860-abA266MUBU1AYB8",
+        "version": "#1 SMP PREEMPT Sun Oct 25 00:00:00 UTC 2026",
+        "tainted": 1024
+      },
+      "client_caps": {
+        "STEREO_3D": true,
+        "UNIVERSAL_PLANES": true,
+        "ATOMIC": true,
+        "ASPECT_RATIO": true,
+        "WRITEBACK_CONNECTORS": true,
+        "CURSOR_PLANE_HOTSPOT": false
+      },
+      "caps": {
+        "DUMB_BUFFER": 1,
+        "VBLANK_HIGH_CRTC": 1,
+        "DUMB_PREFERRED_DEPTH": 0,
+        "DUMB_PREFER_SHADOW": 0,
+        "PRIME": 3,
+        "TIMESTAMP_MONOTONIC": 1,
+        "ASYNC_PAGE_FLIP": 0,
+        "CURSOR_WIDTH": 64,
+        "CURSOR_HEIGHT": 64,
+        "ADDFB2_MODIFIERS": 1,
+        "PAGE_FLIP_TARGET": 0,
+        "CRTC_IN_VBLANK_EVENT": 1,
+        "SYNCOBJ": 0,
+        "SYNCOBJ_TIMELINE": 0,
+        "ATOMIC_ASYNC_PAGE_FLIP": null
+      }
+    },
+    "device": {
+      "available_nodes": 5,
+      "bus_type": 2,
+      "device_data": {
+        "compatible": [
+          "exynos-drm"
+        ]
+      },
+      "bus_data": {
+        "fullname": "exynos-drm"
+      }
+    },
+    "fb_size": {
+      "min_width": 0,
+      "max_width": 8192,
+      "min_height": 0,
+      "max_height": 8192
+    },
+    "connectors": [
+      {
+        "id": 115,
+        "type": 18,
+        "status": 1,
+        "phy_width": 0,
+        "phy_height": 0,
+        "subpixel": 1,
+        "encoder_id": 0,
+        "encoders": [
+          114
+        ],
+        "modes": [
+          {
+            "clock": 556188,
+            "hdisplay": 4096,
+            "hsync_start": 4097,
+            "hsync_end": 4098,
+            "htotal": 4099,
+            "hskew": 0,
+            "vdisplay": 4096,
+            "vsync_start": 4097,
+            "vsync_end": 4098,
+            "vtotal": 4099,
+            "vscan": 0,
+            "vrefresh": 33,
+            "flags": 9,
+            "type": 72,
+            "name": "4096x4096"
+          }
+        ],
+        "properties": {
+          "DPMS": {
+            "id": 2,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "On",
+                "value": 0
+              },
+              {
+                "name": "Standby",
+                "value": 1
+              },
+              {
+                "name": "Suspend",
+                "value": 2
+              },
+              {
+                "name": "Off",
+                "value": 3
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "link-status": {
+            "id": 5,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Good",
+                "value": 0
+              },
+              {
+                "name": "Bad",
+                "value": 1
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "non-desktop": {
+            "id": 6,
+            "flags": 6,
+            "type": 2,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 1
+            },
+            "value": 0,
+            "data": null
+          },
+          "TILE": {
+            "id": 4,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 0,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "CRTC_ID": {
+            "id": 20,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 3435973836,
+            "value": 0,
+            "data": null
+          },
+          "WRITEBACK_OUT_FENCE_PTR": {
+            "id": 112,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 18446744073709551615
+            },
+            "value": 0,
+            "data": null
+          },
+          "WRITEBACK_FB_ID": {
+            "id": 110,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 4227595259,
+            "value": 0,
+            "data": null
+          },
+          "WRITEBACK_PIXEL_FORMATS": {
+            "id": 111,
+            "flags": 2147483668,
+            "type": 16,
+            "atomic": true,
+            "immutable": true,
+            "raw_value": 113,
+            "spec": null,
+            "value": null,
+            "data": [
+              875708993,
+              842094158
+            ]
+          },
+          "standard": {
+            "id": 116,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "BT709",
+                "value": 1
+              },
+              {
+                "name": "BT601_625",
+                "value": 2
+              },
+              {
+                "name": "BT601_625_UNADJUSTED",
+                "value": 3
+              },
+              {
+                "name": "BT601_525",
+                "value": 4
+              },
+              {
+                "name": "BT601_525_UNADJUSTED",
+                "value": 5
+              },
+              {
+                "name": "BT2020",
+                "value": 6
+              },
+              {
+                "name": "BT2020_CONSTANT_LUMINANCE",
+                "value": 7
+              },
+              {
+                "name": "BT470M",
+                "value": 8
+              },
+              {
+                "name": "FILM",
+                "value": 9
+              },
+              {
+                "name": "DCI-P3",
+                "value": 10
+              },
+              {
+                "name": "Adobe RGB",
+                "value": 11
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "range": {
+            "id": 117,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Full",
+                "value": 1
+              },
+              {
+                "name": "Limited",
+                "value": 2
+              },
+              {
+                "name": "Extended",
+                "value": 3
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "hw restrictions": {
+            "id": 119,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 118,
+            "spec": null,
+            "value": null,
+            "data": null
+          }
+        }
+      },
+      {
+        "id": 123,
+        "type": 16,
+        "status": 1,
+        "phy_width": 71,
+        "phy_height": 154,
+        "subpixel": 1,
+        "encoder_id": 122,
+        "encoders": [
+          122
+        ],
+        "modes": [
+          {
+            "clock": 338112,
+            "hdisplay": 1080,
+            "hsync_start": 1114,
+            "hsync_end": 1124,
+            "htotal": 1174,
+            "hskew": 0,
+            "vdisplay": 2340,
+            "vsync_start": 2384,
+            "vsync_end": 2386,
+            "vtotal": 2400,
+            "vscan": 0,
+            "vrefresh": 120,
+            "flags": 0,
+            "type": 72,
+            "name": "1080x2340@120hs"
+          },
+          {
+            "clock": 338112,
+            "hdisplay": 1080,
+            "hsync_start": 1114,
+            "hsync_end": 1124,
+            "htotal": 1174,
+            "hskew": 0,
+            "vdisplay": 2340,
+            "vsync_start": 4784,
+            "vsync_end": 4786,
+            "vtotal": 4800,
+            "vscan": 0,
+            "vrefresh": 60,
+            "flags": 0,
+            "type": 64,
+            "name": "1080x2340@60hs"
+          }
+        ],
+        "properties": {
+          "EDID": {
+            "id": 1,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 124,
+            "spec": null,
+            "value": null,
+            "data": "AP\/\/\/\/\/\/\/wBMLQAAAAAAABAeAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\/ABzYW1zdW5nIGxjZCAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANI="
+          },
+          "DPMS": {
+            "id": 2,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 3,
+            "spec": [
+              {
+                "name": "On",
+                "value": 0
+              },
+              {
+                "name": "Standby",
+                "value": 1
+              },
+              {
+                "name": "Suspend",
+                "value": 2
+              },
+              {
+                "name": "Off",
+                "value": 3
+              }
+            ],
+            "value": 3,
+            "data": null
+          },
+          "link-status": {
+            "id": 5,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Good",
+                "value": 0
+              },
+              {
+                "name": "Bad",
+                "value": 1
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "non-desktop": {
+            "id": 6,
+            "flags": 6,
+            "type": 2,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 1
+            },
+            "value": 0,
+            "data": null
+          },
+          "TILE": {
+            "id": 4,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 0,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "CRTC_ID": {
+            "id": 20,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 120,
+            "spec": 3435973836,
+            "value": 120,
+            "data": null
+          },
+          "min_luminance": {
+            "id": 49,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": null
+          },
+          "max_luminance": {
+            "id": 47,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": null
+          },
+          "max_avg_luminance": {
+            "id": 48,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": null
+          },
+          "hdr_formats": {
+            "id": 50,
+            "flags": 32,
+            "type": 32,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Dolby Vision",
+                "value": 1
+              },
+              {
+                "name": "HDR10",
+                "value": 2
+              },
+              {
+                "name": "HLG",
+                "value": 3
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "adjusted_fps": {
+            "id": 51,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 120,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 120,
+            "data": null
+          }
+        }
+      }
+    ],
+    "encoders": [
+      {
+        "id": 114,
+        "type": 5,
+        "crtc_id": 0,
+        "possible_crtcs": 2,
+        "possible_clones": 3
+      },
+      {
+        "id": 122,
+        "type": 6,
+        "crtc_id": 120,
+        "possible_crtcs": 1,
+        "possible_clones": 3
+      }
+    ],
+    "crtcs": [
+      {
+        "id": 120,
+        "fb_id": 127,
+        "x": 0,
+        "y": 0,
+        "mode": {
+          "clock": 338112,
+          "hdisplay": 1080,
+          "hsync_start": 1114,
+          "hsync_end": 1124,
+          "htotal": 1174,
+          "hskew": 0,
+          "vdisplay": 2340,
+          "vsync_start": 2384,
+          "vsync_end": 2386,
+          "vtotal": 2400,
+          "vscan": 0,
+          "vrefresh": 120,
+          "flags": 0,
+          "type": 0,
+          "name": ""
+        },
+        "gamma_size": 0,
+        "properties": {
+          "ACTIVE": {
+            "id": 22,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 1
+            },
+            "value": 0,
+            "data": null
+          },
+          "MODE_ID": {
+            "id": 23,
+            "flags": 2147483664,
+            "type": 16,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 128,
+            "spec": null,
+            "value": null,
+            "data": {
+              "clock": 338112,
+              "hdisplay": 1080,
+              "hsync_start": 1114,
+              "hsync_end": 1124,
+              "htotal": 1174,
+              "hskew": 0,
+              "vdisplay": 2340,
+              "vsync_start": 2384,
+              "vsync_end": 2386,
+              "vtotal": 2400,
+              "vscan": 0,
+              "vrefresh": 120,
+              "flags": 0,
+              "type": 0,
+              "name": ""
+            }
+          },
+          "OUT_FENCE_PTR": {
+            "id": 19,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 18446744073709551615
+            },
+            "value": 0,
+            "data": null
+          },
+          "VRR_ENABLED": {
+            "id": 24,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 1
+            },
+            "value": 0,
+            "data": null
+          },
+          "color mode": {
+            "id": 31,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Native",
+                "value": 0
+              },
+              {
+                "name": "DCI-P3",
+                "value": 6
+              },
+              {
+                "name": "SRGB",
+                "value": 7
+              },
+              {
+                "name": "BT601-625",
+                "value": 1
+              },
+              {
+                "name": "BT601-625-UNADJUSTED",
+                "value": 2
+              },
+              {
+                "name": "BT601-525",
+                "value": 3
+              },
+              {
+                "name": "BT601-525-UNADJUSTED",
+                "value": 4
+              },
+              {
+                "name": "BT709",
+                "value": 5
+              },
+              {
+                "name": "ADOBE-RGB",
+                "value": 8
+              },
+              {
+                "name": "DISPLAY-P3",
+                "value": 9
+              },
+              {
+                "name": "BT2020",
+                "value": 10
+              },
+              {
+                "name": "BT2100-PQ",
+                "value": 11
+              },
+              {
+                "name": "BT2100-HLG",
+                "value": 12
+              },
+              {
+                "name": "CUSTOM-0",
+                "value": 256
+              },
+              {
+                "name": "CUSTOM-1",
+                "value": 257
+              },
+              {
+                "name": "CUSTOM-2",
+                "value": 258
+              },
+              {
+                "name": "CUSTOM-3",
+                "value": 259
+              },
+              {
+                "name": "CUSTOM-4",
+                "value": 260
+              },
+              {
+                "name": "CUSTOM-5",
+                "value": 261
+              },
+              {
+                "name": "CUSTOM-6",
+                "value": 262
+              },
+              {
+                "name": "CUSTOM-7",
+                "value": 263
+              },
+              {
+                "name": "CUSTOM-8",
+                "value": 264
+              },
+              {
+                "name": "CUSTOM-9",
+                "value": 265
+              },
+              {
+                "name": "CUSTOM-10",
+                "value": 266
+              },
+              {
+                "name": "CUSTOM-11",
+                "value": 267
+              },
+              {
+                "name": "CUSTOM-12",
+                "value": 268
+              },
+              {
+                "name": "CUSTOM-13",
+                "value": 269
+              },
+              {
+                "name": "CUSTOM-14",
+                "value": 270
+              },
+              {
+                "name": "CUSTOM-15",
+                "value": 271
+              },
+              {
+                "name": "CUSTOM-16",
+                "value": 272
+              },
+              {
+                "name": "CUSTOM-17",
+                "value": 273
+              },
+              {
+                "name": "CUSTOM-18",
+                "value": 274
+              },
+              {
+                "name": "CUSTOM-19",
+                "value": 275
+              },
+              {
+                "name": "CUSTOM-20",
+                "value": 276
+              },
+              {
+                "name": "CUSTOM-21",
+                "value": 277
+              },
+              {
+                "name": "CUSTOM-22",
+                "value": 278
+              },
+              {
+                "name": "CUSTOM-23",
+                "value": 279
+              },
+              {
+                "name": "CUSTOM-24",
+                "value": 280
+              },
+              {
+                "name": "CUSTOM-25",
+                "value": 281
+              },
+              {
+                "name": "CUSTOM-26",
+                "value": 282
+              },
+              {
+                "name": "CUSTOM-27",
+                "value": 283
+              },
+              {
+                "name": "CUSTOM-28",
+                "value": 284
+              },
+              {
+                "name": "CUSTOM-29",
+                "value": 285
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "render intent": {
+            "id": 32,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Colorimetric",
+                "value": 0
+              },
+              {
+                "name": "Enhance",
+                "value": 1
+              },
+              {
+                "name": "Tone Map Colorimetric",
+                "value": 2
+              },
+              {
+                "name": "Tone Map Enhance",
+                "value": 3
+              },
+              {
+                "name": "CUSTOM-0",
+                "value": 256
+              },
+              {
+                "name": "CUSTOM-1",
+                "value": 257
+              },
+              {
+                "name": "CUSTOM-2",
+                "value": 258
+              },
+              {
+                "name": "CUSTOM-3",
+                "value": 259
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "DQE_FD": {
+            "id": 37,
+            "flags": 128,
+            "type": 128,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -1,
+              "max": 1023
+            },
+            "value": 0,
+            "data": null
+          },
+          "adjusted_vblank": {
+            "id": 33,
+            "flags": 128,
+            "type": 128,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 2830180799889,
+            "spec": {
+              "min": 0,
+              "max": 9223372036854775807
+            },
+            "value": 2830180799889,
+            "data": null
+          },
+          "dsr_status": {
+            "id": 35,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 1
+            },
+            "value": 0,
+            "data": null
+          },
+          "operation_mode": {
+            "id": 34,
+            "flags": 12,
+            "type": 8,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "video_mode",
+                "value": 0
+              },
+              {
+                "name": "command_mode",
+                "value": 1
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "modeset_only": {
+            "id": 36,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 1
+            },
+            "value": 0,
+            "data": null
+          },
+          "partial_region": {
+            "id": 38,
+            "flags": 16,
+            "type": 16,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 126,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "bts_fps": {
+            "id": 39,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 120,
+            "spec": {
+              "min": 0,
+              "max": 18446744073709551615
+            },
+            "value": 120,
+            "data": null
+          }
+        }
+      },
+      {
+        "id": 121,
+        "fb_id": 0,
+        "x": 0,
+        "y": 0,
+        "mode": null,
+        "gamma_size": 0,
+        "properties": {
+          "ACTIVE": {
+            "id": 22,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 1
+            },
+            "value": 0,
+            "data": null
+          },
+          "MODE_ID": {
+            "id": 23,
+            "flags": 2147483664,
+            "type": 16,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "OUT_FENCE_PTR": {
+            "id": 19,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 18446744073709551615
+            },
+            "value": 0,
+            "data": null
+          },
+          "VRR_ENABLED": {
+            "id": 24,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 1
+            },
+            "value": 0,
+            "data": null
+          }
+        }
+      }
+    ],
+    "planes": [
+      {
+        "id": 54,
+        "possible_crtcs": 3,
+        "crtc_id": 120,
+        "fb_id": 127,
+        "crtc_x": 0,
+        "crtc_y": 0,
+        "x": 0,
+        "y": 0,
+        "gamma_size": 0,
+        "fb": {
+          "id": 127,
+          "width": 1080,
+          "height": 2340,
+          "format": 875713112,
+          "modifier": 0,
+          "planes": [
+            {
+              "offset": 0,
+              "pitch": 4320
+            }
+          ]
+        },
+        "formats": [
+          875713089,
+          875708993,
+          875708754,
+          875708738,
+          875713112,
+          875709016,
+          875714642,
+          875714626,
+          909199186,
+          909199170,
+          808669761,
+          808665665,
+          808665426,
+          808665410
+        ],
+        "properties": {
+          "type": {
+            "id": 8,
+            "flags": 12,
+            "type": 8,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 1,
+            "spec": [
+              {
+                "name": "Overlay",
+                "value": 0
+              },
+              {
+                "name": "Primary",
+                "value": 1
+              },
+              {
+                "name": "Cursor",
+                "value": 2
+              }
+            ],
+            "value": 1,
+            "data": null
+          },
+          "FB_ID": {
+            "id": 17,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 127,
+            "spec": 4227595259,
+            "value": 127,
+            "data": {
+              "id": 127,
+              "width": 1080,
+              "height": 2340,
+              "format": 875713112,
+              "modifier": 0,
+              "planes": [
+                {
+                  "offset": 0,
+                  "pitch": 4320
+                }
+              ]
+            }
+          },
+          "IN_FENCE_FD": {
+            "id": 18,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 18446744073709551615,
+            "spec": {
+              "min": -1,
+              "max": 2147483647
+            },
+            "value": -1,
+            "data": null
+          },
+          "CRTC_ID": {
+            "id": 20,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 120,
+            "spec": 3435973836,
+            "value": 120,
+            "data": null
+          },
+          "CRTC_X": {
+            "id": 13,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_Y": {
+            "id": 14,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_W": {
+            "id": 15,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 1080,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 1080,
+            "data": null
+          },
+          "CRTC_H": {
+            "id": 16,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 2340,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 2340,
+            "data": null
+          },
+          "SRC_X": {
+            "id": 9,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_Y": {
+            "id": 10,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_W": {
+            "id": 11,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 70778880,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 70778880,
+            "data": 1080
+          },
+          "SRC_H": {
+            "id": 12,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 153354240,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 153354240,
+            "data": 2340
+          },
+          "IN_FORMATS": {
+            "id": 30,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 55,
+            "spec": null,
+            "value": null,
+            "data": [
+              {
+                "modifier": 288230376151711748,
+                "formats": [
+                  875708738
+                ]
+              },
+              {
+                "modifier": 2251799813685248,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665,
+                  808665426,
+                  808665410
+                ]
+              }
+            ]
+          },
+          "alpha": {
+            "id": 56,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 65535,
+            "spec": {
+              "min": 0,
+              "max": 65535
+            },
+            "value": 65535,
+            "data": null
+          },
+          "pixel blend mode": {
+            "id": 57,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 2,
+            "spec": [
+              {
+                "name": "None",
+                "value": 2
+              },
+              {
+                "name": "Pre-multiplied",
+                "value": 0
+              },
+              {
+                "name": "Coverage",
+                "value": 1
+              }
+            ],
+            "value": 2,
+            "data": null
+          },
+          "zpos": {
+            "id": 58,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 8
+            },
+            "value": 0,
+            "data": null
+          },
+          "rotation": {
+            "id": 59,
+            "flags": 32,
+            "type": 32,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 1,
+            "spec": [
+              {
+                "name": "rotate-0",
+                "value": 0
+              },
+              {
+                "name": "rotate-180",
+                "value": 2
+              },
+              {
+                "name": "reflect-x",
+                "value": 4
+              },
+              {
+                "name": "reflect-y",
+                "value": 5
+              }
+            ],
+            "value": 1,
+            "data": null
+          },
+          "HDR_FD": {
+            "id": 46,
+            "flags": 128,
+            "type": 128,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 16,
+            "spec": {
+              "min": -1,
+              "max": 1023
+            },
+            "value": 16,
+            "data": null
+          },
+          "hw restrictions": {
+            "id": 40,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 60,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "standard": {
+            "id": 41,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 1,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "BT709",
+                "value": 1
+              },
+              {
+                "name": "BT601_625",
+                "value": 2
+              },
+              {
+                "name": "BT601_625_UNADJUSTED",
+                "value": 3
+              },
+              {
+                "name": "BT601_525",
+                "value": 4
+              },
+              {
+                "name": "BT601_525_UNADJUSTED",
+                "value": 5
+              },
+              {
+                "name": "BT2020",
+                "value": 6
+              },
+              {
+                "name": "BT2020_CONSTANT_LUMINANCE",
+                "value": 7
+              },
+              {
+                "name": "BT470M",
+                "value": 8
+              },
+              {
+                "name": "FILM",
+                "value": 9
+              },
+              {
+                "name": "DCI-P3",
+                "value": 10
+              },
+              {
+                "name": "Adobe RGB",
+                "value": 11
+              }
+            ],
+            "value": 1,
+            "data": null
+          },
+          "transfer": {
+            "id": 42,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 2,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Linear",
+                "value": 1
+              },
+              {
+                "name": "sRGB",
+                "value": 2
+              },
+              {
+                "name": "SMPTE 170M",
+                "value": 3
+              },
+              {
+                "name": "Gamma 2.2",
+                "value": 4
+              },
+              {
+                "name": "Gamma 2.6",
+                "value": 5
+              },
+              {
+                "name": "Gamma 2.8",
+                "value": 6
+              },
+              {
+                "name": "ST2084",
+                "value": 7
+              },
+              {
+                "name": "HLG",
+                "value": 8
+              }
+            ],
+            "value": 2,
+            "data": null
+          },
+          "range": {
+            "id": 43,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 1,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Full",
+                "value": 1
+              },
+              {
+                "name": "Limited",
+                "value": 2
+              },
+              {
+                "name": "Extended",
+                "value": 3
+              }
+            ],
+            "value": 1,
+            "data": null
+          },
+          "colormap": {
+            "id": 44,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": null
+          }
+        }
+      },
+      {
+        "id": 61,
+        "possible_crtcs": 3,
+        "crtc_id": 0,
+        "fb_id": 0,
+        "crtc_x": 0,
+        "crtc_y": 0,
+        "x": 0,
+        "y": 0,
+        "gamma_size": 0,
+        "fb": null,
+        "formats": [
+          875713089,
+          875708993,
+          875708754,
+          875708738,
+          875713112,
+          875709016,
+          875714642,
+          875714626,
+          909199186,
+          909199170,
+          808669761,
+          808665665,
+          808665426,
+          808665410,
+          842094158,
+          825382478,
+          808530000
+        ],
+        "properties": {
+          "type": {
+            "id": 8,
+            "flags": 12,
+            "type": 8,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 1,
+            "spec": [
+              {
+                "name": "Overlay",
+                "value": 0
+              },
+              {
+                "name": "Primary",
+                "value": 1
+              },
+              {
+                "name": "Cursor",
+                "value": 2
+              }
+            ],
+            "value": 1,
+            "data": null
+          },
+          "FB_ID": {
+            "id": 17,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 4227595259,
+            "value": 0,
+            "data": null
+          },
+          "IN_FENCE_FD": {
+            "id": 18,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 18446744073709551615,
+            "spec": {
+              "min": -1,
+              "max": 2147483647
+            },
+            "value": -1,
+            "data": null
+          },
+          "CRTC_ID": {
+            "id": 20,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 3435973836,
+            "value": 0,
+            "data": null
+          },
+          "CRTC_X": {
+            "id": 13,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_Y": {
+            "id": 14,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_W": {
+            "id": 15,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_H": {
+            "id": 16,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "SRC_X": {
+            "id": 9,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_Y": {
+            "id": 10,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_W": {
+            "id": 11,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_H": {
+            "id": 12,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "IN_FORMATS": {
+            "id": 30,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 62,
+            "spec": null,
+            "value": null,
+            "data": [
+              {
+                "modifier": 288230376151711748,
+                "formats": [
+                  875708738
+                ]
+              },
+              {
+                "modifier": 2251799813685248,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665,
+                  808665426,
+                  808665410,
+                  842094158,
+                  825382478,
+                  808530000
+                ]
+              },
+              {
+                "modifier": 576460752303423488,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665
+                ]
+              },
+              {
+                "modifier": 288230376151711760,
+                "formats": [
+                  842094158,
+                  825382478,
+                  808530000
+                ]
+              }
+            ]
+          },
+          "alpha": {
+            "id": 63,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 65535,
+            "spec": {
+              "min": 0,
+              "max": 65535
+            },
+            "value": 65535,
+            "data": null
+          },
+          "pixel blend mode": {
+            "id": 64,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "None",
+                "value": 2
+              },
+              {
+                "name": "Pre-multiplied",
+                "value": 0
+              },
+              {
+                "name": "Coverage",
+                "value": 1
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "zpos": {
+            "id": 65,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 1,
+            "spec": {
+              "min": 0,
+              "max": 8
+            },
+            "value": 1,
+            "data": null
+          },
+          "rotation": {
+            "id": 66,
+            "flags": 32,
+            "type": 32,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "rotate-0",
+                "value": 0
+              },
+              {
+                "name": "rotate-90",
+                "value": 1
+              },
+              {
+                "name": "rotate-180",
+                "value": 2
+              },
+              {
+                "name": "rotate-270",
+                "value": 3
+              },
+              {
+                "name": "reflect-x",
+                "value": 4
+              },
+              {
+                "name": "reflect-y",
+                "value": 5
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "split": {
+            "id": 45,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "No Split",
+                "value": 0
+              },
+              {
+                "name": "Split Left",
+                "value": 1
+              },
+              {
+                "name": "Split Right",
+                "value": 2
+              },
+              {
+                "name": "Split Top",
+                "value": 3
+              },
+              {
+                "name": "Split Bottom",
+                "value": 4
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "HDR_FD": {
+            "id": 46,
+            "flags": 128,
+            "type": 128,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -1,
+              "max": 1023
+            },
+            "value": 0,
+            "data": null
+          },
+          "hw restrictions": {
+            "id": 40,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 67,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "standard": {
+            "id": 41,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "BT709",
+                "value": 1
+              },
+              {
+                "name": "BT601_625",
+                "value": 2
+              },
+              {
+                "name": "BT601_625_UNADJUSTED",
+                "value": 3
+              },
+              {
+                "name": "BT601_525",
+                "value": 4
+              },
+              {
+                "name": "BT601_525_UNADJUSTED",
+                "value": 5
+              },
+              {
+                "name": "BT2020",
+                "value": 6
+              },
+              {
+                "name": "BT2020_CONSTANT_LUMINANCE",
+                "value": 7
+              },
+              {
+                "name": "BT470M",
+                "value": 8
+              },
+              {
+                "name": "FILM",
+                "value": 9
+              },
+              {
+                "name": "DCI-P3",
+                "value": 10
+              },
+              {
+                "name": "Adobe RGB",
+                "value": 11
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "transfer": {
+            "id": 42,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Linear",
+                "value": 1
+              },
+              {
+                "name": "sRGB",
+                "value": 2
+              },
+              {
+                "name": "SMPTE 170M",
+                "value": 3
+              },
+              {
+                "name": "Gamma 2.2",
+                "value": 4
+              },
+              {
+                "name": "Gamma 2.6",
+                "value": 5
+              },
+              {
+                "name": "Gamma 2.8",
+                "value": 6
+              },
+              {
+                "name": "ST2084",
+                "value": 7
+              },
+              {
+                "name": "HLG",
+                "value": 8
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "range": {
+            "id": 43,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Full",
+                "value": 1
+              },
+              {
+                "name": "Limited",
+                "value": 2
+              },
+              {
+                "name": "Extended",
+                "value": 3
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "colormap": {
+            "id": 44,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": null
+          }
+        }
+      },
+      {
+        "id": 68,
+        "possible_crtcs": 3,
+        "crtc_id": 0,
+        "fb_id": 0,
+        "crtc_x": 0,
+        "crtc_y": 0,
+        "x": 0,
+        "y": 0,
+        "gamma_size": 0,
+        "fb": null,
+        "formats": [
+          875713089,
+          875708993,
+          875708754,
+          875708738,
+          875713112,
+          875709016,
+          875714642,
+          875714626,
+          909199186,
+          909199170,
+          808669761,
+          808665665,
+          808665426,
+          808665410
+        ],
+        "properties": {
+          "type": {
+            "id": 8,
+            "flags": 12,
+            "type": 8,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Overlay",
+                "value": 0
+              },
+              {
+                "name": "Primary",
+                "value": 1
+              },
+              {
+                "name": "Cursor",
+                "value": 2
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "FB_ID": {
+            "id": 17,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 4227595259,
+            "value": 0,
+            "data": null
+          },
+          "IN_FENCE_FD": {
+            "id": 18,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 18446744073709551615,
+            "spec": {
+              "min": -1,
+              "max": 2147483647
+            },
+            "value": -1,
+            "data": null
+          },
+          "CRTC_ID": {
+            "id": 20,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 3435973836,
+            "value": 0,
+            "data": null
+          },
+          "CRTC_X": {
+            "id": 13,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_Y": {
+            "id": 14,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_W": {
+            "id": 15,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_H": {
+            "id": 16,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "SRC_X": {
+            "id": 9,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_Y": {
+            "id": 10,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_W": {
+            "id": 11,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_H": {
+            "id": 12,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "IN_FORMATS": {
+            "id": 30,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 69,
+            "spec": null,
+            "value": null,
+            "data": [
+              {
+                "modifier": 288230376151711748,
+                "formats": [
+                  875708738
+                ]
+              },
+              {
+                "modifier": 2251799813685248,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665,
+                  808665426,
+                  808665410
+                ]
+              },
+              {
+                "modifier": 576460752303423488,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665
+                ]
+              }
+            ]
+          },
+          "alpha": {
+            "id": 70,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 65535,
+            "spec": {
+              "min": 0,
+              "max": 65535
+            },
+            "value": 65535,
+            "data": null
+          },
+          "pixel blend mode": {
+            "id": 71,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "None",
+                "value": 2
+              },
+              {
+                "name": "Pre-multiplied",
+                "value": 0
+              },
+              {
+                "name": "Coverage",
+                "value": 1
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "zpos": {
+            "id": 72,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 2,
+            "spec": {
+              "min": 0,
+              "max": 8
+            },
+            "value": 2,
+            "data": null
+          },
+          "rotation": {
+            "id": 73,
+            "flags": 32,
+            "type": 32,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "rotate-0",
+                "value": 0
+              },
+              {
+                "name": "rotate-180",
+                "value": 2
+              },
+              {
+                "name": "reflect-x",
+                "value": 4
+              },
+              {
+                "name": "reflect-y",
+                "value": 5
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "HDR_FD": {
+            "id": 46,
+            "flags": 128,
+            "type": 128,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -1,
+              "max": 1023
+            },
+            "value": 0,
+            "data": null
+          },
+          "hw restrictions": {
+            "id": 40,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 74,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "standard": {
+            "id": 41,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "BT709",
+                "value": 1
+              },
+              {
+                "name": "BT601_625",
+                "value": 2
+              },
+              {
+                "name": "BT601_625_UNADJUSTED",
+                "value": 3
+              },
+              {
+                "name": "BT601_525",
+                "value": 4
+              },
+              {
+                "name": "BT601_525_UNADJUSTED",
+                "value": 5
+              },
+              {
+                "name": "BT2020",
+                "value": 6
+              },
+              {
+                "name": "BT2020_CONSTANT_LUMINANCE",
+                "value": 7
+              },
+              {
+                "name": "BT470M",
+                "value": 8
+              },
+              {
+                "name": "FILM",
+                "value": 9
+              },
+              {
+                "name": "DCI-P3",
+                "value": 10
+              },
+              {
+                "name": "Adobe RGB",
+                "value": 11
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "transfer": {
+            "id": 42,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Linear",
+                "value": 1
+              },
+              {
+                "name": "sRGB",
+                "value": 2
+              },
+              {
+                "name": "SMPTE 170M",
+                "value": 3
+              },
+              {
+                "name": "Gamma 2.2",
+                "value": 4
+              },
+              {
+                "name": "Gamma 2.6",
+                "value": 5
+              },
+              {
+                "name": "Gamma 2.8",
+                "value": 6
+              },
+              {
+                "name": "ST2084",
+                "value": 7
+              },
+              {
+                "name": "HLG",
+                "value": 8
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "range": {
+            "id": 43,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Full",
+                "value": 1
+              },
+              {
+                "name": "Limited",
+                "value": 2
+              },
+              {
+                "name": "Extended",
+                "value": 3
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "colormap": {
+            "id": 44,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": null
+          }
+        }
+      },
+      {
+        "id": 75,
+        "possible_crtcs": 3,
+        "crtc_id": 0,
+        "fb_id": 0,
+        "crtc_x": 0,
+        "crtc_y": 0,
+        "x": 0,
+        "y": 0,
+        "gamma_size": 0,
+        "fb": null,
+        "formats": [
+          875713089,
+          875708993,
+          875708754,
+          875708738,
+          875713112,
+          875709016,
+          875714642,
+          875714626,
+          909199186,
+          909199170,
+          808669761,
+          808665665,
+          808665426,
+          808665410,
+          842094158,
+          825382478,
+          808530000
+        ],
+        "properties": {
+          "type": {
+            "id": 8,
+            "flags": 12,
+            "type": 8,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Overlay",
+                "value": 0
+              },
+              {
+                "name": "Primary",
+                "value": 1
+              },
+              {
+                "name": "Cursor",
+                "value": 2
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "FB_ID": {
+            "id": 17,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 4227595259,
+            "value": 0,
+            "data": null
+          },
+          "IN_FENCE_FD": {
+            "id": 18,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 18446744073709551615,
+            "spec": {
+              "min": -1,
+              "max": 2147483647
+            },
+            "value": -1,
+            "data": null
+          },
+          "CRTC_ID": {
+            "id": 20,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 3435973836,
+            "value": 0,
+            "data": null
+          },
+          "CRTC_X": {
+            "id": 13,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_Y": {
+            "id": 14,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_W": {
+            "id": 15,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_H": {
+            "id": 16,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "SRC_X": {
+            "id": 9,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_Y": {
+            "id": 10,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_W": {
+            "id": 11,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_H": {
+            "id": 12,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "IN_FORMATS": {
+            "id": 30,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 76,
+            "spec": null,
+            "value": null,
+            "data": [
+              {
+                "modifier": 288230376151711748,
+                "formats": [
+                  875708738
+                ]
+              },
+              {
+                "modifier": 2251799813685248,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665,
+                  808665426,
+                  808665410,
+                  842094158,
+                  825382478,
+                  808530000
+                ]
+              },
+              {
+                "modifier": 288230376151711760,
+                "formats": [
+                  842094158,
+                  825382478,
+                  808530000
+                ]
+              }
+            ]
+          },
+          "alpha": {
+            "id": 77,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 65535,
+            "spec": {
+              "min": 0,
+              "max": 65535
+            },
+            "value": 65535,
+            "data": null
+          },
+          "pixel blend mode": {
+            "id": 78,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "None",
+                "value": 2
+              },
+              {
+                "name": "Pre-multiplied",
+                "value": 0
+              },
+              {
+                "name": "Coverage",
+                "value": 1
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "zpos": {
+            "id": 79,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 3,
+            "spec": {
+              "min": 0,
+              "max": 8
+            },
+            "value": 3,
+            "data": null
+          },
+          "rotation": {
+            "id": 80,
+            "flags": 32,
+            "type": 32,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "rotate-0",
+                "value": 0
+              },
+              {
+                "name": "rotate-180",
+                "value": 2
+              },
+              {
+                "name": "reflect-x",
+                "value": 4
+              },
+              {
+                "name": "reflect-y",
+                "value": 5
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "split": {
+            "id": 45,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "No Split",
+                "value": 0
+              },
+              {
+                "name": "Split Left",
+                "value": 1
+              },
+              {
+                "name": "Split Right",
+                "value": 2
+              },
+              {
+                "name": "Split Top",
+                "value": 3
+              },
+              {
+                "name": "Split Bottom",
+                "value": 4
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "HDR_FD": {
+            "id": 46,
+            "flags": 128,
+            "type": 128,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -1,
+              "max": 1023
+            },
+            "value": 0,
+            "data": null
+          },
+          "hw restrictions": {
+            "id": 40,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 81,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "standard": {
+            "id": 41,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "BT709",
+                "value": 1
+              },
+              {
+                "name": "BT601_625",
+                "value": 2
+              },
+              {
+                "name": "BT601_625_UNADJUSTED",
+                "value": 3
+              },
+              {
+                "name": "BT601_525",
+                "value": 4
+              },
+              {
+                "name": "BT601_525_UNADJUSTED",
+                "value": 5
+              },
+              {
+                "name": "BT2020",
+                "value": 6
+              },
+              {
+                "name": "BT2020_CONSTANT_LUMINANCE",
+                "value": 7
+              },
+              {
+                "name": "BT470M",
+                "value": 8
+              },
+              {
+                "name": "FILM",
+                "value": 9
+              },
+              {
+                "name": "DCI-P3",
+                "value": 10
+              },
+              {
+                "name": "Adobe RGB",
+                "value": 11
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "transfer": {
+            "id": 42,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Linear",
+                "value": 1
+              },
+              {
+                "name": "sRGB",
+                "value": 2
+              },
+              {
+                "name": "SMPTE 170M",
+                "value": 3
+              },
+              {
+                "name": "Gamma 2.2",
+                "value": 4
+              },
+              {
+                "name": "Gamma 2.6",
+                "value": 5
+              },
+              {
+                "name": "Gamma 2.8",
+                "value": 6
+              },
+              {
+                "name": "ST2084",
+                "value": 7
+              },
+              {
+                "name": "HLG",
+                "value": 8
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "range": {
+            "id": 43,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Full",
+                "value": 1
+              },
+              {
+                "name": "Limited",
+                "value": 2
+              },
+              {
+                "name": "Extended",
+                "value": 3
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "colormap": {
+            "id": 44,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": null
+          }
+        }
+      },
+      {
+        "id": 82,
+        "possible_crtcs": 3,
+        "crtc_id": 0,
+        "fb_id": 0,
+        "crtc_x": 0,
+        "crtc_y": 0,
+        "x": 0,
+        "y": 0,
+        "gamma_size": 0,
+        "fb": null,
+        "formats": [
+          875713089,
+          875708993,
+          875708754,
+          875708738,
+          875713112,
+          875709016,
+          875714642,
+          875714626,
+          909199186,
+          909199170,
+          808669761,
+          808665665,
+          808665426,
+          808665410
+        ],
+        "properties": {
+          "type": {
+            "id": 8,
+            "flags": 12,
+            "type": 8,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Overlay",
+                "value": 0
+              },
+              {
+                "name": "Primary",
+                "value": 1
+              },
+              {
+                "name": "Cursor",
+                "value": 2
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "FB_ID": {
+            "id": 17,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 4227595259,
+            "value": 0,
+            "data": null
+          },
+          "IN_FENCE_FD": {
+            "id": 18,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 18446744073709551615,
+            "spec": {
+              "min": -1,
+              "max": 2147483647
+            },
+            "value": -1,
+            "data": null
+          },
+          "CRTC_ID": {
+            "id": 20,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 3435973836,
+            "value": 0,
+            "data": null
+          },
+          "CRTC_X": {
+            "id": 13,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_Y": {
+            "id": 14,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_W": {
+            "id": 15,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_H": {
+            "id": 16,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "SRC_X": {
+            "id": 9,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_Y": {
+            "id": 10,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_W": {
+            "id": 11,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_H": {
+            "id": 12,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "IN_FORMATS": {
+            "id": 30,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 83,
+            "spec": null,
+            "value": null,
+            "data": [
+              {
+                "modifier": 288230376151711748,
+                "formats": [
+                  875708738
+                ]
+              },
+              {
+                "modifier": 2251799813685248,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665,
+                  808665426,
+                  808665410
+                ]
+              },
+              {
+                "modifier": 576460752303423488,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665
+                ]
+              }
+            ]
+          },
+          "alpha": {
+            "id": 84,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 65535,
+            "spec": {
+              "min": 0,
+              "max": 65535
+            },
+            "value": 65535,
+            "data": null
+          },
+          "pixel blend mode": {
+            "id": 85,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "None",
+                "value": 2
+              },
+              {
+                "name": "Pre-multiplied",
+                "value": 0
+              },
+              {
+                "name": "Coverage",
+                "value": 1
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "zpos": {
+            "id": 86,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 4,
+            "spec": {
+              "min": 0,
+              "max": 8
+            },
+            "value": 4,
+            "data": null
+          },
+          "rotation": {
+            "id": 87,
+            "flags": 32,
+            "type": 32,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "rotate-0",
+                "value": 0
+              },
+              {
+                "name": "rotate-180",
+                "value": 2
+              },
+              {
+                "name": "reflect-x",
+                "value": 4
+              },
+              {
+                "name": "reflect-y",
+                "value": 5
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "HDR_FD": {
+            "id": 46,
+            "flags": 128,
+            "type": 128,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -1,
+              "max": 1023
+            },
+            "value": 0,
+            "data": null
+          },
+          "hw restrictions": {
+            "id": 40,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 88,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "standard": {
+            "id": 41,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "BT709",
+                "value": 1
+              },
+              {
+                "name": "BT601_625",
+                "value": 2
+              },
+              {
+                "name": "BT601_625_UNADJUSTED",
+                "value": 3
+              },
+              {
+                "name": "BT601_525",
+                "value": 4
+              },
+              {
+                "name": "BT601_525_UNADJUSTED",
+                "value": 5
+              },
+              {
+                "name": "BT2020",
+                "value": 6
+              },
+              {
+                "name": "BT2020_CONSTANT_LUMINANCE",
+                "value": 7
+              },
+              {
+                "name": "BT470M",
+                "value": 8
+              },
+              {
+                "name": "FILM",
+                "value": 9
+              },
+              {
+                "name": "DCI-P3",
+                "value": 10
+              },
+              {
+                "name": "Adobe RGB",
+                "value": 11
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "transfer": {
+            "id": 42,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Linear",
+                "value": 1
+              },
+              {
+                "name": "sRGB",
+                "value": 2
+              },
+              {
+                "name": "SMPTE 170M",
+                "value": 3
+              },
+              {
+                "name": "Gamma 2.2",
+                "value": 4
+              },
+              {
+                "name": "Gamma 2.6",
+                "value": 5
+              },
+              {
+                "name": "Gamma 2.8",
+                "value": 6
+              },
+              {
+                "name": "ST2084",
+                "value": 7
+              },
+              {
+                "name": "HLG",
+                "value": 8
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "range": {
+            "id": 43,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Full",
+                "value": 1
+              },
+              {
+                "name": "Limited",
+                "value": 2
+              },
+              {
+                "name": "Extended",
+                "value": 3
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "colormap": {
+            "id": 44,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": null
+          }
+        }
+      },
+      {
+        "id": 89,
+        "possible_crtcs": 3,
+        "crtc_id": 0,
+        "fb_id": 0,
+        "crtc_x": 0,
+        "crtc_y": 0,
+        "x": 0,
+        "y": 0,
+        "gamma_size": 0,
+        "fb": null,
+        "formats": [
+          875713089,
+          875708993,
+          875708754,
+          875708738,
+          875713112,
+          875709016,
+          875714642,
+          875714626,
+          909199186,
+          909199170,
+          808669761,
+          808665665,
+          808665426,
+          808665410,
+          842094158,
+          825382478,
+          808530000
+        ],
+        "properties": {
+          "type": {
+            "id": 8,
+            "flags": 12,
+            "type": 8,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Overlay",
+                "value": 0
+              },
+              {
+                "name": "Primary",
+                "value": 1
+              },
+              {
+                "name": "Cursor",
+                "value": 2
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "FB_ID": {
+            "id": 17,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 4227595259,
+            "value": 0,
+            "data": null
+          },
+          "IN_FENCE_FD": {
+            "id": 18,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 18446744073709551615,
+            "spec": {
+              "min": -1,
+              "max": 2147483647
+            },
+            "value": -1,
+            "data": null
+          },
+          "CRTC_ID": {
+            "id": 20,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 3435973836,
+            "value": 0,
+            "data": null
+          },
+          "CRTC_X": {
+            "id": 13,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_Y": {
+            "id": 14,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_W": {
+            "id": 15,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_H": {
+            "id": 16,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "SRC_X": {
+            "id": 9,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_Y": {
+            "id": 10,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_W": {
+            "id": 11,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_H": {
+            "id": 12,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "IN_FORMATS": {
+            "id": 30,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 90,
+            "spec": null,
+            "value": null,
+            "data": [
+              {
+                "modifier": 288230376151711748,
+                "formats": [
+                  875708738
+                ]
+              },
+              {
+                "modifier": 2251799813685248,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665,
+                  808665426,
+                  808665410,
+                  842094158,
+                  825382478,
+                  808530000
+                ]
+              }
+            ]
+          },
+          "alpha": {
+            "id": 91,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 65535,
+            "spec": {
+              "min": 0,
+              "max": 65535
+            },
+            "value": 65535,
+            "data": null
+          },
+          "pixel blend mode": {
+            "id": 92,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "None",
+                "value": 2
+              },
+              {
+                "name": "Pre-multiplied",
+                "value": 0
+              },
+              {
+                "name": "Coverage",
+                "value": 1
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "zpos": {
+            "id": 93,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 5,
+            "spec": {
+              "min": 0,
+              "max": 8
+            },
+            "value": 5,
+            "data": null
+          },
+          "rotation": {
+            "id": 94,
+            "flags": 32,
+            "type": 32,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "rotate-0",
+                "value": 0
+              },
+              {
+                "name": "rotate-180",
+                "value": 2
+              },
+              {
+                "name": "reflect-x",
+                "value": 4
+              },
+              {
+                "name": "reflect-y",
+                "value": 5
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "split": {
+            "id": 45,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "No Split",
+                "value": 0
+              },
+              {
+                "name": "Split Left",
+                "value": 1
+              },
+              {
+                "name": "Split Right",
+                "value": 2
+              },
+              {
+                "name": "Split Top",
+                "value": 3
+              },
+              {
+                "name": "Split Bottom",
+                "value": 4
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "HDR_FD": {
+            "id": 46,
+            "flags": 128,
+            "type": 128,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -1,
+              "max": 1023
+            },
+            "value": 0,
+            "data": null
+          },
+          "hw restrictions": {
+            "id": 40,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 95,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "standard": {
+            "id": 41,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "BT709",
+                "value": 1
+              },
+              {
+                "name": "BT601_625",
+                "value": 2
+              },
+              {
+                "name": "BT601_625_UNADJUSTED",
+                "value": 3
+              },
+              {
+                "name": "BT601_525",
+                "value": 4
+              },
+              {
+                "name": "BT601_525_UNADJUSTED",
+                "value": 5
+              },
+              {
+                "name": "BT2020",
+                "value": 6
+              },
+              {
+                "name": "BT2020_CONSTANT_LUMINANCE",
+                "value": 7
+              },
+              {
+                "name": "BT470M",
+                "value": 8
+              },
+              {
+                "name": "FILM",
+                "value": 9
+              },
+              {
+                "name": "DCI-P3",
+                "value": 10
+              },
+              {
+                "name": "Adobe RGB",
+                "value": 11
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "transfer": {
+            "id": 42,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Linear",
+                "value": 1
+              },
+              {
+                "name": "sRGB",
+                "value": 2
+              },
+              {
+                "name": "SMPTE 170M",
+                "value": 3
+              },
+              {
+                "name": "Gamma 2.2",
+                "value": 4
+              },
+              {
+                "name": "Gamma 2.6",
+                "value": 5
+              },
+              {
+                "name": "Gamma 2.8",
+                "value": 6
+              },
+              {
+                "name": "ST2084",
+                "value": 7
+              },
+              {
+                "name": "HLG",
+                "value": 8
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "range": {
+            "id": 43,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Full",
+                "value": 1
+              },
+              {
+                "name": "Limited",
+                "value": 2
+              },
+              {
+                "name": "Extended",
+                "value": 3
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "colormap": {
+            "id": 44,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": null
+          }
+        }
+      },
+      {
+        "id": 96,
+        "possible_crtcs": 3,
+        "crtc_id": 0,
+        "fb_id": 0,
+        "crtc_x": 0,
+        "crtc_y": 0,
+        "x": 0,
+        "y": 0,
+        "gamma_size": 0,
+        "fb": null,
+        "formats": [
+          875713089,
+          875708993,
+          875708754,
+          875708738,
+          875713112,
+          875709016,
+          875714642,
+          875714626,
+          909199186,
+          909199170,
+          808669761,
+          808665665,
+          808665426,
+          808665410
+        ],
+        "properties": {
+          "type": {
+            "id": 8,
+            "flags": 12,
+            "type": 8,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Overlay",
+                "value": 0
+              },
+              {
+                "name": "Primary",
+                "value": 1
+              },
+              {
+                "name": "Cursor",
+                "value": 2
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "FB_ID": {
+            "id": 17,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 4227595259,
+            "value": 0,
+            "data": null
+          },
+          "IN_FENCE_FD": {
+            "id": 18,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 18446744073709551615,
+            "spec": {
+              "min": -1,
+              "max": 2147483647
+            },
+            "value": -1,
+            "data": null
+          },
+          "CRTC_ID": {
+            "id": 20,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 3435973836,
+            "value": 0,
+            "data": null
+          },
+          "CRTC_X": {
+            "id": 13,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_Y": {
+            "id": 14,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_W": {
+            "id": 15,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_H": {
+            "id": 16,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "SRC_X": {
+            "id": 9,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_Y": {
+            "id": 10,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_W": {
+            "id": 11,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_H": {
+            "id": 12,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "IN_FORMATS": {
+            "id": 30,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 97,
+            "spec": null,
+            "value": null,
+            "data": [
+              {
+                "modifier": 288230376151711748,
+                "formats": [
+                  875708738
+                ]
+              },
+              {
+                "modifier": 2251799813685248,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665,
+                  808665426,
+                  808665410
+                ]
+              }
+            ]
+          },
+          "alpha": {
+            "id": 98,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 65535,
+            "spec": {
+              "min": 0,
+              "max": 65535
+            },
+            "value": 65535,
+            "data": null
+          },
+          "pixel blend mode": {
+            "id": 99,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "None",
+                "value": 2
+              },
+              {
+                "name": "Pre-multiplied",
+                "value": 0
+              },
+              {
+                "name": "Coverage",
+                "value": 1
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "zpos": {
+            "id": 100,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 6,
+            "spec": {
+              "min": 0,
+              "max": 8
+            },
+            "value": 6,
+            "data": null
+          },
+          "rotation": {
+            "id": 101,
+            "flags": 32,
+            "type": 32,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "rotate-0",
+                "value": 0
+              },
+              {
+                "name": "rotate-180",
+                "value": 2
+              },
+              {
+                "name": "reflect-x",
+                "value": 4
+              },
+              {
+                "name": "reflect-y",
+                "value": 5
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "HDR_FD": {
+            "id": 46,
+            "flags": 128,
+            "type": 128,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -1,
+              "max": 1023
+            },
+            "value": 0,
+            "data": null
+          },
+          "hw restrictions": {
+            "id": 40,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 102,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "standard": {
+            "id": 41,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "BT709",
+                "value": 1
+              },
+              {
+                "name": "BT601_625",
+                "value": 2
+              },
+              {
+                "name": "BT601_625_UNADJUSTED",
+                "value": 3
+              },
+              {
+                "name": "BT601_525",
+                "value": 4
+              },
+              {
+                "name": "BT601_525_UNADJUSTED",
+                "value": 5
+              },
+              {
+                "name": "BT2020",
+                "value": 6
+              },
+              {
+                "name": "BT2020_CONSTANT_LUMINANCE",
+                "value": 7
+              },
+              {
+                "name": "BT470M",
+                "value": 8
+              },
+              {
+                "name": "FILM",
+                "value": 9
+              },
+              {
+                "name": "DCI-P3",
+                "value": 10
+              },
+              {
+                "name": "Adobe RGB",
+                "value": 11
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "transfer": {
+            "id": 42,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Linear",
+                "value": 1
+              },
+              {
+                "name": "sRGB",
+                "value": 2
+              },
+              {
+                "name": "SMPTE 170M",
+                "value": 3
+              },
+              {
+                "name": "Gamma 2.2",
+                "value": 4
+              },
+              {
+                "name": "Gamma 2.6",
+                "value": 5
+              },
+              {
+                "name": "Gamma 2.8",
+                "value": 6
+              },
+              {
+                "name": "ST2084",
+                "value": 7
+              },
+              {
+                "name": "HLG",
+                "value": 8
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "range": {
+            "id": 43,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Full",
+                "value": 1
+              },
+              {
+                "name": "Limited",
+                "value": 2
+              },
+              {
+                "name": "Extended",
+                "value": 3
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "colormap": {
+            "id": 44,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": null
+          }
+        }
+      },
+      {
+        "id": 103,
+        "possible_crtcs": 3,
+        "crtc_id": 0,
+        "fb_id": 0,
+        "crtc_x": 0,
+        "crtc_y": 0,
+        "x": 0,
+        "y": 0,
+        "gamma_size": 0,
+        "fb": null,
+        "formats": [
+          875713089,
+          875708993,
+          875708754,
+          875708738,
+          875713112,
+          875709016,
+          875714642,
+          875714626,
+          909199186,
+          909199170,
+          808669761,
+          808665665,
+          808665426,
+          808665410,
+          842094158,
+          825382478,
+          808530000
+        ],
+        "properties": {
+          "type": {
+            "id": 8,
+            "flags": 12,
+            "type": 8,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Overlay",
+                "value": 0
+              },
+              {
+                "name": "Primary",
+                "value": 1
+              },
+              {
+                "name": "Cursor",
+                "value": 2
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "FB_ID": {
+            "id": 17,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 4227595259,
+            "value": 0,
+            "data": null
+          },
+          "IN_FENCE_FD": {
+            "id": 18,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 18446744073709551615,
+            "spec": {
+              "min": -1,
+              "max": 2147483647
+            },
+            "value": -1,
+            "data": null
+          },
+          "CRTC_ID": {
+            "id": 20,
+            "flags": 2147483712,
+            "type": 64,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": 3435973836,
+            "value": 0,
+            "data": null
+          },
+          "CRTC_X": {
+            "id": 13,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_Y": {
+            "id": 14,
+            "flags": 2147483776,
+            "type": 128,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -2147483648,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_W": {
+            "id": 15,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "CRTC_H": {
+            "id": 16,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 2147483647
+            },
+            "value": 0,
+            "data": null
+          },
+          "SRC_X": {
+            "id": 9,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_Y": {
+            "id": 10,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_W": {
+            "id": 11,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "SRC_H": {
+            "id": 12,
+            "flags": 2147483650,
+            "type": 2,
+            "atomic": true,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": 0
+          },
+          "IN_FORMATS": {
+            "id": 30,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 104,
+            "spec": null,
+            "value": null,
+            "data": [
+              {
+                "modifier": 288230376151711748,
+                "formats": [
+                  875708738
+                ]
+              },
+              {
+                "modifier": 2251799813685248,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665,
+                  808665426,
+                  808665410,
+                  842094158,
+                  825382478,
+                  808530000
+                ]
+              },
+              {
+                "modifier": 576460752303423488,
+                "formats": [
+                  875713089,
+                  875708993,
+                  875708754,
+                  875708738,
+                  875713112,
+                  875709016,
+                  875714642,
+                  875714626,
+                  909199186,
+                  909199170,
+                  808669761,
+                  808665665
+                ]
+              },
+              {
+                "modifier": 288230376151711760,
+                "formats": [
+                  842094158,
+                  825382478,
+                  808530000
+                ]
+              }
+            ]
+          },
+          "alpha": {
+            "id": 105,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 65535,
+            "spec": {
+              "min": 0,
+              "max": 65535
+            },
+            "value": 65535,
+            "data": null
+          },
+          "pixel blend mode": {
+            "id": 106,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "None",
+                "value": 2
+              },
+              {
+                "name": "Pre-multiplied",
+                "value": 0
+              },
+              {
+                "name": "Coverage",
+                "value": 1
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "zpos": {
+            "id": 107,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 7,
+            "spec": {
+              "min": 0,
+              "max": 8
+            },
+            "value": 7,
+            "data": null
+          },
+          "rotation": {
+            "id": 108,
+            "flags": 32,
+            "type": 32,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "rotate-0",
+                "value": 0
+              },
+              {
+                "name": "rotate-180",
+                "value": 2
+              },
+              {
+                "name": "reflect-x",
+                "value": 4
+              },
+              {
+                "name": "reflect-y",
+                "value": 5
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "split": {
+            "id": 45,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "No Split",
+                "value": 0
+              },
+              {
+                "name": "Split Left",
+                "value": 1
+              },
+              {
+                "name": "Split Right",
+                "value": 2
+              },
+              {
+                "name": "Split Top",
+                "value": 3
+              },
+              {
+                "name": "Split Bottom",
+                "value": 4
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "HDR_FD": {
+            "id": 46,
+            "flags": 128,
+            "type": 128,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": -1,
+              "max": 1023
+            },
+            "value": 0,
+            "data": null
+          },
+          "hw restrictions": {
+            "id": 40,
+            "flags": 20,
+            "type": 16,
+            "atomic": false,
+            "immutable": true,
+            "raw_value": 109,
+            "spec": null,
+            "value": null,
+            "data": null
+          },
+          "standard": {
+            "id": 41,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "BT709",
+                "value": 1
+              },
+              {
+                "name": "BT601_625",
+                "value": 2
+              },
+              {
+                "name": "BT601_625_UNADJUSTED",
+                "value": 3
+              },
+              {
+                "name": "BT601_525",
+                "value": 4
+              },
+              {
+                "name": "BT601_525_UNADJUSTED",
+                "value": 5
+              },
+              {
+                "name": "BT2020",
+                "value": 6
+              },
+              {
+                "name": "BT2020_CONSTANT_LUMINANCE",
+                "value": 7
+              },
+              {
+                "name": "BT470M",
+                "value": 8
+              },
+              {
+                "name": "FILM",
+                "value": 9
+              },
+              {
+                "name": "DCI-P3",
+                "value": 10
+              },
+              {
+                "name": "Adobe RGB",
+                "value": 11
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "transfer": {
+            "id": 42,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Linear",
+                "value": 1
+              },
+              {
+                "name": "sRGB",
+                "value": 2
+              },
+              {
+                "name": "SMPTE 170M",
+                "value": 3
+              },
+              {
+                "name": "Gamma 2.2",
+                "value": 4
+              },
+              {
+                "name": "Gamma 2.6",
+                "value": 5
+              },
+              {
+                "name": "Gamma 2.8",
+                "value": 6
+              },
+              {
+                "name": "ST2084",
+                "value": 7
+              },
+              {
+                "name": "HLG",
+                "value": 8
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "range": {
+            "id": 43,
+            "flags": 8,
+            "type": 8,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": [
+              {
+                "name": "Unspecified",
+                "value": 0
+              },
+              {
+                "name": "Full",
+                "value": 1
+              },
+              {
+                "name": "Limited",
+                "value": 2
+              },
+              {
+                "name": "Extended",
+                "value": 3
+              }
+            ],
+            "value": 0,
+            "data": null
+          },
+          "colormap": {
+            "id": 44,
+            "flags": 2,
+            "type": 2,
+            "atomic": false,
+            "immutable": false,
+            "raw_value": 0,
+            "spec": {
+              "min": 0,
+              "max": 4294967295
+            },
+            "value": 0,
+            "data": null
+          }
+        }
+      }
+    ]
+  }
+}

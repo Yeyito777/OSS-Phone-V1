@@ -35,6 +35,15 @@ class Surface:
         self.uploads = 0
         self.radius = 0.0  # baked corners (copies)
         self.opaque = fmt != 2
+        self.texture = None  # --textures: a private copy, updated by damage only
+
+    def keep_texture(self):
+        self.texture = self.live().copy()
+
+    def upload(self, x0, y0, x1, y1):
+        x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, self.w), min(y1, self.h)
+        if self.texture is not None and x1 > x0 and y1 > y0:
+            self.texture[y0:y1, x0:x1] = self.live()[y0:y1, x0:x1]
 
     def rgb(self):
         if self.pixels is not None:
@@ -42,6 +51,9 @@ class Surface:
         return self.bgra()[:, :, [2, 1, 0]]
 
     def bgra(self):
+        return self.texture if self.texture is not None else self.live()
+
+    def live(self):
         a = np.frombuffer(self.mem, dtype=np.uint8, count=self.stride * self.h)
         return a.reshape(self.h, self.stride)[:, : self.w * 4].reshape(self.h, self.w, 4)
 
@@ -70,6 +82,9 @@ class Mock:
         self.client = None
         self.powered = True
         self.shot_requested = False
+        self.version = 2
+        self.report_idle = set()  # v4: surfaces that asked for MG_SURFACE_IDLE
+        self.referenced = set()  # surfaces named by the frame on screen
 
     def say(self, *parts):
         print(f"[{time.monotonic():.3f}]", *parts, file=self.log, flush=True)
@@ -93,19 +108,53 @@ class Mock:
         if kind == 1:  # HELLO
             refresh = 120000
             (version,) = struct.unpack_from("<I", body)
+            if version > self.args.max_version:
+                # A compositor older than the client drops it, as v2 did.
+                self.say(f"client speaks version {version}; dropping it")
+                self.client.close()
+                self.client = None
+                return
+            self.version = version
+            self.report_idle.clear()
+            self.referenced.clear()
             self.send(64, struct.pack("<IIIIQII", version, W, H, refresh, 8333333, 1, 0))
             self.send(65, struct.pack("<IIIIIII", 0, W, H, STRIDE, 1, 0, 0), self.mirror_fd)
             self.say("hello")
         elif kind == 2:  # SURFACE_SHM
             sid, w, h, stride, fmt, flags = struct.unpack_from("<IIIIII", body)
             offset = struct.unpack_from("<I", body, 24)[0] if len(body) >= 28 else 0  # v3
-            mem = mmap.mmap(fds[0], offset + stride * h, prot=mmap.PROT_READ)
+            try:
+                if os.fstat(fds[0]).st_size < offset + stride * h:
+                    raise OSError("fd smaller than its pixels")
+                mem = mmap.mmap(fds[0], offset + stride * h, prot=mmap.PROT_READ)
+            except OSError as error:
+                # v4: MG_SURFACE_FAILED (MG_FAIL_INVALID); older clients are
+                # simply not told, as moon-compositor does.
+                self.say(f"surface {sid} refused: {error}")
+                if self.version >= 4:
+                    self.send(70, struct.pack("<II", sid, 1))
+                return
             mem = memoryview(mem)[offset:]
             self.surfaces[sid] = Surface(w, h, stride, fmt, mem)
+            if self.args.textures:
+                self.surfaces[sid].keep_texture()
+            if self.version >= 4 and flags & 4:
+                self.report_idle.add(sid)
             self.say(f"surface {sid} {w}x{h} fmt {fmt}")
         elif kind == 3:  # SURFACE_DAMAGE
             sid, serial, count, _ = struct.unpack_from("<IIII", body)
             self.stats["uploads"] += 1
+            surface = self.surfaces.get(sid)
+            if surface is not None:
+                for i in range(count):
+                    surface.upload(*struct.unpack_from("<4i", body, 16 + 16 * i))
+            if self.args.upload_ms_per_mpx > 0:
+                # A texture upload blocks like glTexSubImage2D: by area.
+                area = 0
+                for i in range(count):
+                    x0, y0, x1, y1 = struct.unpack_from("<4i", body, 16 + 16 * i)
+                    area += max(x1 - x0, 0) * max(y1 - y0, 0)
+                time.sleep(area / 1e6 * self.args.upload_ms_per_mpx / 1000)
             self.send(66, struct.pack("<II", sid, serial))
         elif kind == 4:  # SURFACE_COPY
             sid, source = struct.unpack_from("<II", body)
@@ -126,11 +175,18 @@ class Mock:
         elif kind == 5:  # FREE
             (sid,) = struct.unpack_from("<I", body)
             self.surfaces.pop(sid, None)
+            self.report_idle.discard(sid)  # no IDLE follows a free
         elif kind == 6:  # MIRROR_DAMAGE
             self.stats["mirror_damage"] += 1
         elif kind == 7:  # FRAME
             serial, flags, base, count = struct.unpack_from("<IIII", body)
             nodes = [struct.unpack_from("<II4f4f3fIII", body, 16 + 64 * i) for i in range(count)]
+            if self.pending is not None:
+                # A queued frame replaced before it was shown: what only it
+                # named is idle at once.
+                replaced = self.names(self.pending)
+                new = self.names((serial, flags, base, nodes))
+                self.idle(replaced - new - self.referenced - self.names(self.frame))
             self.pending = (serial, flags, base, nodes)
             why = self.plane_plan(flags, base, nodes)
             key = "planes" if why is None else why
@@ -142,6 +198,19 @@ class Mock:
             self.send(68, struct.pack("<I", on))
         else:
             self.say("unknown message", kind)
+
+    def names(self, frame):
+        if frame is None:
+            return set()
+        _, flags, base, nodes = frame
+        named = {node[1] for node in nodes if node[0] == 1}
+        if flags & 1:
+            named.add(base)
+        return named
+
+    def idle(self, sids):
+        for sid in sorted(sids & self.report_idle):
+            self.send(69, struct.pack("<I", sid))
 
     def plane_plan(self, flags, base, nodes, scalers=3, planes=8):
         """moon-compositor's plan_planes(), to see which frames would skip
@@ -189,10 +258,17 @@ class Mock:
             if serial:
                 t = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
                 self.send(67, struct.pack("<IIQQII", serial, self.sequence, t, 2_000_000, 2, 0))
+            # v4: what the frame now on screen no longer names is idle.
+            names = self.names(self.frame)
+            self.idle(self.referenced - names)
+            self.referenced = names
         if self.flip_due is None and self.pending is not None and self.powered:
+            # v4: surfaces the previous frame named and this one does not are
+            # idle once it flips (reported when the flip is, below).
             self.frame, self.pending = self.pending, None
-            # The next vblank on a 120 Hz grid.
-            self.flip_due = (int(now / PERIOD) + 1) * PERIOD
+            # The next vblank on a 120 Hz grid once the frame is rendered.
+            ready = now + self.args.render_ms / 1000
+            self.flip_due = (int(ready / PERIOD) + 1) * PERIOD
 
     def render(self):
         out = np.zeros((H, W, 3), dtype=np.float32)
@@ -220,7 +296,16 @@ class Mock:
             pix = src[ys][:, xs].astype(np.float32) * dim
             cov = surface.coverage()
             a = alpha if cov is None else alpha * cov[ys][:, xs, None].astype(np.float32) / 255
-            out[y0:y1, x0:x1] = out[y0:y1, x0:x1] * (1 - a) + pix * alpha
+            m = 1.0
+            if radius > 0.5:
+                # The node's rounded corners, as moon-compositor draws them.
+                r = min(radius, dw / 2, dh / 2)
+                px = np.arange(x0, x1) + 0.5
+                py = np.arange(y0, y1) + 0.5
+                qx = np.maximum(np.maximum(dx + r - px, px - (dx + dw - r)), 0)[None, :]
+                qy = np.maximum(np.maximum(dy + r - py, py - (dy + dh - r)), 0)[:, None]
+                m = np.clip(r - np.sqrt(qx * qx + qy * qy) + 0.5, 0, 1)[:, :, None]
+            out[y0:y1, x0:x1] = out[y0:y1, x0:x1] * (1 - a * m) + pix * alpha * m
         return out
 
     def shot(self):
@@ -271,6 +356,8 @@ class Mock:
                     self.client = None
                     continue
                 self.handle(msg, fds_in)
+                if self.client is None:
+                    continue
                 for fd in fds_in:
                     os.close(fd)
             self.tick()
@@ -284,4 +371,13 @@ if __name__ == "__main__":
     parser.add_argument("--socket", required=True)
     parser.add_argument("--shot", default="/tmp/moon-gpu-mock.ppm")
     parser.add_argument("--log")
+    parser.add_argument("--max-version", type=int, default=4,
+                        help="drop clients that say hello with a newer version (2: an old compositor)")
+    parser.add_argument("--textures", action="store_true",
+                        help="show client surfaces from copies updated only by their damage, "
+                             "as moon-compositor's textures are")
+    parser.add_argument("--render-ms", type=float, default=0,
+                        help="a frame flips at the first vblank this long after it arrives")
+    parser.add_argument("--upload-ms-per-mpx", type=float, default=0,
+                        help="client damage blocks this long per megapixel (texture upload)")
     Mock(parser.parse_args()).run()

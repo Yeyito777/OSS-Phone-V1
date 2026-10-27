@@ -1,0 +1,17 @@
+[package]
+name = "moon-wl-demo"
+version = "0.1.0"
+edition = "2024"
+description = "A native Wayland test app for Moon: touch, text input and frame-paced animation"
+license = "MIT"
+
+[dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+libc = "0.2"
+fontdue = { version = "0.9", default-features = false, features = ["std", "simd"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

@@ -32,9 +32,12 @@ mod status_bar;
 mod suspend;
 mod telephony_client;
 mod text;
+mod touch;
 mod ui;
 mod volume;
 mod wallpaper;
+mod wayland;
+mod wl_apps;
 
 use std::env;
 use std::error::Error;
@@ -450,6 +453,38 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let mut idle_dim_applied = false;
     let mut apps = AppRegistry::from_environment();
+    // Wayland apps (milestone 1, opt-in): MOON_WAYLAND_DIR names the private
+    // runtime directory for the socket. Apps get WAYLAND_DISPLAY with it.
+    let mut wayland = match env::var_os("MOON_WAYLAND_DIR") {
+        Some(dir) => {
+            let dir = PathBuf::from(dir);
+            match std::fs::create_dir_all(&dir)
+                .map_err(Box::<dyn Error>::from)
+                .and_then(|()| wl_apps::WaylandApps::new(&conn, root, width, height, &dir))
+            {
+                Ok(server) => {
+                    // MOON_WAYLAND_APPS names the apps that speak Wayland
+                    // (comma-separated; default: the System app).
+                    let names = env::var("MOON_WAYLAND_APPS").unwrap_or_else(|_| "system".into());
+                    let wayland_apps: Vec<AppId> = names
+                        .split(',')
+                        .filter_map(|name| AppId::parse(name.trim()))
+                        .collect();
+                    apps.set_wayland_env(server.client_env(), wayland_apps);
+                    eprintln!(
+                        "wayland: serving apps at {}",
+                        dir.join("wayland-0").display()
+                    );
+                    Some(server)
+                }
+                Err(error) => {
+                    eprintln!("wayland: server unavailable: {error}");
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     if let Some(control) = audio_volume.as_ref()
         && let Err(error) = control.set(state.volume)
     {
@@ -530,6 +565,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut suspend_coordinator =
         SuspendCoordinator::new(true, platform_suspend.is_some(), persisted_suspend);
     let mut raw_touch = RawTouchTracker::default();
+    // MOON_TOUCH=evdev: Moon reads the touchscreen itself (multi-touch
+    // protocol B) instead of taking XInput 2 raw touches from Xorg; the
+    // step towards sessions without Xorg. MOON_TOUCH_DEVICE names it.
+    let mut evdev_touch = if env::var("MOON_TOUCH").is_ok_and(|value| value == "evdev") {
+        let name = env::var("MOON_TOUCH_DEVICE").unwrap_or_else(|_| "sec_touchscreen".into());
+        match touch::Touchscreen::find(&name, width, height) {
+            Ok(device) => {
+                eprintln!("touch: reading {} directly", device.path().display());
+                Some(device)
+            }
+            Err(error) => {
+                eprintln!("touch: {error}; staying on XInput 2");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut app_viewport: Option<(u32, u16)> = None;
     renderer.render(&conn, &state, Instant::now())?;
     if let Some(device) = touchscreen.as_ref()
@@ -554,7 +607,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut sleep_retries = 0_u32;
     while !state.should_exit {
         while let Some(event) = conn.poll_for_event()? {
+            if let Some(server) = wayland.as_mut()
+                && server.handle_x_event(&event)
+            {
+                continue;
+            }
             if renderer.compositor.handle_event(&event) {
+                continue;
+            }
+            if evdev_touch.is_some()
+                && matches!(
+                    event,
+                    Event::XinputRawTouchBegin(_)
+                        | Event::XinputRawTouchUpdate(_)
+                        | Event::XinputRawTouchEnd(_)
+                )
+            {
+                // Moon reads the touchscreen itself.
                 continue;
             }
             handle_x_event(
@@ -578,6 +647,137 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &mut status_bar_surface,
                 key_repeat_timing,
             )?;
+        }
+
+        let mut wayland_direct = (None, Vec::new());
+        if let Some(server) = wayland.as_mut() {
+            for action in server.dispatch(&conn) {
+                match action {
+                    wl_apps::Action::Manage { window, owner } => manage_window(
+                        &conn,
+                        window,
+                        owner,
+                        true,
+                        shell_window,
+                        (width, height),
+                        &keyboard_geometry,
+                        &mut state,
+                        &mut apps,
+                        &mut status_bar_surface,
+                    )?,
+                    wl_apps::Action::Keyboard { window, show } => {
+                        // Only the app in front opens Moon's keyboard.
+                        let in_front = window
+                            .is_none_or(|window| state.managed_windows.first() == Some(&window));
+                        match show {
+                            Some(purpose) if in_front => {
+                                state.show_keyboard(purpose);
+                            }
+                            Some(_) => {}
+                            None => state.hide_keyboard(),
+                        }
+                    }
+                }
+            }
+            state.wayland_windows = state
+                .managed_windows
+                .iter()
+                .copied()
+                .filter(|window| server.is_proxy(*window))
+                .collect();
+            for input in std::mem::take(&mut state.wayland_keys) {
+                if !server.key_input(input) {
+                    // Never log the key: password input stays ephemeral.
+                    eprintln!("wayland: keyboard input had no focused client");
+                }
+            }
+            // GPU mode: the app in front shows its own buffers. Moon's volume
+            // and banner windows over it are drawn from the mirror on top;
+            // a key callout (not a rounded shape) or a snapshot about to be
+            // copied from the mirror sends the app back through X.
+            let now = Instant::now();
+            let mut overlays = Vec::new();
+            if state
+                .volume_overlay_until
+                .is_some_and(|deadline| deadline > now)
+            {
+                overlays.push((ui::VOLUME_HUD, ui::VOLUME_HUD.w / 2.0));
+            }
+            if let Some((y, height, _)) = renderer.banner_window(&state, now) {
+                overlays.push((
+                    gfx::RectF::new(alerts::CARD_X, y as f32, alerts::CARD_W, height),
+                    alerts::CARD_RADIUS,
+                ));
+            }
+            let overlay = state.keyboard.is_visible() && state.keyboard.latest_pressed().is_some();
+            let direct_window = (state.screen_awake
+                && state.view.is_app()
+                && !state.shell_covers_app()
+                && state.pending_capture.is_none()
+                && !state.pending_switcher
+                && !state.pending_fade_capture
+                && !overlay)
+                .then(|| state.managed_windows.first().copied())
+                .flatten();
+            server.update_direct(
+                &conn,
+                renderer.compositor.gpu_mut(),
+                direct_window,
+                &overlays,
+            );
+            wayland_direct = (direct_window, overlays);
+            // A Moon gesture (the home swipe, the switcher) owns the touch now.
+            if server.touch_active()
+                && (state.gesture.is_some() || !state.view.is_app() || state.shell_covers_app())
+            {
+                server.cancel_touch();
+            }
+        }
+
+        if let Some(device) = evdev_touch.as_mut() {
+            match device.poll() {
+                Ok(contacts) => {
+                    for contact in contacts {
+                        match contact {
+                            touch::Contact::Begin(id, x, y) => touch_begin(
+                                &conn,
+                                &mut state,
+                                &mut raw_touch,
+                                &keyboard_geometry,
+                                &key_injector,
+                                key_repeat_timing,
+                                id,
+                                x,
+                                y,
+                            ),
+                            touch::Contact::Update(id, x, y) => touch_update(
+                                &mut state,
+                                &mut raw_touch,
+                                &keyboard_geometry,
+                                height,
+                                id,
+                                Some(x),
+                                Some(y),
+                            ),
+                            touch::Contact::End(id) => touch_end(
+                                &conn,
+                                root,
+                                &mut state,
+                                &mut raw_touch,
+                                (width, height),
+                                &keyboard_geometry,
+                                &config,
+                                &key_injector,
+                                id,
+                            ),
+                        }
+                    }
+                }
+                Err(error) => {
+                    eprintln!("touch: reading the touchscreen failed: {error}; back to XInput 2");
+                    evdev_touch = None;
+                }
+            }
         }
 
         cancel_stale_pointer(&mut state, &mut raw_touch, Instant::now());
@@ -788,6 +988,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         if std::mem::take(&mut state.pending_switcher) {
             state.open_switcher(apps.running_by_recency());
         }
+        if (state.pending_capture.is_some() || state.pending_fade_capture)
+            && let Some(server) = wayland.as_mut()
+        {
+            // The snapshot copies the X mirror: bring a directly shown
+            // Wayland app's proxy up to date first.
+            server.update_direct(&conn, renderer.compositor.gpu_mut(), None, &[]);
+        }
         if let Some(app) = state.pending_capture.take()
             && state.screen_awake
         {
@@ -806,17 +1013,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             renderer.forget_app(&conn, app);
         }
 
-        let desired_app = AppId::from_view(state.view);
-        let update = apps.reconcile(desired_app);
-        apply_registry_update(
-            &conn,
-            shell_window,
-            width,
-            height,
-            &mut state,
-            &mut apps,
-            update,
-        )?;
+        reconcile_apps(&conn, shell_window, width, height, &mut state, &mut apps)?;
         for app in [AppId::System, AppId::Browser] {
             if renderer.has_snapshot(app) && !apps.running_by_recency().contains(&app) {
                 renderer.forget_app(&conn, app);
@@ -904,6 +1101,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             next_clock_tick = clock::next_minute_boundary(Instant::now());
         }
         state.tick();
+        if apps.active().is_some() && AppId::from_view(state.view).is_none() {
+            // The tick left the app (a finished power fade locks): hide and
+            // freeze it now, so the screen-off transaction below finds it
+            // gone and the lock frame is drawn without it.
+            reconcile_apps(&conn, shell_window, width, height, &mut state, &mut apps)?;
+            state.replace_managed_windows(apps.active_windows());
+        }
         if let Some(volume) = state.control.pending_volume.take() {
             set_volume(&mut state, audio_volume.as_ref(), volume);
             // Control Centre's slider shows it; no HUD over it.
@@ -981,6 +1185,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             // An app in front: the compositor shows the X mirror by itself.
             let mirror = state.screen_awake && state.view.is_app() && !state.shell_covers_app();
             renderer.compositor.dispatch_gpu(&conn, mirror);
+            // Flips just reported settle directly shown Wayland buffers.
+            if let Some(server) = wayland.as_mut() {
+                // Still in front after the tick, or the app's buffers leave
+                // the screen with it.
+                let direct = wayland_direct
+                    .0
+                    .filter(|window| mirror && state.managed_windows.first() == Some(window));
+                server.update_direct(
+                    &conn,
+                    renderer.compositor.gpu_mut(),
+                    direct,
+                    &wayland_direct.1,
+                );
+            }
         }
         // Frames: one per vblank while anything moves, otherwise only when
         // something changed. Every frame samples the model at the time it
@@ -1036,27 +1254,33 @@ fn main() -> Result<(), Box<dyn Error>> {
         // flush the connection.
         conn.flush()?;
         let mut retry_sleep = false;
+        // A directly shown Wayland app's buffers leave the screen with it.
+        let wayland_shown = wayland.as_ref().is_some_and(|server| server.showing_direct());
         match suspend_coordinator.next_action(state.screen_awake) {
             SuspendAction::None => {}
-            SuspendAction::Sleep if sleep_retries < 8 && releasing_app(&state, &apps) => {
-                // The power fade ended in this pass's tick, after the app
-                // registry ran: the app is released on the next pass, and
-                // the screen-off follows then. (Rejecting here woke the
-                // screen straight back up whenever an app was in front.)
+            SuspendAction::Sleep
+                if sleep_retries < 8 && (releasing_app(&state, &apps) || wayland_shown) =>
+            {
+                // The app in front is released right after the tick that
+                // locks (above), so the screen-off normally goes ahead in the
+                // same pass. Should anything of it remain, wait a pass or a
+                // few rather than reject (which woke the screen straight
+                // back up).
                 retry_sleep = true;
                 sleep_retries += 1;
             }
             SuspendAction::Sleep => {
                 sleep_retries = 0;
-                if !safe_to_power_down(&state, &apps) {
+                if !safe_to_power_down(&state, &apps) || wayland_shown {
                     eprintln!(
-                        "screen-off transaction rejected: unsafe shell state (view {:?}, awake {}, keyboard {}, pointer {}, windows {:?}, active app {:?})",
+                        "screen-off transaction rejected: unsafe shell state (view {:?}, awake {}, keyboard {}, pointer {}, windows {:?}, active app {:?}, wayland direct {})",
                         state.view,
                         state.screen_awake,
                         state.keyboard.is_visible(),
                         state.pointer.is_some(),
                         state.managed_windows,
-                        apps.active()
+                        apps.active(),
+                        wayland_shown
                     );
                     state.screen_on();
                     suspend_coordinator.fail_sleep("unsafe_shell_state");
@@ -1226,7 +1450,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Some(brightness_deadline) = brightness.next_deadline() {
             deadline = deadline.min(brightness_deadline.max(now));
         }
-        let app_fds = apps.poll_fds();
+        let mut app_fds = apps.poll_fds();
+        if let Some(device) = evdev_touch.as_ref() {
+            app_fds.push(device.raw_fd());
+        }
+        if let Some(server) = wayland.as_mut() {
+            app_fds.extend(server.poll_fds());
+            if let Some(frame) = server.tick(Instant::now(), state.screen_awake) {
+                deadline = deadline.min(frame);
+            }
+        }
         wait_for_activity(
             &WaitSources {
                 conn: &conn,
@@ -1300,7 +1533,7 @@ fn heartbeat_is_recent(path: &Path, maximum_age: Duration) -> bool {
 }
 
 /// Locked and dark, with nothing in the way of the screen-off but the app
-/// that was in front, which the registry releases on the next pass.
+/// that was in front, still being released by the registry.
 fn releasing_app(state: &ShellState, apps: &AppRegistry) -> bool {
     state.view == View::Locked
         && !state.screen_awake
@@ -1556,85 +1789,42 @@ fn handle_x_event(
             let x = raw_axis(&event, 0, width.saturating_sub(1));
             let y = raw_axis(&event, 1, height.saturating_sub(1));
             if let (Some(x), Some(y)) = (x, y) {
-                if keyboard_geometry.owns_touch(&state.keyboard, x, y) {
-                    if let Some(action) = begin_raw_keyboard_contact(
-                        state,
-                        raw_touch,
-                        event.detail,
-                        keyboard_geometry,
-                        x,
-                        y,
-                        key_repeat_timing,
-                    ) {
-                        handle_keyboard_action(conn, state, action, key_injector);
-                    }
-                } else if raw_touch.touch_id.is_none() && state.pointer.is_none() {
-                    // Non-keyboard app/close gestures remain deliberately
-                    // single-finger even while the keyboard supports rollover.
-                    raw_touch.touch_id = Some(event.detail);
-                    raw_touch.x = x;
-                    raw_touch.y = y;
-                    if let Some(action) =
-                        pointer_begin(state, keyboard_geometry, x, y, key_repeat_timing)
-                    {
-                        handle_keyboard_action(conn, state, action, key_injector);
-                    }
-                }
+                touch_begin(
+                    conn,
+                    state,
+                    raw_touch,
+                    keyboard_geometry,
+                    key_injector,
+                    key_repeat_timing,
+                    event.detail,
+                    x,
+                    y,
+                );
             }
         }
         Event::XinputRawTouchUpdate(event) => {
-            if raw_touch
-                .keyboard_contacts
-                .iter()
-                .any(|(touch_id, _)| *touch_id == event.detail)
-            {
-                update_raw_keyboard_contact(
-                    state,
-                    raw_touch,
-                    event.detail,
-                    keyboard_geometry,
-                    raw_axis(&event, 0, width.saturating_sub(1)),
-                    raw_axis(&event, 1, height.saturating_sub(1)),
-                );
-            } else if raw_touch.touch_id == Some(event.detail) {
-                if let Some(x) = raw_axis(&event, 0, width.saturating_sub(1)) {
-                    raw_touch.x = x;
-                }
-                if let Some(y) = raw_axis(&event, 1, height.saturating_sub(1)) {
-                    raw_touch.y = y;
-                }
-                pointer_move(state, keyboard_geometry, height, raw_touch.x, raw_touch.y);
-            }
+            touch_update(
+                state,
+                raw_touch,
+                keyboard_geometry,
+                height,
+                event.detail,
+                raw_axis(&event, 0, width.saturating_sub(1)),
+                raw_axis(&event, 1, height.saturating_sub(1)),
+            );
         }
         Event::XinputRawTouchEnd(event) => {
-            if raw_touch
-                .keyboard_contacts
-                .iter()
-                .any(|(touch_id, _)| *touch_id == event.detail)
-            {
-                end_raw_keyboard_contact(
-                    conn,
-                    state,
-                    raw_touch,
-                    event.detail,
-                    keyboard_geometry,
-                    key_injector,
-                );
-            } else if raw_touch.touch_id == Some(event.detail) {
-                pointer_end(
-                    conn,
-                    root,
-                    state,
-                    raw_touch.x,
-                    raw_touch.y,
-                    width,
-                    height,
-                    keyboard_geometry,
-                    config,
-                    key_injector,
-                );
-                raw_touch.touch_id = None;
-            }
+            touch_end(
+                conn,
+                root,
+                state,
+                raw_touch,
+                dimensions,
+                keyboard_geometry,
+                config,
+                key_injector,
+                event.detail,
+            );
         }
         Event::Expose(event) if event.window == shell_window => {
             state.shell_exposed = true;
@@ -1695,68 +1885,18 @@ fn handle_x_event(
                 && event.window != status_bar_window
                 && event.window != banner_window
             {
-                // A MapRequest is handled inside the current app lifecycle. Do
-                // not synchronously query WM_TRANSIENT_FOR on Moon's long-lived
-                // X connection: any runtime reply wait can hit the same wrapped
-                // sequence ambiguity that previously froze keyboard input.
-                // Known windows retain their owner; new primary/popup windows
-                // belong to the app that Moon deliberately launched or resumed.
-                let owner = apps.owner_of(event.window).or_else(|| apps.active());
-                let registration = owner.map(|owner| apps.register_window(owner, event.window));
-                let should_show = registration
-                    .as_ref()
-                    .is_none_or(|registration| registration.should_show);
-                if registration.is_some() {
-                    // Focus events on the managed top-level also report focus
-                    // entering/leaving its descendants. This preserves CEF's
-                    // exact page/textfield focus without a synchronous query.
-                    let _ = conn.change_window_attributes(
-                        event.window,
-                        &ChangeWindowAttributesAux::new().event_mask(EventMask::FOCUS_CHANGE),
-                    )?;
-                }
-                let is_active = registration
-                    .as_ref()
-                    .is_some_and(|registration| apps.active() == Some(registration.owner));
-                let is_primary = registration
-                    .as_ref()
-                    .is_some_and(|registration| registration.primary);
-                if is_active {
-                    let app_height = if is_primary && state.keyboard.is_visible() {
-                        keyboard_geometry.app_height()
-                    } else {
-                        height
-                    };
-                    if state.shell_covers_app() {
-                        // A new window is created at the top of the stack.
-                        // Put the shell back above it before it maps so the
-                        // launch screen never flickers to a half-painted app.
-                        resize_app_window(conn, event.window, width, app_height)?;
-                        raise_shell(conn, shell_window)?;
-                    } else {
-                        fullscreen_window(conn, event.window, width, app_height)?;
-                    }
-                }
-                if should_show {
-                    conn.map_window(event.window)?;
-                    let _ = conn.xfixes_hide_cursor(event.window)?;
-                }
-                state.replace_managed_windows(apps.active_windows());
-                if is_active {
-                    state.last_action = "map_external_window".into();
-                    state.redraw = true;
-                    if state.shell_covers_app() {
-                        if is_primary {
-                            state.note_app_window_mapped();
-                        }
-                    } else if is_primary {
-                        conn.set_input_focus(InputFocus::PARENT, event.window, CURRENT_TIME)?;
-                    }
-                    state.keyboard.request_raise();
-                    status_bar_surface.request_raise();
-                } else {
-                    raise_shell(conn, shell_window)?;
-                }
+                manage_window(
+                    conn,
+                    event.window,
+                    None,
+                    false,
+                    shell_window,
+                    dimensions,
+                    keyboard_geometry,
+                    state,
+                    apps,
+                    status_bar_surface,
+                )?;
             }
         }
         Event::ConfigureRequest(event) => {
@@ -1862,6 +2002,189 @@ fn handle_x_event(
     Ok(())
 }
 
+/// Takes a new app window into Moon's management: the X11 MapRequest path,
+/// and the Wayland proxy of a toplevel's first content (`owner` then names
+/// the app its process belongs to).
+#[allow(clippy::too_many_arguments)]
+fn manage_window(
+    conn: &RustConnection,
+    window: u32,
+    owner: Option<AppId>,
+    wayland_proxy: bool,
+    shell_window: u32,
+    dimensions: (u16, u16),
+    keyboard_geometry: &KeyboardGeometry,
+    state: &mut ShellState,
+    apps: &mut AppRegistry,
+    status_bar_surface: &mut StatusBarSurface,
+) -> Result<(), Box<dyn Error>> {
+    let (width, height) = dimensions;
+    // A MapRequest is handled inside the current app lifecycle. Do
+    // not synchronously query WM_TRANSIENT_FOR on Moon's long-lived
+    // X connection: any runtime reply wait can hit the same wrapped
+    // sequence ambiguity that previously froze keyboard input.
+    // Known windows retain their owner; new primary/popup windows
+    // belong to the app that Moon deliberately launched or resumed.
+    let owner = apps.owner_of(window).or(owner).or_else(|| apps.active());
+    let registration = owner.map(|owner| apps.register_window(owner, window));
+    let should_show = registration
+        .as_ref()
+        .is_none_or(|registration| registration.should_show);
+    if registration.is_some() && !wayland_proxy {
+        // Focus events on the managed top-level also report focus
+        // entering/leaving its descendants. This preserves CEF's
+        // exact page/textfield focus without a synchronous query.
+        // (A Wayland proxy is Moon's own window and already selects
+        // focus, structure and button events.)
+        let _ = conn.change_window_attributes(
+            window,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::FOCUS_CHANGE),
+        )?;
+    }
+    let is_active = registration
+        .as_ref()
+        .is_some_and(|registration| apps.active() == Some(registration.owner));
+    let is_primary = registration
+        .as_ref()
+        .is_some_and(|registration| registration.primary);
+    if is_active {
+        let app_height = if is_primary && state.keyboard.is_visible() {
+            keyboard_geometry.app_height()
+        } else {
+            height
+        };
+        if state.shell_covers_app() {
+            // A new window is created at the top of the stack.
+            // Put the shell back above it before it maps so the
+            // launch screen never flickers to a half-painted app.
+            resize_app_window(conn, window, width, app_height)?;
+            raise_shell(conn, shell_window)?;
+        } else {
+            fullscreen_window(conn, window, width, app_height)?;
+        }
+    }
+    if should_show {
+        conn.map_window(window)?;
+        let _ = conn.xfixes_hide_cursor(window)?;
+    }
+    state.replace_managed_windows(apps.active_windows());
+    if is_active {
+        state.last_action = "map_external_window".into();
+        state.redraw = true;
+        if state.shell_covers_app() {
+            if is_primary {
+                state.note_app_window_mapped();
+            }
+        } else if is_primary {
+            conn.set_input_focus(InputFocus::PARENT, window, CURRENT_TIME)?;
+        }
+        state.keyboard.request_raise();
+        status_bar_surface.request_raise();
+    } else {
+        raise_shell(conn, shell_window)?;
+    }
+    Ok(())
+}
+
+/// A finger touched down (XI2 raw touch, or Moon's own evdev reader).
+#[allow(clippy::too_many_arguments)]
+fn touch_begin(
+    conn: &RustConnection,
+    state: &mut ShellState,
+    raw_touch: &mut RawTouchTracker,
+    keyboard_geometry: &KeyboardGeometry,
+    key_injector: &XtestInjector,
+    key_repeat_timing: KeyRepeatTiming,
+    id: u32,
+    x: i16,
+    y: i16,
+) {
+    if keyboard_geometry.owns_touch(&state.keyboard, x, y) {
+        if let Some(action) = begin_raw_keyboard_contact(
+            state,
+            raw_touch,
+            id,
+            keyboard_geometry,
+            x,
+            y,
+            key_repeat_timing,
+        ) {
+            handle_keyboard_action(conn, state, action, key_injector);
+        }
+    } else if raw_touch.touch_id.is_none() && state.pointer.is_none() {
+        // Non-keyboard app/close gestures remain deliberately
+        // single-finger even while the keyboard supports rollover.
+        raw_touch.touch_id = Some(id);
+        raw_touch.x = x;
+        raw_touch.y = y;
+        if let Some(action) = pointer_begin(state, keyboard_geometry, x, y, key_repeat_timing) {
+            handle_keyboard_action(conn, state, action, key_injector);
+        }
+    }
+}
+
+fn touch_update(
+    state: &mut ShellState,
+    raw_touch: &mut RawTouchTracker,
+    keyboard_geometry: &KeyboardGeometry,
+    height: u16,
+    id: u32,
+    x: Option<i16>,
+    y: Option<i16>,
+) {
+    if raw_touch
+        .keyboard_contacts
+        .iter()
+        .any(|(touch_id, _)| *touch_id == id)
+    {
+        update_raw_keyboard_contact(state, raw_touch, id, keyboard_geometry, x, y);
+    } else if raw_touch.touch_id == Some(id) {
+        if let Some(x) = x {
+            raw_touch.x = x;
+        }
+        if let Some(y) = y {
+            raw_touch.y = y;
+        }
+        pointer_move(state, keyboard_geometry, height, raw_touch.x, raw_touch.y);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn touch_end(
+    conn: &RustConnection,
+    root: u32,
+    state: &mut ShellState,
+    raw_touch: &mut RawTouchTracker,
+    dimensions: (u16, u16),
+    keyboard_geometry: &KeyboardGeometry,
+    config: &Config,
+    key_injector: &XtestInjector,
+    id: u32,
+) {
+    let (width, height) = dimensions;
+    if raw_touch
+        .keyboard_contacts
+        .iter()
+        .any(|(touch_id, _)| *touch_id == id)
+    {
+        end_raw_keyboard_contact(conn, state, raw_touch, id, keyboard_geometry, key_injector);
+    } else if raw_touch.touch_id == Some(id) {
+        pointer_end(
+            conn,
+            root,
+            state,
+            raw_touch.x,
+            raw_touch.y,
+            width,
+            height,
+            keyboard_geometry,
+            config,
+            key_injector,
+        );
+        raw_touch.touch_id = None;
+    }
+}
+
 fn raw_axis(event: &xinput::RawTouchBeginEvent, wanted: usize, maximum: u16) -> Option<i16> {
     let mut value_index = 0;
     for (word_index, mask) in event.valuator_mask.iter().copied().enumerate() {
@@ -1929,6 +2252,19 @@ fn resize_app_window(
 
 fn app_content_height(bottom: u16) -> u16 {
     bottom.saturating_sub(status_bar::HEIGHT).max(1)
+}
+
+/// Brings the apps' processes and windows in line with the view.
+fn reconcile_apps(
+    conn: &RustConnection,
+    shell_window: u32,
+    width: u16,
+    height: u16,
+    state: &mut ShellState,
+    apps: &mut AppRegistry,
+) -> Result<(), Box<dyn Error>> {
+    let update = apps.reconcile(AppId::from_view(state.view));
+    apply_registry_update(conn, shell_window, width, height, state, apps, update)
 }
 
 fn apply_registry_update(
@@ -2749,6 +3085,16 @@ fn inject_keyboard_input(
     key_injector: &XtestInjector,
     success_action: Option<&'static str>,
 ) {
+    // A Wayland app gets its keys from the Wayland server, after the events.
+    if let Some(primary) = state.managed_windows.first()
+        && state.wayland_windows.contains(primary)
+    {
+        state.wayland_keys.push(input);
+        if let Some(action) = success_action {
+            state.last_action = action.into();
+        }
+        return;
+    }
     let result = state
         .managed_windows
         .first()

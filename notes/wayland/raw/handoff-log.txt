@@ -1,0 +1,10 @@
+handoff begin Mon Oct 26 03:58:51 EDT 2026 up=284.38
+brightness after wake: 128
+supervisor 1004 stopped
+SIGKILL 1507: /system/bin/sh /data/local/tmp/a26-xorg-takeover.sh moon-3054ff3f-1 
+SIGKILL 1626: /system/bin/sh /data/local/a26-linux/a26-enter-chroot.sh /usr/local/sbin/a26-xorg-persistent-session 
+SIGKILL 1682: /bin/sh /usr/local/sbin/a26-xorg-persistent-session 
+Moon session 1725 stopped
+check: ok: Xorg gone, Android display stack stopped, moon-session running, supervisor frozen
+handoff done: Xorg and Moon stopped, card0 free, supervisor frozen. Restore with adb reboot.
+ok
