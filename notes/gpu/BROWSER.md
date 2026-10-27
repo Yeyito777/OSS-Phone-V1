@@ -9,6 +9,7 @@ Research and proposal, 2026-10-26, with first measurements on the phone
 |---|---|---|---|---|---|---|---|---|---|
 | stock launcher | 47.4/s | 58.2/s | 15.5 % | 33.2 % | 0.7 % | 2.5 % | 11.5 % | 13.6 % | 76.9 % of a core |
 | `--disable-gpu-compositing` | 45.9/s | 58.4/s | 15.9 % | 32.3 % | 0.5 % | 2.4 % | 11.7 % | 13.8 % | 76.6 % |
+| `--disable-gpu-rasterization` | 47.6/s | 58.5/s | 15.7 % | 31.2 % | 0.8 % | 2.4 % | 11.4 % | 14.3 % | 75.9 % |
 
 Chromium's own GPU report (DevTools `SystemInfo.getInfo`, stock launcher)
 explains why A changes nothing: `gpu_compositing` is already
@@ -17,7 +18,14 @@ explains why A changes nothing: `gpu_compositing` is already
 Device ...))": tiles are rastered by Skia on GL on SwiftShader's Vulkan,
 i.e. emulated GPU raster on the CPU, in the GPU process. The next flag to
 measure is therefore `--disable-gpu-rasterization` (Skia's native CPU
-raster in the renderers). `webgl` is `enabled_readback`, `vulkan`
+raster in the renderers), measured in the third row: it took effect
+(`rasterization` became `disabled_software`) and changed nothing either.
+So on this page SwiftShader costs little: the GPU process's ~16 % is viz
+compositing in software and presenting to X, the renderers' ~32 % is
+raster, layout and script, and the display path behind the Browser (Moon's
+mirror copies, 11-12 %, and moon-compositor, ~14 %) is another quarter of a
+core. Only real GPU work (C) or fewer copies (B) can lower these. `webgl`
+is `enabled_readback`, `vulkan`
 `disabled_off`, video decode `disabled_software`.
 
 The Mali's Vulkan driver (`moon-gpu-vkprobe`): Vulkan 1.1.177 (loader
