@@ -32,6 +32,7 @@ int main(void){
   }
   if(!strcmp(mode,"hang")){ fprintf(stderr,"[ctr] hanging\n"); for(;;) pause(); }
   if(!strcmp(mode,"reboot")){ fprintf(stderr,"[ctr] contained Android requests reboot\n"); syscall(SYS_reboot,LINUX_REBOOT_MAGIC1,LINUX_REBOOT_MAGIC2,LINUX_REBOOT_CMD_RESTART,NULL); }
-  if(!strcmp(mode,"exit")){ fprintf(stderr,"[ctr] exiting 1\n"); _exit(1); }
+  if(!strcmp(mode,"poweroff")){ fprintf(stderr,"[ctr] contained Android requests power-off\n"); syscall(SYS_reboot,LINUX_REBOOT_MAGIC1,LINUX_REBOOT_MAGIC2,LINUX_REBOOT_CMD_POWER_OFF,NULL); }
+  if(!strcmp(mode,"exit")){ fprintf(stderr,"[ctr] late failure: exit 42 (a real failure, not 1=reboot/2=poweroff)\n"); _exit(42); }
   fprintf(stderr,"[ctr] unknown mode %s\n",mode); _exit(2);
 }

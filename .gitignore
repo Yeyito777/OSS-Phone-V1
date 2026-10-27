@@ -26,6 +26,7 @@
 !/scripts/device/moon-boot-supervisor.sh
 !/scripts/device/moon-direct-policy.sh
 !/scripts/device/moon-post-ready.sh
+!/scripts/device/moon-boot-confirm.sh
 !/scripts/device/moon-mode-stop.list
 !/scripts/device/moon-audio-start.sh
 !/scripts/device/moon-audio-stop.sh

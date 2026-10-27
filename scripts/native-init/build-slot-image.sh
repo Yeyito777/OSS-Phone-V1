@@ -46,7 +46,7 @@ MALI_KO="${A26_MALI_KO:-$HOME/oss-kernel/out/modules/mali-kbase-pid-namespace/ma
 MALI_KO_SHA=f36fd33955bca28479ed93e5c81613229b0ea2594e8df38a22eb74cbd4a614bc
 MALI_PATH=lib/modules/mali_kbase.ko
 case "$VARIANT" in
-  containment) SRC=oss-init.c; NAME=recovery-slot-stage2-v5-A266MUBU1AYB8.img ;;
+  containment) SRC=oss-init.c; NAME=recovery-slot-stage2-v6-A266MUBU1AYB8.img ;;
   plain)       SRC=oss-pid1.c; NAME=recovery-slot-moon-A266MUBU1AYB8.img ;;
   *) echo "variant must be containment or plain" >&2; exit 2 ;;
 esac

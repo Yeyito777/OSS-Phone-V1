@@ -18,6 +18,8 @@ KO="${A26_REBOOTMODE_CLEAR_KO:-$HOME/oss-kernel/out/modules/oss-rebootmode-clear
 W=~/oss-kernel/.v4test; mkdir -p $W; cd $W
 T="-static -O1 -w -DTEST_STDERR -DKMSG_READ=\"/kmsg.test\" -DLIVENESS_DEADLINE_MS=3000 -I$SRC"
 gcc $T -DTEST_FAKE_CLEAR=0 $SRC/oss-init.c -o oss-init-fake
+gcc $T -DTEST_FAKE_CLEAR=0 -DTEST_BOOTCOUNT=3 $SRC/oss-init.c -o oss-init-bc3
+gcc $T -DTEST_FAKE_CLEAR=0 -DTEST_BOOTCOUNT=1 $SRC/oss-init.c -o oss-init-bc1
 gcc $T $SRC/oss-init.c -o oss-init-real
 gcc $T -DTEST_FAKE_CLEAR=0 $SRC/oss-pid1.c -o oss-pid1-fake
 gcc $T $SRC/oss-pid1.c -o oss-pid1-real
@@ -57,6 +59,9 @@ want $C layout-crash     && { mk layout-crash oss-init-fake stub-magisk stub-sto
 want $C hang             && { mk hang oss-init-fake stub-magisk stub-stock hang "boot"; run hang; }
 want $C late-reboot      && { mk late-reboot oss-init-fake stub-magisk stub-stock exit "sec-reboot sec-reboot: register restart handler successfully"; run late-reboot; }
 want $C contained-reboot && { mk contained-reboot oss-init-fake stub-magisk stub-stock reboot "sec-reboot sec-reboot: register restart handler successfully"; run contained-reboot; }
+want $C contained-poweroff && { mk contained-poweroff oss-init-fake stub-magisk stub-stock poweroff "sec-reboot sec-reboot: register restart handler successfully"; run contained-poweroff; }
+want $C bootcount-skip   && { mk bootcount-skip oss-init-bc3 stub-magisk stub-stock hang "boot"; run bootcount-skip; }
+want $C bootcount-ok     && { mk bootcount-ok oss-init-bc1 stub-magisk stub-stock hang "OSSPHONE_CONTAIN_LIVE"; run bootcount-ok 8; }
 # --- the clear did NOT load (real finit_module -> EPERM) ---
 want $C oss-init-noclear && { mk oss-init-noclear oss-init-real stub-magisk stub-stock crash "boot"; run oss-init-noclear; }
 want $C oss-pid1-noclear && { mk oss-pid1-noclear oss-pid1-real stub-magisk stub-stock crash "boot"; run oss-pid1-noclear; }

@@ -31,7 +31,7 @@ back to a stock init instead. Stage 0 is retired: its question is answered.
 | `canary/recovery-canary-A266MUBU1AYB8.img` | `71d68ced…8f54edfc` | Stock recovery (kernel, dtb, dtbo, full ramdisk) with `/init` = canary (`require_mode=1`) and `/oss-rebootmode-clear.ko` v2 |
 | `canary/reboot-recovery` | `89c036e0…a823c40e` | BCB-free recovery entry |
 | `recovery-slot/recovery-slot-moon-A266MUBU1AYB8.img` | `cc406f02…3a30b86e` | Today's boot from the slot: `/init` = oss-pid1 (clear → magiskinit as `/init` → Moon) + recovery-slot marker |
-| `recovery-slot/recovery-slot-stage2-v5-A266MUBU1AYB8.img` | `4c0ea361…bb5cd2e6` | Stage 2: `/init` = oss-init v5 (clear → Android in a PID+mount namespace); carries the patched `mali_kbase.ko` (`f36fd339`) and the SELinux-safe liveness/reboot fixes |
+| `recovery-slot/recovery-slot-stage2-v6-A266MUBU1AYB8.img` | `f61349b3…efdd4c4c` | Stage 2: `/init` = oss-init v6 (clear → Android in a PID+mount namespace); patched `mali_kbase.ko` (`f36fd339`), SELinux-safe liveness, reboot/power-off/failure classification, boot-count consumer (no-op in the slot) |
 | `oss-rebootmode-clear.ko` v2 (inside each image) | `7130cf3c…054e2568` | kernel agent's module, `src/oss-rebootmode-clear` (0a40464) |
 | `a26-rescue/misc-clean/misc-bcb-clear.img` | `42ba364c…4ab1ddac` | escape: MISC with an empty BCB |
 | `a26-rescue/A266MUBU1AYB8-current/recovery.img` | `9ab6cefe…a91a7e8` | stock recovery (restore target) |
@@ -95,8 +95,8 @@ Outcomes:
 A failure here (no Moon, panic) returns to BOOT by itself; an exec fallback
 shows `oss-pid1: … exec stock init` in the log.
 
-## Stage 3 — recovery-slot-stage2-v5 (oss-init containment)
-1. `--check-bcb`; flash `recovery-slot-stage2-v5-A266MUBU1AYB8.img`; `reboot-recovery`.
+## Stage 3 — recovery-slot-stage2-v6 (oss-init containment)
+1. `--check-bcb`; flash `recovery-slot-stage2-v6-A266MUBU1AYB8.img`; `reboot-recovery`.
 2. adb runs **inside** the container, so `/proc/1` there is Android's init.
    PASS = `dmesg | grep -E 'oss-rebootmode-clear|oss-init'` shows, in order:
    `before:`/`after:`, `oss-init: OSS-Phone init is the real PID 1 (v4…)`,

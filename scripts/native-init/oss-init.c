@@ -49,6 +49,7 @@
 #include <sched.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
@@ -102,6 +103,50 @@ static void kmsg(const char *msg) {
     if (fd < 0) return;
     (void)!write(fd, msg, strlen(msg));
     (void)close(fd);
+}
+
+/* ---- boot-attempt counter (BOOT-promotion safety) ------------------------
+ * On the single-slot BOOT partition a failed new PID 1 cannot be caught in
+ * userspace, so oss-init counts CONSECUTIVE boot attempts in a store that
+ * survives a warm reset and a panic, and is zeroed by a healthy session
+ * (scripts/device/moon-boot-confirm.sh). After BOOTCOUNT_MAX consecutive
+ * failures it skips containment and execs the stock init (today's proven boot).
+ *
+ * The store is the oss-bootcount kernel module, loaded like oss-rebootmode-clear
+ * with no filesystem dependency. On load it increments and logs
+ *     oss-bootcount: count=<n> max=<m>
+ * The module is present ONLY in a promoted BOOT image; it is absent from every
+ * recovery-slot image, where bootcount_bump() returns -1 and oss-init contains
+ * as before. So the skip engages only on BOOT, with the module in place. */
+#ifndef BOOTCOUNT_KO
+#define BOOTCOUNT_KO "/oss-bootcount.ko"
+#endif
+#ifndef BOOTCOUNT_MAX
+#define BOOTCOUNT_MAX 3
+#endif
+
+static int bootcount_bump(void) {
+#ifdef TEST_BOOTCOUNT
+    return TEST_BOOTCOUNT;            /* bench: force a count to test the skip */
+#else
+    int fd = open(BOOTCOUNT_KO, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;            /* no module: recovery slot -> contain */
+    long r = syscall(SYS_finit_module, fd, "", 0);
+    int e = errno; (void)close(fd);
+    if (r != 0 && e != EEXIST) return -1;
+    int k = open("/dev/kmsg", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (k < 0) return -1;
+    char buf[2048]; int count = -1;
+    for (;;) {                        /* /dev/kmsg yields one record per read */
+        ssize_t n = read(k, buf, sizeof(buf) - 1);
+        if (n <= 0) { if (n < 0 && errno == EPIPE) continue; break; }
+        buf[n] = '\0';
+        char *q = strstr(buf, "oss-bootcount: count=");
+        if (q) count = (int)strtol(q + 21, (char **)0, 10);
+    }
+    (void)close(k);
+    return count;
+#endif
 }
 
 static long now_ms(void) {
@@ -323,7 +368,7 @@ int main(int argc, char **argv) {
      * file, not a mount. Stock first-stage mounts its own tmpfs over /dev. */
     (void)mknod("/dev/kmsg", S_IFCHR | 0600, makedev(1, 11));
     g_kmsg_fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
-    kmsg("<6>oss-init: OSS-Phone init is the real PID 1 (v5, private-rootfs containment)\n");
+    kmsg("<6>oss-init: OSS-Phone init is the real PID 1 (v6, private-rootfs containment)\n");
 
     int fd_stock = open(STOCK_INIT, O_RDONLY | O_CLOEXEC);
     if (clear_err) {
@@ -333,6 +378,19 @@ int main(int argc, char **argv) {
         exec_stock_init(fd_stock, argv, 0);
     }
     kmsg("<6>oss-init: PMU reboot state set to NORMAL (oss-rebootmode-clear loaded)\n");
+
+    /* BOOT-promotion safety: after too many consecutive failed boots, fall back
+     * to the proven stock boot instead of attempting containment again. A no-op
+     * in the recovery slot (the module is absent there). */
+    int bc = bootcount_bump();
+    if (bc >= 0) {
+        char line[96];
+        kmsg(errno_line(line, sizeof(line), "<6>oss-init: consecutive boot attempt count=", bc));
+        if (bc >= BOOTCOUNT_MAX && fd_stock >= 0) {
+            kmsg("<4>oss-init: too many consecutive failed boots; skipping containment, exec stock init\n");
+            exec_stock_init(fd_stock, argv, 1);
+        }
+    }
     struct watch w = {.fd = open(KMSG_READ, O_RDONLY | O_NONBLOCK | O_CLOEXEC)};
 
     if (fd_stock < 0) {
@@ -353,14 +411,32 @@ int main(int argc, char **argv) {
 #ifdef TEST_STDERR
             dprintf(2, "[oss-init test] container wait status 0x%x\n", status);
 #endif
-            if (r == (pid_t)pid && WIFSIGNALED(status) &&
-                (WTERMSIG(status) == SIGHUP || WTERMSIG(status) == SIGINT)) {
-                /* reboot(2) from inside the container's PID namespace. */
-                watch_kmsg(&w);
-                if (w.reboot_safe) {
-                    kmsg("<6>oss-init: contained Android requested reboot/poweroff; performing it\n");
-                    real_reboot(WTERMSIG(status) == SIGINT);
-                }
+            /* A reboot/power-off requested INSIDE the container is turned by the
+             * kernel (kernel/pid_namespace.c reboot_pid_ns + zap_pid_ns_processes)
+             * into pid_ns->reboot = SIGHUP for reboot/restart, SIGINT for
+             * power-off/halt, carried on the container PID 1's wait status. When
+             * PID 1 itself called reboot(2) that status is WIFSIGNALED with that
+             * signal (measured: 0x1 / 0x2 on this kernel); some code paths
+             * surface it as WIFEXITED with the same number instead -- accept
+             * both. If a non-PID-1 process in the container called reboot(2) the
+             * kernel SIGKILLs PID 1 and the reboot/power-off distinction is lost
+             * (status reports SIGKILL): that drops through to fall_back, which
+             * still reboots safely to BOOT. */
+            int req = -1;
+            if (r == (pid_t)pid) {
+                if (WIFSIGNALED(status) &&
+                    (WTERMSIG(status) == SIGHUP || WTERMSIG(status) == SIGINT))
+                    req = WTERMSIG(status);
+                else if (WIFEXITED(status) &&
+                    (WEXITSTATUS(status) == SIGHUP || WEXITSTATUS(status) == SIGINT))
+                    req = WEXITSTATUS(status);
+            }
+            if (req != -1) {
+                int poweroff = (req == SIGINT);
+                kmsg(poweroff
+                     ? "<6>oss-init: contained Android requested power-off; powering off\n"
+                     : "<6>oss-init: contained Android requested reboot; rebooting to BOOT\n");
+                real_reboot(poweroff);   /* PMU is already NORMAL; never returns */
             }
             fall_back("container exited", &w, fd_stock, argv);
         }

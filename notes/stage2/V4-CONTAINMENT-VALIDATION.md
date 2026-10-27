@@ -141,3 +141,27 @@ Bench: all ten cases pass (the kill-refused and EACCES-live branches only fire
 under SELinux, so they are covered by the device run, not the userns bench).
 Exact-binary checks confirm the effective Mali, the v2 rebootmode `.ko`, the v5
 `/init`, and the qemu fallback (`execveat` of the held fd, no panic).
+
+### v6 (2026-10-27): reboot/power-off/failure classification + boot-count consumer
+Off-device (`recovery-slot-stage2-v6`, sha256 `f61349b3…`). Changes:
+- **Contained reboot vs power-off vs failure.** The v5 device run mislabelled a
+  contained `adb reboot` as a failure. `reboot_pid_ns`/`zap_pid_ns_processes`
+  (kernel) set the container PID 1's wait status to `SIGHUP` for reboot and
+  `SIGINT` for power-off; v6 reads that (both signalled and exited encodings,
+  measured `0x1`/`0x2` on the bench) and reboots or powers off accordingly, and
+  treats SIGKILL/other as a real failure (existing fallback). Residual: a
+  reboot issued by a non-PID-1 container process arrives only as SIGKILL and
+  loses the distinction — PROMOTION-PLAN.md §1 specs a shared `sys.powerctl`
+  reason channel.
+- **Boot-attempt counter consumer** (`bootcount_bump()`): reads/increments a
+  persistent counter at oss-init's first action and, at `BOOTCOUNT_MAX`
+  consecutive failures, skips containment and execs the stock init. A no-op
+  until the `oss-bootcount` kernel module is present, so inert in the slot;
+  engages only on a promoted BOOT image. Store + module interface + the gated
+  BOOT flash path: PROMOTION-PLAN.md §2/§4. Clear hook:
+  `scripts/device/moon-boot-confirm.sh`.
+Bench: 14 cases pass, including `contained-reboot`, `contained-poweroff`,
+`late-reboot` (a real exit-42 failure), `bootcount-skip`, `bootcount-ok`.
+Exact-binary checks: effective mali `f36fd339`, rebootmode `.ko` `7130cf3c`,
+`/init` carries the v6 reboot/power-off/bootcount strings and the
+`oss-bootcount` reference, qemu `/init` takes the `execveat` fallback, no panic.
