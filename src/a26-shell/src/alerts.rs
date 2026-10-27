@@ -73,6 +73,7 @@ pub enum Outgoing {
     MarkSeen(Vec<String>),
     Ring(RingKind, String, RingAction),
     SetDnd(bool),
+    Haptic(crate::notify_client::Haptic),
 }
 
 #[derive(Debug)]

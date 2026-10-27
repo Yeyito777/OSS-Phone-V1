@@ -26,6 +26,8 @@ pub struct Settings {
     pub wallpaper: String,
     /// Seconds without input before the screen dims and turns off; 0 never.
     pub auto_lock_s: u32,
+    /// Short vibrator taps on keys and toggles.
+    pub haptics: bool,
 }
 
 impl Default for Settings {
@@ -34,6 +36,7 @@ impl Default for Settings {
             version: 1,
             wallpaper: "moon".into(),
             auto_lock_s: 30,
+            haptics: true,
         }
     }
 }
@@ -96,6 +99,13 @@ impl Settings {
                     .filter(|v| AUTO_LOCK_CHOICES.contains(v))
                     .ok_or("auto_lock_s must be 15, 30, 60, 120, 300 or 0")?;
             }
+            "haptics" => {
+                self.haptics = match value {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err("haptics must be on or off"),
+                };
+            }
             _ => return Err("unknown setting"),
         }
         Ok(())
@@ -117,6 +127,9 @@ mod tests {
         assert!(settings.set("wallpaper", "nope").is_err());
         assert!(settings.set("auto_lock_s", "45").is_err());
         assert!(settings.set("auto_lock_s", "0").is_ok());
+        assert!(settings.set("haptics", "off").is_ok());
+        assert!(!settings.haptics);
+        assert!(settings.set("haptics", "maybe").is_err());
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);
         // Unknown keys and a newer field never break loading.

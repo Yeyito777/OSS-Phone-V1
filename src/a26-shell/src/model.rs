@@ -491,6 +491,16 @@ impl ShellState {
 
     /// A touch or key: Auto-Lock starts over (and undims) and a
     /// notification's wake no longer turns the screen back off.
+    /// A tap haptic, when the user wants them and the screen is on (it
+    /// never wakes anything).
+    pub fn haptic(&mut self, style: crate::notify_client::Haptic) {
+        if self.settings.haptics && self.screen_awake {
+            self.alerts
+                .outbox
+                .push(crate::alerts::Outgoing::Haptic(style));
+        }
+    }
+
     pub fn note_input(&mut self) {
         self.last_input = Instant::now();
         self.idle_dimmed = false;
@@ -938,6 +948,7 @@ impl ShellState {
         } else {
             self.failed_attempts = self.failed_attempts.saturating_add(1);
             self.pin_error_at = Some(Instant::now());
+            self.haptic(crate::notify_client::Haptic::Error);
             self.last_action = "unlock_failed".into();
             if self.failed_attempts % 5 == 0 {
                 self.lockout_until = Some(Instant::now() + Duration::from_secs(30));
@@ -1169,7 +1180,12 @@ impl ShellState {
             let armed = gesture.armed();
             gesture.refresh_hold(now);
             if gesture.armed() != armed {
+                let engaged = gesture.armed();
                 self.redraw = true;
+                if engaged {
+                    // The app switcher is about to open.
+                    self.haptic(crate::notify_client::Haptic::Medium);
+                }
             }
         }
         if let Some(switcher) = self.switcher.as_mut() {

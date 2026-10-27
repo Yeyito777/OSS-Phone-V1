@@ -40,7 +40,17 @@ pub enum Effect {
     Chime,
     /// Vibrate once for this many milliseconds.
     Buzz(u32),
+    /// A tap haptic (revision 4): one short pulse, which the daemon drops
+    /// if the vibrator is busy or one went out moments ago.
+    Haptic(u32),
 }
+
+/// Haptic pulse lengths (ms). Conservative until tuned by hand on the
+/// phone: shorter pulses may not be felt on its motor.
+pub const HAPTIC_SELECTION_MS: u32 = 12;
+pub const HAPTIC_LIGHT_MS: u32 = 16;
+pub const HAPTIC_MEDIUM_MS: u32 = 24;
+pub const HAPTIC_ERROR_MS: u32 = 40;
 
 #[derive(Debug)]
 pub struct Failure {
@@ -341,9 +351,32 @@ impl Engine {
         match cmd {
             "ping" => {
                 parse::<Empty>(args)?;
-                Ok(json!({"version": 1, "revision": 3}))
+                Ok(json!({"version": 1, "revision": 4}))
             }
             "notify.post" => self.post(parse(args)?, now, ev),
+            "haptic" => {
+                let a: Haptic = parse(args)?;
+                let ms = match a.style.as_str() {
+                    "selection" => HAPTIC_SELECTION_MS,
+                    "light" => HAPTIC_LIGHT_MS,
+                    "medium" => HAPTIC_MEDIUM_MS,
+                    "error" => HAPTIC_ERROR_MS,
+                    _ => {
+                        return Err(fail(
+                            "invalid_argument",
+                            "style is selection, light, medium or error",
+                        ));
+                    }
+                };
+                // Stateless: never while anything rings (whatever its
+                // vibrate setting), and the daemon drops it if the
+                // vibrator is busy. Not governed by `vibrate` (alerts) or
+                // do-not-disturb: Moon's own `haptics` setting decides.
+                if self.ringing.is_empty() && self.call_rings.is_empty() {
+                    self.effects.push(Effect::Haptic(ms));
+                }
+                Ok(json!({}))
+            }
             "notify.withdraw" => {
                 let a: Withdraw = parse(args)?;
                 let id = match (a.notification, a.app, a.tag) {
@@ -1073,6 +1106,12 @@ struct AppFilter {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Haptic {
+    style: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Withdraw {
     notification: Option<String>,
     app: Option<String>,
@@ -1456,6 +1495,46 @@ mod tests {
             assert_eq!(ev[1]["notification"]["body"], "10:00");
             // Tuesday 10:00.
             assert_eq!(e.next_wake(), Some(due + 86400));
+        });
+    }
+
+    #[test]
+    fn haptics_are_stateless_pulses_that_never_cut_into_ringing() {
+        with_tz(TZ, || {
+            let mut e = fresh();
+            let (r, _) = run(&mut e, "ping", json!({}), T0);
+            assert_eq!(r["revision"], 4);
+            e.take_effects();
+            e.dirty = false;
+            let (r, ev) = run(&mut e, "haptic", json!({"style": "light"}), T0);
+            assert_eq!(r, json!({}));
+            assert!(ev.is_empty());
+            assert_eq!(e.take_effects(), [Effect::Haptic(HAPTIC_LIGHT_MS)]);
+            assert!(!e.dirty);
+            // Do-not-disturb and `vibrate` are for alerts, not haptics.
+            run(
+                &mut e,
+                "settings.set",
+                json!({"do_not_disturb": true, "vibrate": false}),
+                T0,
+            );
+            e.take_effects();
+            run(&mut e, "haptic", json!({"style": "error"}), T0);
+            assert_eq!(e.take_effects(), [Effect::Haptic(HAPTIC_ERROR_MS)]);
+            assert_eq!(
+                error(&mut e, "haptic", json!({"style": "buzz"}), T0),
+                "invalid_argument"
+            );
+            assert_eq!(
+                error(&mut e, "haptic", json!({"style": "light", "ms": 5}), T0),
+                "invalid_argument"
+            );
+            // Nothing while a timer rings.
+            run(&mut e, "timer.create", json!({"duration_s": 1}), T0);
+            e.tick(T0 + 1);
+            e.take_effects();
+            run(&mut e, "haptic", json!({"style": "selection"}), T0 + 2);
+            assert!(e.take_effects().is_empty());
         });
     }
 

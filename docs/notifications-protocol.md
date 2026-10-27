@@ -12,6 +12,10 @@ clients are unaffected; a revision-2 daemon rejects a post with `ringing`
 (`invalid_argument`), so a client that needs it checks `ping`'s
 `revision` ≥ 3 (absent means 2).
 
+Revision 4 (2026-10-26): `haptic` (§4), a short vibrator pulse for a tap.
+`ping` returns `revision: 4`; an older daemon answers `unknown_command`, so
+a client checks `revision` ≥ 4 before sending it.
+
 `moon-notifyd` is OSS-Phone-V1's central service for **notifications**,
 **alarms** and **timers**. It runs as root inside the Alpine chroot next to
 Moon, owns all persistent state, decides when something fires, plays the alert
@@ -201,6 +205,7 @@ they reflect what the user did.
 | `notify.dismiss_all` | optional `app` | all (of that app) removed, reason `dismissed` |
 | `notify.activate` | `notification` | removed with reason `activated`; a `notification_activated` event (with `app`, `tag`, `open`) goes to every subscriber, so the posting app can react; Moon itself performs `open` |
 | `notify.mark_seen` | `ids` (array) or `all: true` | sets `seen`; `notifications_seen` event |
+| `haptic` (r4) | `style`: `selection`, `light`, `medium`, `error` | `{}`; one short pulse (12, 16, 24, 40 ms for now; to be tuned by hand), see below |
 | `alarm.list` | — | `{"alarms":[…]}` sorted by `next_fire_at` |
 | `alarm.create` | `hour` 0–23, `minute` 0–59, optional `days`, `label` (≤ 40), `enabled` (true), `sound`, `vibrate` (true), `snooze_minutes` | the alarm |
 | `alarm.update` | `alarm` + any alarm field above | the alarm (recomputed `next_fire_at`; clears a pending snooze) |
@@ -228,6 +233,15 @@ un-vibrates notifications of every urgency and suppresses their screen wake;
 **alarms and timers always ring**, and so do `ringing` notifications from the
 `phone` app (calls); `ringing` from any other app is ignored under
 do-not-disturb.
+
+`haptic` rules: it is stateless (no persistence, no `dirty`, no events) and
+best-effort: the daemon writes the vibrator once, or not at all when
+anything rings (a call, an alarm or a timer, whatever its `vibrate`), while
+a notification buzz runs (so a tap never cuts one short), or within 40 ms of
+the previous pulse (so typing or scrolling cannot flood sysfs). Haptics obey
+only Moon's own `haptics` setting (`settings.md`): not `vibrate`, which is
+for alerts, and not do-not-disturb. Moon sends them only for the user's own
+touches with the screen on, and never waits for the reply.
 
 ## 5. Events
 
@@ -312,7 +326,8 @@ time. Moon may connect after the daemon fired something: the `snapshot`'s
   files. If audio is not up yet, ringing is vibration-only until it is.
 - **Vibration.** `/sys/class/timed_output/vibrator/enable` (milliseconds,
   ≤ 10000; `0` stops) of Samsung's `sec_vibrator`, with `intensity` 0–10000.
-  The daemon is its only writer in Moon mode.
+  The daemon is its only writer in Moon mode (tap haptics come through
+  `haptic`).
 
 ## 8. Files
 

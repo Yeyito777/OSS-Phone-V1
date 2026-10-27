@@ -309,6 +309,11 @@ impl ShellState {
                 let value = (*start_value - dy / slider.rect().h * 100.0).clamp(0.0, 100.0);
                 let value = value.round() as u8;
                 let slider = *slider;
+                let previous = self.control.dragging.map(|(_, v)| v);
+                if (value == 0 || value == 100) && previous.is_some_and(|p| p != value) {
+                    // A tick as the slider reaches either end.
+                    self.haptic(crate::notify_client::Haptic::Selection);
+                }
                 if self.control.dragging != Some((slider, value)) {
                     self.control.dragging = Some((slider, value));
                     match slider {
@@ -397,6 +402,7 @@ impl ShellState {
 
     fn control_tile(&mut self, tile: Tile) {
         let now = Instant::now();
+        self.haptic(crate::notify_client::Haptic::Light);
         match tile {
             Tile::Dnd => {
                 let on = !self.alerts.store.do_not_disturb;

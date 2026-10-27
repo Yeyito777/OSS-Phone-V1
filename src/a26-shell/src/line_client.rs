@@ -22,11 +22,12 @@ const MAX_QUEUED_BYTES: usize = 64 * 1024;
 const RETRY_FIRST: Duration = Duration::from_millis(500);
 const RETRY_MAX: Duration = Duration::from_secs(5);
 
-/// A line from the daemon: an event, or the failure of one of Moon's
-/// requests (Moon acts on events; successful answers are dropped).
+/// A line from the daemon: an event, or the answer to one of Moon's
+/// requests.
 #[derive(Debug)]
 pub enum Line {
     Event(Value),
+    Reply { cmd: String, result: Value },
     Failed { cmd: String, code: String },
 }
 
@@ -204,7 +205,7 @@ impl LineClient {
     }
 
     fn parse_line(&mut self, line: &[u8]) -> Option<Line> {
-        let value: Value = match serde_json::from_slice(line) {
+        let mut value: Value = match serde_json::from_slice(line) {
             Ok(value) => value,
             Err(error) => {
                 eprintln!("{} sent invalid JSON: {error}", self.name);
@@ -221,7 +222,8 @@ impl LineClient {
             .position(|(pending, _, _)| *pending == id)?;
         let (_, cmd, _) = self.pending.remove(position);
         if value.get("ok").and_then(Value::as_bool) == Some(true) {
-            return None;
+            let result = value.get_mut("result").map(Value::take).unwrap_or_default();
+            return Some(Line::Reply { cmd, result });
         }
         let code = value
             .pointer("/error/code")

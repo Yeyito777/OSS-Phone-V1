@@ -279,12 +279,55 @@ pub enum Incoming {
 
 pub struct NotifyClient {
     line: LineClient,
+    /// The daemon's protocol revision (`ping`), once known.
+    revision: Option<u64>,
+    pinged: bool,
+}
+
+/// Tap haptics (protocol revision 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Haptic {
+    Selection,
+    Light,
+    Medium,
+    Error,
+}
+
+impl Haptic {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "selection" => Some(Self::Selection),
+            "light" => Some(Self::Light),
+            "medium" => Some(Self::Medium),
+            "error" => Some(Self::Error),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Selection => "selection",
+            Self::Light => "light",
+            Self::Medium => "medium",
+            Self::Error => "error",
+        }
+    }
 }
 
 impl NotifyClient {
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             line: LineClient::new("moon-notifyd", path, REQUEST_TIMEOUT),
+            revision: None,
+            pinged: false,
+        }
+    }
+
+    /// A short vibrator pulse, if the daemon knows `haptic` (revision 4);
+    /// an older one would refuse it.
+    pub fn haptic(&mut self, style: Haptic) {
+        if self.line.connected() && self.revision.is_some_and(|revision| revision >= 4) {
+            self.line.send("haptic", json!({ "style": style.name() }));
         }
     }
 
@@ -351,8 +394,16 @@ impl NotifyClient {
     /// Connects when due, flushes output, and returns everything received.
     /// Never blocks.
     pub fn service(&mut self, now: Instant) -> Vec<Incoming> {
-        self.line
-            .service(now)
+        let lines = self.line.service(now);
+        if !self.line.connected() {
+            self.pinged = false;
+            self.revision = None;
+        } else if !self.pinged {
+            // Which revision answers decides what Moon may send.
+            self.pinged = true;
+            self.line.send("ping", json!({}));
+        }
+        lines
             .into_iter()
             .filter_map(|line| match line {
                 Line::Event(value) => match serde_json::from_value::<Event>(value) {
@@ -362,6 +413,13 @@ impl NotifyClient {
                         None
                     }
                 },
+                Line::Reply { cmd, result } => {
+                    if cmd == "ping" {
+                        // Absent means revision 2 (protocol §1).
+                        self.revision = Some(result["revision"].as_u64().unwrap_or(2));
+                    }
+                    None
+                }
                 Line::Failed { cmd, code } => Some(Incoming::Failed { cmd, code }),
             })
             .collect()
@@ -424,7 +482,7 @@ mod tests {
             .unwrap();
         let mut received = String::new();
         let mut buffer = [0_u8; 512];
-        while received.matches('\n').count() < 2 {
+        while received.matches('\n').count() < 3 {
             let read = server.read(&mut buffer).unwrap();
             received.push_str(std::str::from_utf8(&buffer[..read]).unwrap());
         }
@@ -433,14 +491,17 @@ mod tests {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         assert_eq!(lines[0]["cmd"], "subscribe");
-        assert_eq!(lines[1]["cmd"], "notify.dismiss");
-        assert!(lines[1]["id"].as_u64().is_some());
-        assert_eq!(lines[1]["notification"], json!("n9"));
+        assert_eq!(lines[1]["cmd"], "ping");
+        assert_eq!(lines[2]["cmd"], "notify.dismiss");
+        assert!(lines[2]["id"].as_u64().is_some());
+        assert_eq!(lines[2]["notification"], json!("n9"));
+        // No haptics until the daemon says it has them (revision 4).
+        client.haptic(Haptic::Error);
         server
             .write_all(
                 format!(
-                    "{{\"id\":{},\"ok\":true,\"result\":{{}}}}\n{{\"id\":{},\"ok\":false,\"error\":{{\"code\":\"not_found\",\"message\":\"x\"}}}}\n{{\"event\":\"notification_removed\",\"id\":\"n9\",\"reason\":\"dismissed\"}}\n",
-                    lines[0]["id"], lines[1]["id"]
+                    "{{\"id\":{},\"ok\":true,\"result\":{{}}}}\n{{\"id\":{},\"ok\":true,\"result\":{{\"version\":1,\"revision\":4}}}}\n{{\"id\":{},\"ok\":false,\"error\":{{\"code\":\"not_found\",\"message\":\"x\"}}}}\n{{\"event\":\"notification_removed\",\"id\":\"n9\",\"reason\":\"dismissed\"}}\n",
+                    lines[0]["id"], lines[1]["id"], lines[2]["id"]
                 )
                 .as_bytes(),
             )
@@ -459,6 +520,17 @@ mod tests {
         assert!(
             matches!(&got[1], Incoming::Event(Event::NotificationRemoved { id }) if id == "n9")
         );
+        assert_eq!(client.revision, Some(4));
+        client.haptic(Haptic::Light);
+        client.service(Instant::now());
+        let mut more = String::new();
+        while !more.contains('\n') {
+            let read = server.read(&mut buffer).unwrap();
+            more.push_str(std::str::from_utf8(&buffer[..read]).unwrap());
+        }
+        let haptic: Value = serde_json::from_str(more.lines().next().unwrap()).unwrap();
+        assert_eq!(haptic["cmd"], "haptic");
+        assert_eq!(haptic["style"], "light");
         drop(server);
         let _ = std::fs::remove_file(&path);
     }

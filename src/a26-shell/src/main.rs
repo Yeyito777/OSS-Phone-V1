@@ -879,6 +879,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 alerts::Outgoing::MarkSeen(ids) => notifyd.mark_seen(&ids),
                 alerts::Outgoing::Ring(kind, id, action) => notifyd.ring_action(kind, &id, action),
                 alerts::Outgoing::SetDnd(on) => notifyd.set_do_not_disturb(on),
+                alerts::Outgoing::Haptic(style) => notifyd.haptic(style),
             }
         }
         for command in std::mem::take(&mut state.calls.outbox) {
@@ -2002,6 +2003,7 @@ fn pointer_begin(
         && let Some(index) = pointer.keyboard_key_index
     {
         state.keyboard.press_key_index(index);
+        state.haptic(notify_client::Haptic::Selection);
     }
     let mut pointer = pointer;
     if !pointer.keyboard_owned && app_takes_touch(state, y) {
@@ -2246,6 +2248,7 @@ fn begin_raw_keyboard_contact(
         && let Some(index) = pointer.keyboard_key_index
     {
         state.keyboard.press_key_index(index);
+        state.haptic(notify_client::Haptic::Selection);
     }
     raw_touch.keyboard_contacts.push((touch_id, pointer));
     state.last_action = "keyboard_contact_begin".into();
@@ -2512,7 +2515,7 @@ fn pointer_end(
     if pointer.forwarding {
         // A drag the app had: it ends there.
         state.app_pointer.push(model::AppPointer::Release(x, y));
-        state.last_action = "app_drag_forwarded".into();
+        state.last_action = "app_touch_forwarded".into();
         return;
     }
     if pointer.keyboard_owned {
@@ -2755,6 +2758,7 @@ fn apply_command(
         | Command::ProfileBudget(_)
         | Command::ProfileFrames(_)
         | Command::SettingsSet(..) => {}
+        Command::Haptic(style) => state.haptic(style),
         Command::Digit(digit) => state.input_digit(digit, config),
         Command::Backspace => state.backspace_pin(),
         Command::Submit => {

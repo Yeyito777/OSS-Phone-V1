@@ -291,6 +291,7 @@ impl TelephonyClient {
                         None
                     }
                 },
+                Line::Reply { .. } => None,
                 Line::Failed { cmd, code } => Some(Incoming::Failed { cmd, code }),
             })
             .collect()

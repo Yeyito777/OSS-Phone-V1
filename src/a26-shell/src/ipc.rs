@@ -51,6 +51,8 @@ pub enum Command {
     SuspendTest(u64),
     /// `settings set KEY VALUE` (docs/settings.md).
     SettingsSet(String, String),
+    /// `haptic STYLE`: a tap haptic for an app's control (System's switches).
+    Haptic(crate::notify_client::Haptic),
     Quit,
 }
 
@@ -285,6 +287,10 @@ fn parse_command(line: &str) -> Result<Command, String> {
                 Command::SettingsSet(key.to_owned(), value.to_owned())
             }
             _ => return Err("settings requires set KEY VALUE".into()),
+        },
+        "haptic" => match parts.next().and_then(crate::notify_client::Haptic::parse) {
+            Some(style) => Command::Haptic(style),
+            None => return Err("haptic requires selection, light, medium or error".into()),
         },
         "screen" => match parts.next() {
             Some("off") => Command::ScreenOff,

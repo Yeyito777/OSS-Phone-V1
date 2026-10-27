@@ -480,6 +480,7 @@ impl ShellState {
                 let offset = self.calls.knob_drag.take().unwrap_or(0.0);
                 if offset >= KNOB_TRAVEL * 0.8 {
                     self.calls.knob_drag = Some(KNOB_TRAVEL);
+                    self.haptic(crate::notify_client::Haptic::Medium);
                     self.call_command(CallCommand::Answer);
                     self.last_action = "call_answered".into();
                 } else {
@@ -523,6 +524,7 @@ impl ShellState {
     }
 
     fn press_call_button(&mut self, button: CallButton) {
+        self.haptic(crate::notify_client::Haptic::Light);
         let calls = &mut self.calls;
         match button {
             CallButton::Accept | CallButton::HoldAccept => {

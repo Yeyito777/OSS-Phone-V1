@@ -121,6 +121,8 @@ pub fn run(paths: Paths) -> Result<(), Box<dyn Error>> {
         alarm_timer: AlarmTimer::new()?,
         vibe_timer: timerfd(libc::CLOCK_MONOTONIC)?,
         vibrating: false,
+        buzz_until: None,
+        last_haptic: None,
         player: Player::default(),
         last_wake_written: None,
     };
@@ -159,9 +161,17 @@ struct Daemon {
     alarm_timer: AlarmTimer,
     vibe_timer: OwnedFd,
     vibrating: bool,
+    /// A notification buzz runs until then: a haptic must not cut it short.
+    buzz_until: Option<Instant>,
+    /// The last haptic pulse, for the rate limit.
+    last_haptic: Option<Instant>,
     player: Player,
     last_wake_written: Option<Option<i64>>,
 }
+
+/// At most one haptic pulse per this long, so typing or scrolling never
+/// floods the vibrator's sysfs file.
+const HAPTIC_MIN_GAP: Duration = Duration::from_millis(40);
 
 impl Daemon {
     fn poll_once(&mut self) -> Result<(), Box<dyn Error>> {
@@ -386,8 +396,20 @@ impl Daemon {
                 Effect::Chime => self.player.chime(),
                 Effect::Buzz(ms) if !self.vibrating => {
                     let _ = sound::vibrate(ms);
+                    self.buzz_until = Some(Instant::now() + Duration::from_millis(ms.into()));
                 }
                 Effect::Buzz(_) => {}
+                Effect::Haptic(ms) => {
+                    let now = Instant::now();
+                    let buzzing = self.buzz_until.is_some_and(|until| now < until);
+                    let too_soon = self
+                        .last_haptic
+                        .is_some_and(|at| now.saturating_duration_since(at) < HAPTIC_MIN_GAP);
+                    if !self.vibrating && !buzzing && !too_soon {
+                        let _ = sound::vibrate(ms);
+                        self.last_haptic = Some(now);
+                    }
+                }
             }
         }
         let volume = self.engine.state.settings.alert_volume;
