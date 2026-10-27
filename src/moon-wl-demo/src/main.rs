@@ -229,7 +229,10 @@ impl App {
     }
 
     fn ensure_buffers(&mut self, qh: &QueueHandle<Self>) {
-        let size = (self.width * self.height * 4) as usize;
+        // Rows of 64 bytes: what the Mali imports and the display planes
+        // scan out (1080 pixels: 4352 bytes, as the X mirror's).
+        let stride = (self.width * 4 + 63) & !63;
+        let size = (stride * self.height) as usize;
         let slot = size.div_ceil(4096) * 4096;
         if self.allocated == slot {
             return;
@@ -246,7 +249,7 @@ impl App {
         self.memory = None;
         self.allocated = slot;
         // MOON_DEMO_DMABUF=1: each buffer is a whole dma-heap buffer (offset
-        // 0, tight stride), which Moon shows in place instead of uploading.
+        // 0), which Moon shows in place instead of uploading.
         if std::env::var("MOON_DEMO_DMABUF").is_ok_and(|value| value == "1") {
             match (0..2).map(|_| dma_heap_alloc(slot)).collect::<std::io::Result<Vec<_>>>() {
                 Ok(fds) => {
@@ -260,7 +263,7 @@ impl App {
                             0,
                             self.width,
                             self.height,
-                            self.width * 4,
+                            stride,
                             wl_shm::Format::Xrgb8888,
                             qh,
                             index,
@@ -305,7 +308,7 @@ impl App {
                 (index * slot) as i32,
                 self.width,
                 self.height,
-                self.width * 4,
+                stride,
                 wl_shm::Format::Xrgb8888,
                 qh,
                 index,
@@ -332,7 +335,9 @@ impl App {
         let Some(index) = self.buffers.iter().position(|buffer| !buffer.busy) else {
             return;
         };
-        let (width, height) = (self.width as usize, self.height as usize);
+        // Painted row by row at the buffer's padded row length; the columns
+        // past `self.width` are padding nobody shows.
+        let (width, height) = ((((self.width * 4 + 63) & !63) / 4) as usize, self.height as usize);
         let offset = self.buffers[index].offset;
         if self.dirty {
             self.generation += 1;

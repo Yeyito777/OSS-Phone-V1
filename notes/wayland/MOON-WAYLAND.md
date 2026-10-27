@@ -476,13 +476,16 @@ A client may now back its `wl_shm` pool with a dma-heap buffer instead
   EGLImage, with no upload.
 - **Cache flush:** before each damage, Moon cleans the CPU caches with
   `DMA_BUF_IOCTL_SYNC`, as the compositor does for the mirror.
-- **Other buffers:** anything at an offset inside a pool keeps the copy
-  path; a dmabuf maps like a memfd there.
-- **Planes:** with planes on, a dmabuf surface may be scanned out
-  directly. The DPU's stride and offset rules are for the GPU agent to
-  settle, which is why only offset 0 goes this way for now.
+- **Other buffers:** only a whole buffer (offset 0) with 64-byte rows takes
+  this path. The Mali may refuse other pitches, and a v3 compositor would
+  not even report the failure. Anything else keeps the copy path; a dmabuf
+  maps like a memfd there.
+- **Planes:** the compositor owns the plane rules (main f79d6e8). A dmabuf
+  goes on a plane only with a pitch that is a multiple of 64 and offset 0;
+  otherwise the GPU composites it, with one log line per surface.
 
-The demo allocates one dma-heap buffer per `wl_buffer` with
+The demo allocates one dma-heap buffer per `wl_buffer`, with rows padded
+to 64 bytes (4352 for 1080 pixels, like the X mirror), with
 `MOON_DEMO_DMABUF=1` (`moon-phone.sh start demo debug dmabuf`). Expected on
 the phone: the full-screen demo at about 7.2 ms a frame (draw 2.6 + cache
 clean 0.4 + render 3.2 + wakeup 1.0), so 120 fps. This needs the phone:
