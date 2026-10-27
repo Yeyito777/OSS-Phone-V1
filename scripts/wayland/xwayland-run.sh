@@ -24,9 +24,12 @@ display() { sed -n 's/^xwayland: display \(:[0-9]*\) ready.*/\1/p' "$BASE/moon.l
 ctl() { "$BIN/a26-shellctl" --socket "$BASE/control.sock" "$@"; }
 
 stop() {
+    # Moon leads its own process group (setsid): its apps and Xwayland go
+    # with it, as the supervisor stops a session.
     for name in moon mock; do
         if [[ -f "$BASE/$name.pid" ]]; then
-            kill "$(cat "$BASE/$name.pid")" 2>/dev/null || true
+            pid="$(cat "$BASE/$name.pid")"
+            kill -TERM -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
             rm -f "$BASE/$name.pid"
         fi
     done

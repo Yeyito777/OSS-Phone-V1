@@ -443,6 +443,44 @@ way back is `moon-phone.sh reboot`. To check there:
 - screen off and on
 - frame pacing
 
+**Measured: rootful presentation is free.** Xwayland's CPU while the
+Browser scrolls is the same (13 to 15% on whale) whether or not its root
+is configured and presented. Its shm pixmaps go to Wayland without a real
+copy, so M4a has no hidden extra copy on top of the mirror.
+
+### dmabuf-backed wl_shm pools (built, opt-in per client)
+
+A `wl_shm` buffer in a memfd costs moon-compositor an upload on every
+frame (`glTexSubImage2D`: about 1 ms plus 0.75 ms per MP on the phone).
+That is what held the full-screen demo at 60 fps. The X mirror avoids it
+because it is a dmabuf, sampled in place.
+
+A client may now back its `wl_shm` pool with a dma-heap buffer instead
+(`/dev/dma_heap/system`, readable by all on the phone):
+- **Pool:** Moon sees that the fd is a dmabuf and treats the pool as
+  unshrinkable (a dmabuf cannot shrink).
+- **Announce:** Moon sends each whole-buffer `wl_buffer` (offset 0) as an
+  `MG_SURFACE_DMABUF` client surface, which the compositor imports as an
+  EGLImage, with no upload.
+- **Cache flush:** before each damage, Moon cleans the CPU caches with
+  `DMA_BUF_IOCTL_SYNC`, as the compositor does for the mirror.
+- **Other buffers:** anything at an offset inside a pool keeps the copy
+  path; a dmabuf maps like a memfd there.
+- **Planes:** with planes on, a dmabuf surface may be scanned out
+  directly. The DPU's stride and offset rules are for the GPU agent to
+  settle, which is why only offset 0 goes this way for now.
+
+The demo allocates one dma-heap buffer per `wl_buffer` with
+`MOON_DEMO_DMABUF=1` (`moon-phone.sh start demo debug dmabuf`). Expected on
+the phone: the full-screen demo at about 7.2 ms a frame (draw 2.6 + cache
+clean 0.4 + render 3.2 + wakeup 1.0), so 120 fps. This needs the phone:
+whale's dma heap is root-only.
+
+This is also what makes M4b worth doing. Xwayland's per-window buffers
+are memfds, so rootless would add the upload per frame that the mirror
+avoids. M4b therefore starts with an Xwayland that allocates its shm
+pixmaps from the dma heap.
+
 **M4b (next): rootless Xwayland, Moon as its X window manager.**
 - Each X window (the Browser, and Moon's own windows at first) has its own
   wl_surface (`xwayland_shell_v1`). Moon shows it directly, as M2 does for

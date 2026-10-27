@@ -875,6 +875,11 @@ impl WaylandApps {
                 shm.height as u32,
                 shm.stride as u32,
                 shm.argb,
+                // Only whole dmabufs (offset 0): with planes on, the
+                // compositor may scan a dmabuf surface out, and buffers at
+                // an offset inside a pool are untested on the panel's DPU.
+                // Others take the copy path (a dmabuf maps like a memfd).
+                shm.pool.dmabuf && shm.offset == 0,
             ) {
                 Ok(surface) => {
                     self.client_surfaces
