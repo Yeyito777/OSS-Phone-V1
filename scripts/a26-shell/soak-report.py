@@ -73,6 +73,31 @@ def main(run: Path) -> int:
               f"{-slope(points):.2f} %/h, median current {current[len(current) // 2] / 1000:.0f} mA")
     else:
         print("\nidle drain: not measured (charging, or too few screen-off minutes)")
+    # CPU busy % and wakeups (context switches, interrupts) per second, by
+    # screen state, from consecutive samples.
+    if "cpu_busy" in samples[0]:
+        rates = {"screen off": [], "screen on": []}
+        for a, b in zip(samples, samples[1:]):
+            try:
+                dt = int(b["t"]) - int(a["t"])
+                total = int(b["cpu_total"]) - int(a["cpu_total"])
+                busy = int(b["cpu_busy"]) - int(a["cpu_busy"])
+                ctxt = (int(b["ctxt"]) - int(a["ctxt"])) / dt
+                intr = (int(b["intr"]) - int(a["intr"])) / dt
+            except (ValueError, ZeroDivisionError, KeyError):
+                continue
+            key = "screen off" if a["backlight"] == "0" and b["backlight"] == "0" else "screen on"
+            if total > 0:
+                rates[key].append((100 * busy / total, ctxt, intr))
+        for key, values in rates.items():
+            if values:
+                n = len(values)
+                print(f"{key}: CPU busy {sum(v[0] for v in values) / n:.2f} % (all cores), "
+                      f"{sum(v[1] for v in values) / n:.0f} context switches/s, "
+                      f"{sum(v[2] for v in values) / n:.0f} interrupts/s ({n} min)")
+        d = [int(s["d_state"]) for s in samples if s.get("d_state", "").isdigit()]
+        if d:
+            print(f"tasks in D state (counted by the load average): {min(d)}-{max(d)}")
     mem = [int(s["mem_available_kb"] or 0) for s in samples]
     print(f"MemAvailable: {mem[0] // 1024} -> {mem[-1] // 1024} MB "
           f"({slope([((int(s['t']) - t0) / 3600, int(s['mem_available_kb'] or 0)) for s in samples]) / 1024:+.1f} MB/h)")

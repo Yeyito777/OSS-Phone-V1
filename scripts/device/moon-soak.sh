@@ -63,14 +63,24 @@ trap finish EXIT HUP INT TERM
 
 PROCS="a26-shell moon-compositor Xorg moon-notifyd moon-audiod moon-permissiond moon-telephonyd a26-wifi-service wpa_supplicant udhcpc"
 [ -f "$RUN/samples.csv" ] ||
-    echo "t,uptime,capacity,voltage_uv,current_ua,status,usb_online,backlight,mem_available_kb,load1,boot_mode,battery_temp" >"$RUN/samples.csv"
+    echo "t,uptime,capacity,voltage_uv,current_ua,status,usb_online,backlight,mem_available_kb,load1,boot_mode,battery_temp,cpu_busy,cpu_total,ctxt,intr,d_state" >"$RUN/samples.csv"
 [ -f "$RUN/procs.csv" ] || echo "t,proc,pid,ticks,rss_kb,threads,fds" >"$RUN/procs.csv"
 [ -f "$RUN/events.csv" ] || echo "t,event,result,detail" >"$RUN/events.csv"
 
 sample() {
     t=$(now)
     mem="$(sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' /proc/meminfo)"
-    echo "$t,$(cut -d' ' -f1 /proc/uptime),$(read_file $BATTERY/capacity),$(read_file $BATTERY/voltage_now),$(read_file $BATTERY/current_now),$(read_file $BATTERY/status),$(read_file /sys/class/power_supply/usb/online),$(read_file /sys/class/backlight/panel/brightness),$mem,$(cut -d' ' -f1 /proc/loadavg),$(getprop moon.boot.mode),$(read_file $BATTERY/temp)" >>"$RUN/samples.csv"
+    # CPU ticks busy/total (all CPUs), context switches and interrupts since
+    # boot (the report differentiates), and tasks in D state: the load
+    # average counts those, and Samsung's TEE/UFS/CHUB kernel threads idle
+    # there (14 on this phone), so the load says little about cost.
+    set -- $(head -1 /proc/stat)
+    cpu_total=$(($2 + $3 + $4 + $5 + $6 + $7 + $8 + $9))
+    cpu_busy=$((cpu_total - $5 - $6))
+    ctxt="$(sed -n 's/^ctxt //p' /proc/stat)"
+    intr="$(sed -n 's/^intr \([0-9]*\).*/\1/p' /proc/stat)"
+    d_state="$(cat /proc/[0-9]*/stat 2>/dev/null | grep -c ') D ')"
+    echo "$t,$(cut -d' ' -f1 /proc/uptime),$(read_file $BATTERY/capacity),$(read_file $BATTERY/voltage_now),$(read_file $BATTERY/current_now),$(read_file $BATTERY/status),$(read_file /sys/class/power_supply/usb/online),$(read_file /sys/class/backlight/panel/brightness),$mem,$(cut -d' ' -f1 /proc/loadavg),$(getprop moon.boot.mode),$(read_file $BATTERY/temp),$cpu_busy,$cpu_total,$ctxt,$intr,$d_state" >>"$RUN/samples.csv"
     for name in $PROCS; do
         for pid in $(pidof "$name" 2>/dev/null); do
             stat="$(cat /proc/$pid/stat 2>/dev/null)" || continue
