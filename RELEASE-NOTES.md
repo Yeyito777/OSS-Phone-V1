@@ -248,6 +248,8 @@ The direct-boot BOOT image is flashed separately, under the rules in
   - The lock screen is a session UI, not a security boundary: root or an
     authorized ADB host can bypass it.
 
+The live backlog, with where each item resumes, is [TODO.md](TODO.md).
+
 ## Credits and licences
 
 - **OSS-Phone-V1 and a26-system:** MIT (`LICENSE` in each repository).
