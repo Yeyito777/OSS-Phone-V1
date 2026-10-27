@@ -586,6 +586,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let mut app_viewport: Option<(u32, u16)> = None;
     renderer.render(&conn, &state, Instant::now())?;
+    // Moon starts awake, whatever the Moon before it left: the panel and
+    // display pipeline too (the compositor's CRTC or Xorg's DPMS), or a
+    // restart while the screen was off shows nothing (no flips) until a
+    // screen off/on cycle.
+    if let Err(error) = display_power.on(&conn) {
+        eprintln!("initial display wake failed: {error}");
+    }
     if let Some(device) = touchscreen.as_ref()
         && let Err(error) = device.on()
     {
