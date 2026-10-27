@@ -1,0 +1,36 @@
+mali_kbase: look up the context's task independently of the caller's PID namespace
+
+kbase_context_common_init() stores the caller's global TGID and then
+resolves it with find_get_pid(), which searches the *caller's* PID
+namespace. In a process inside a PID namespace (Android's init contained
+by OSS Phone's PID 1) the global number does not exist there, every GPU
+context fails with -ESRCH ("Failed to get pid pointer") and SurfaceFlinger
+finds no EGLConfig. Take the caller's own thread-group pid instead: in the
+initial namespace it is the same struct pid find_get_pid(tgid) returns.
+
+The OOM notifier prints each context's task by resolving the stored global
+PID in whatever namespace the allocating task is in; resolve it in the
+initial namespace, where the number belongs.
+
+--- a/drivers/gpu/arm/bv_r32p1/context/mali_kbase_context.c
++++ b/drivers/gpu/arm/bv_r32p1/context/mali_kbase_context.c
+@@ -147,7 +147,7 @@ int kbase_context_common_init(struct kbase_context *kctx)
+ 		struct pid *pid_struct;
+ 
+ 		rcu_read_lock();
+-		pid_struct = find_get_pid(kctx->tgid);
++		pid_struct = get_task_pid(current, PIDTYPE_TGID);
+ 		if (likely(pid_struct)) {
+ 			struct task_struct *task = pid_task(pid_struct, PIDTYPE_PID);
+ 
+--- a/drivers/gpu/arm/bv_r32p1/device/mali_kbase_device.c
++++ b/drivers/gpu/arm/bv_r32p1/device/mali_kbase_device.c
+@@ -194,7 +194,7 @@ static int mali_oom_notifier_handler(struct notifier_block *nb,
+ 			KBASE_PAGES_TO_KIB(atomic_read(&(kctx->used_pages)));
+ 
+ 		rcu_read_lock();
+-		pid_struct = find_get_pid(kctx->pid);
++		pid_struct = get_pid(find_pid_ns(kctx->pid, &init_pid_ns));
+ 		task = pid_task(pid_struct, PIDTYPE_PID);
+ 
+ 		dev_err(kbdev->dev,
