@@ -17,6 +17,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -104,23 +105,24 @@ class Cdp:
 
 SAMPLE = r"""
 RUN=/data/local/tmp/moon-gpu
-group() {  # pid -> group name
-    exe=$(cat /proc/$1/comm 2>/dev/null)
-    case "$exe" in
-    Xorg) echo xorg; return ;;
-    a26-shell) echo moon; return ;;
-    moon-compositor) echo compositor; return ;;
-    esac
-    cmd=$(tr '\0' ' ' </proc/$1/cmdline 2>/dev/null)
-    case "$cmd" in
-    *vimbrowser*--type=gpu-process*) echo gpu-process ;;
-    *vimbrowser*--type=renderer*) echo renderer ;;
-    *vimbrowser*--type=*) echo chromium-other ;;
-    *vimbrowser*) echo browser ;;
-    esac
-}
-pids=$(for d in /proc/[0-9]*; do g=$(group ${d#/proc/}); [ -n "$g" ] && echo "$g ${d#/proc/}"; done)
-snapshot() {  # group pid ticks, for the processes found above
+# The processes to watch, found once and fast (pidof; never a scan of all
+# of /proc, whose cmdline reads can block on a frozen process).
+pids=$(
+    for p in $(pidof Xorg); do echo "xorg $p"; done
+    for p in $(pidof a26-shell); do echo "moon $p"; done
+    for p in $(pidof moon-compositor); do echo "compositor $p"; done
+    for p in $(pidof vimbrowser); do
+        t=$(grep -a -o -e '--type=[a-z-]*' /proc/$p/cmdline 2>/dev/null | head -1)
+        case "$t" in
+        --type=gpu-process) echo "gpu-process $p" ;;
+        --type=renderer) echo "renderer $p" ;;
+        --type=*) echo "chromium-other $p" ;;
+        *) echo "browser $p" ;;
+        esac
+    done
+)
+echo "$pids" | sed 's/^/P /'
+snapshot() {  # group pid ticks (utime + stime)
     echo "$pids" | while read g p; do
         set -- $(cut -d')' -f2 /proc/$p/stat 2>/dev/null)
         [ $# -ge 13 ] && echo "$g $p $((${12} + ${13}))"
@@ -129,12 +131,37 @@ snapshot() {  # group pid ticks, for the processes found above
 """
 
 
+CTL = "/data/local/a26-linux/busybox.static chroot /data/local/a26-linux /opt/a26-shell/bin/a26-shellctl"
+
+
+def auto_lock(seconds):
+    """Sets Moon's Auto-Lock (docs/settings.md; 0 = never) and returns the
+    value Moon reports afterwards."""
+    out = su(f"{CTL} settings set auto_lock_s {seconds}\n{CTL} state\n")
+    found = re.findall(r'"auto_lock_s":\s*(\d+)', out)
+    value = int(found[-1]) if found else None
+    print(f"auto_lock_s = {value}", file=sys.stderr, flush=True)
+    return value
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="https://en.wikipedia.org/wiki/Mali_(processor)")
     ap.add_argument("--seconds", type=int, default=10)
     ap.add_argument("--label", default="")
+    ap.add_argument("--auto-lock-after", type=int, default=30,
+                    help="Auto-Lock to restore afterwards (it is off during the run)")
     args = ap.parse_args()
+    if auto_lock(0) != 0:
+        sys.exit("could not turn Auto-Lock off")
+    try:
+        return run(args)
+    finally:
+        if auto_lock(args.auto_lock_after) != args.auto_lock_after:
+            print("WARNING: Auto-Lock not restored", file=sys.stderr)
+
+
+def run(args):
 
     adb("forward", f"tcp:{PORT}", f"tcp:{PORT}")
     targets = json.load(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json"))
@@ -142,10 +169,12 @@ def main():
     cdp = Cdp(page["webSocketDebuggerUrl"])
     cdp.call("Page.enable")
     cdp.call("Page.navigate", url=args.url)
-    time.sleep(6)
+    print("page loading", file=sys.stderr, flush=True)
+    time.sleep(4)
     cdp.evaluate("""(() => { window.__frames = 0; const tick = () => { window.__frames++;
         requestAnimationFrame(tick); }; requestAnimationFrame(tick); return 1; })()""")
 
+    print("swiping", file=sys.stderr, flush=True)
     ticks_per_s = 100
     swipes = max(1, args.seconds * 1000 // 700)
     out = su(SAMPLE + f"""
@@ -168,16 +197,23 @@ echo "flips $(tail -n +$((marker + 1)) $RUN/compositor.log | grep -c ' flip seri
 echo "$before" | sed 's/^/B /'
 echo "$after" | sed 's/^/A /'
 """)
-    frames = cdp.evaluate("window.__frames")
+    print("measured", file=sys.stderr, flush=True)
+    cdp.sock.settimeout(3)
+    try:
+        frames = cdp.evaluate("window.__frames")
+    except OSError:
+        frames = None  # the page stopped answering (Moon locked and froze it)
 
     elapsed = flips = 0.0
-    before, after = {}, {}
+    before, after, counts = {}, {}, {}
     for line in out.splitlines():
         parts = line.split()
         if parts[:1] == ["elapsed"]:
             elapsed = float(parts[2]) - float(parts[1])
         elif parts[:1] == ["flips"]:
             flips = int(parts[1])
+        elif parts[:1] == ["P"] and len(parts) == 3:
+            counts[parts[1]] = counts.get(parts[1], 0) + 1
         elif parts[:1] in (["B"], ["A"]) and len(parts) == 4:
             (before if parts[0] == "B" else after)[(parts[1], parts[2])] = int(parts[3])
     groups = {}
@@ -192,7 +228,7 @@ echo "$after" | sed 's/^/A /'
                  "compositor"]:
         pct = 100.0 * groups.get(name, 0) / ticks_per_s / elapsed if elapsed else 0
         total += pct
-        print(f"  {name:15} {pct:6.1f} % of a core")
+        print(f"  {name:15} {pct:6.1f} % of a core ({counts.get(name, 0)} processes)")
     print(f"  {'all of these':15} {total:6.1f} % of a core (8 cores = 800 %)")
 
 
