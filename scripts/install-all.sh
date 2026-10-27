@@ -174,9 +174,8 @@ verify() {
     done
     local config
     config="$(su_run "cat $PERSIST/config 2>/dev/null")"
-    for key in DIRECT_BOOT=1 GPU_COMPOSITOR=1; do
-        grep -qx "$key" <<<"$config" || { echo "CONFIG  $PERSIST/config lacks $key"; differ=$((differ + 1)); }
-    done
+    # DIRECT_BOOT, GPU_COMPOSITOR and the like are the owner's choices; only
+    # keys that install-autostart.sh migrates away count as out of date.
     for key in LOW_BATTERY_FALLBACK MIN_START_BATTERY=20; do
         grep -q "^$key" <<<"$config" && { echo "CONFIG  $PERSIST/config has the old $key"; differ=$((differ + 1)); }
     done
