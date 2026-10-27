@@ -651,10 +651,12 @@ while :; do
         [ -e "$XORG_STATE/gpu-fallback" ] && break
         [ "$(getprop moon.boot.mode)" != shutdown ] || break
     done
-    # moon-power.sh is shutting the phone down: stand aside.
+    # moon-power.sh is shutting the phone down: stand aside, but stay alive.
+    # Exiting would end the moon-session init service, and init would kill
+    # everything in its cgroup (Moon, Xorg) before moon-power.sh stops them.
     if [ "$(getprop moon.boot.mode)" = shutdown ]; then
-        log 'power-off/reboot in progress; supervisor standing down'
-        break
+        log 'power-off/reboot in progress; supervisor standing by'
+        while :; do sleep 60; done
     fi
     # The GPU compositor gave up (moon-gpu-session.sh): the takeover restarts
     # Xorg on the panel; once it is up, start Moon again on that path.

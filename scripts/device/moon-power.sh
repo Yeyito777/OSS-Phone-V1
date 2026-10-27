@@ -23,6 +23,14 @@ CHROOT_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 mkdir -p "$PERSIST" "$RUNTIME"
 exec </dev/null >>"$LOG" 2>&1
 
+# Leave the init service's cgroup first. Moon runs inside the moon-session
+# service, so this script starts in that service's cgroup (uid_0/pid_N);
+# once the supervisor exits, init kills every process left in it, which
+# killed this script midway (Moon already stopped, no power-off). The root
+# cgroup is nobody's service. setsid alone does not change cgroups.
+echo $$ >/sys/fs/cgroup/cgroup.procs 2>/dev/null
+trap '' HUP
+
 log() {
     echo "moon-power: $* [$(date --iso-8601=seconds 2>/dev/null || date) up=$(cut -d' ' -f1 /proc/uptime)]"
 }
@@ -40,7 +48,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     mkdir "$LOCK" || exit 1
 fi
 echo "$boot_id" >"$LOCK/boot-id"
-log "$ACTION requested (battery $(cat /sys/class/power_supply/battery/capacity 2>/dev/null)%)"
+log "$ACTION requested (battery $(cat /sys/class/power_supply/battery/capacity 2>/dev/null)%, cgroup $(sed -n 's/^0:://p' /proc/$$/cgroup))"
 
 in_chroot() {
     limit=$1
@@ -61,7 +69,8 @@ stop_exe() {
             "$exe"|"$exe (deleted)") pids="$pids $pid" ;;
         esac
     done
-    [ -n "$pids" ] || return 0
+    [ -n "$pids" ] || { log "${exe##*/} not running"; return 0; }
+    log "stopping ${exe##*/}:$pids"
     kill -TERM $pids 2>/dev/null
     for _ in $("$BB" seq 1 $((wait * 5))); do
         alive=''
@@ -74,26 +83,34 @@ stop_exe() {
 }
 
 # 1. Nothing restarts or falls back from here on.
+log 'moon.boot.mode=shutdown'
 setprop moon.boot.mode shutdown
-supervisor="$(getprop moon.supervisor.pid)"
-case "$supervisor" in
-    ''|*[!0-9]*) ;;
-    *) kill -TERM "$supervisor" 2>/dev/null && log "stopped the supervisor pid=$supervisor" ;;
-esac
+# The supervisor is left running (it idles once it sees shutdown): if it
+# exited, the moon-session service would end and init would kill Moon, Xorg
+# and the compositor at once instead of in order.
+
+# Test hook: $RUNTIME/power-test-delay (seconds) holds here, so the
+# supervisor would have noticed shutdown (a 5 s tick) mid-sequence.
+delay="$(cat "$RUNTIME/power-test-delay" 2>/dev/null)"
+case "$delay" in ''|*[!0-9]*) ;; *) log "test delay ${delay}s"; sleep "$delay" ;; esac
 
 # 2. Services, in order.
+log 'asking Moon to quit'
 in_chroot 3 /opt/a26-shell/bin/a26-shellctl quit >/dev/null 2>&1
 stop_exe "$ROOT/opt/a26-shell/bin/a26-shell" 3
 stop_exe "$ROOT/opt/a26-shell/bin/moon-notifyd" 3
 if [ -x "$PERSIST/moon-telephony-stop.sh" ]; then
+    log 'stopping telephony'
     "$BB" timeout -s KILL 10 /system/bin/sh "$PERSIST/moon-telephony-stop.sh" >/dev/null 2>&1
     log 'telephony stopped'
 fi
 if [ -x "$PERSIST/moon-audio-stop.sh" ]; then
+    log 'stopping audio'
     "$BB" timeout -s KILL 10 /system/bin/sh "$PERSIST/moon-audio-stop.sh" >/dev/null 2>&1
     log 'audio stopped'
 fi
 if [ -x "$ROOT/opt/a26-system/libexec/a26-wifi-stop" ]; then
+    log 'stopping Wi-Fi'
     in_chroot 15 /opt/a26-system/libexec/a26-wifi-stop >/dev/null 2>&1
     log "Wi-Fi stopped rc=$?"
 fi
