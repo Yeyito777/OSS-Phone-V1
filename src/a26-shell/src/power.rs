@@ -212,6 +212,9 @@ impl ShellState {
             return;
         }
         let now = Instant::now();
+        // Opening it is the user's doing, however it was asked for (the
+        // key, System's rows, `ctl power menu`): Auto-Lock starts over.
+        self.note_input();
         self.alerts_cancel_touch();
         self.control_cancel_touch();
         self.call_cancel_touch();
@@ -790,8 +793,11 @@ mod tests {
         state.power_key_up();
         assert!(!state.power.menu.as_ref().unwrap().open);
         assert!(state.fade.is_none());
-        // The screen going off (Auto-Lock) dismisses it.
+        // Opening it counts as input for Auto-Lock.
+        state.last_input = Instant::now() - Duration::from_secs(60);
         state.open_power_menu(PowerAction::PowerOff);
+        assert!(state.last_input.elapsed() < Duration::from_secs(1));
+        // The screen going off (Auto-Lock) dismisses it.
         state.screen_off();
         assert!(state.power.menu.is_none());
     }
