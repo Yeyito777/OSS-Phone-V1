@@ -27,8 +27,10 @@ impl DeviceStatus {
             .ok()
             .and_then(|value| value.trim().parse::<u8>().ok())
             .map(|value| value.min(100));
-        let battery_charging =
-            read_status(BATTERY_STATUS).is_ok_and(|value| value.trim() == "Charging");
+        // Plugged in: charging, or full on the charger (the A26 reports
+        // `Full` at 100 % on a charger, as iPhone shows the bolt).
+        let battery_charging = read_status(BATTERY_STATUS)
+            .is_ok_and(|value| matches!(value.trim(), "Charging" | "Full"));
         let wifi_connected = read_status(WIFI_OPERSTATE).is_ok_and(|value| value.trim() == "up")
             && read_status(WIFI_CARRIER).is_ok_and(|value| value.trim() == "1");
         Self {

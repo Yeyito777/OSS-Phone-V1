@@ -338,6 +338,8 @@ pub struct ShellState {
     pub alerts: crate::alerts::Alerts,
     /// Quick settings (control_centre.rs).
     pub control: crate::control_centre::ControlCentre,
+    /// The power menu, shutdown and battery screens (power.rs).
+    pub power: crate::power::PowerUi,
     /// Telephony status and the call screens (calls.rs).
     pub calls: crate::calls::CallUi,
     /// Wallpaper and Auto-Lock (settings.rs); `settings_changed` asks the
@@ -354,6 +356,13 @@ pub struct ShellState {
     pub page_transition: Option<PageTransition>,
     active_app_focused: bool,
     launch: Option<Launch>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicTime {
+    pub zone: Option<String>,
+    pub tz: Option<String>,
+    pub clock_24h: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -384,8 +393,15 @@ pub struct PublicState {
     pub settings: crate::settings::Settings,
     pub control_centre_open: bool,
     pub telephony: crate::calls::PublicCalls,
+    /// The power menu is open; the screen says it is powering off.
+    pub power_menu_open: bool,
+    pub shutting_down: Option<&'static str>,
+    pub critical_battery_s: Option<u64>,
     /// The last notification target for an app (see `OpenTarget`).
     pub open_target: Option<PublicOpenTarget>,
+    /// Local time: the zone id (if chosen), its TZ rule, and the clock.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time: Option<PublicTime>,
     /// Frame timing of the last finished animation (see `profile on`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub animation: Option<String>,
@@ -445,6 +461,7 @@ impl ShellState {
             alerts: Default::default(),
             control: Default::default(),
             calls: Default::default(),
+            power: Default::default(),
             settings: Default::default(),
             settings_changed: false,
             last_input: Instant::now(),
@@ -495,12 +512,19 @@ impl ShellState {
             settings: self.settings.clone(),
             control_centre_open: self.control.open,
             telephony: self.calls_public(),
+            power_menu_open: self.power.menu.as_ref().is_some_and(|menu| menu.open),
+            shutting_down: self
+                .power
+                .shutting_down
+                .map(crate::power::PowerAction::hook_argument),
+            critical_battery_s: self.critical_seconds(),
             open_target: self.open_target.as_ref().map(|open| PublicOpenTarget {
                 app: open.app,
                 target: open.target.clone(),
                 serial: open.serial,
                 age_ms: open.at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
             }),
+            time: None,
             animation: None,
             display: None,
         }
@@ -527,6 +551,7 @@ impl ShellState {
         self.alerts_cancel_touch();
         self.control_cancel_touch();
         self.call_cancel_touch();
+        self.power_cancel_touch();
         self.last_action = "lock".into();
         self.redraw = true;
     }
@@ -1208,6 +1233,7 @@ impl ShellState {
             || self.alerts_animating(now)
             || self.control.animating(now)
             || self.calls_animating(now)
+            || self.power_animating(now)
             || self.page_transition.is_some()
     }
 
@@ -1227,6 +1253,7 @@ impl ShellState {
         self.alerts_tick(now);
         self.control_tick(now);
         self.calls_tick(now);
+        self.power_tick(now);
         if let Some(transition) = self.page_transition.as_mut()
             && transition.waiting
             && now.saturating_duration_since(transition.started) >= PAGE_READY_WAIT
@@ -1342,6 +1369,7 @@ impl ShellState {
             self.gesture.as_ref().and_then(HomeGesture::hold_deadline),
             self.fade.map(|fade| fade.deadline()),
             self.alerts_deadline(),
+            self.power_deadline(now),
         ]
         .into_iter()
         .flatten()

@@ -102,7 +102,9 @@ impl PowerKey {
         })
     }
 
-    pub fn poll_presses(&mut self) -> io::Result<usize> {
+    /// Presses and releases since the last poll (`true` for a press). A
+    /// bounce within 350 ms of the last press is dropped with its release.
+    pub fn poll_events(&mut self) -> io::Result<Vec<bool>> {
         let mut bytes = [0_u8; 24 * 16];
         loop {
             match self.file.read(&mut bytes) {
@@ -116,7 +118,8 @@ impl PowerKey {
         let timeval_bytes = size_of::<libc::timeval>();
         let event_bytes = timeval_bytes + 8;
         let complete = self.pending.len() / event_bytes * event_bytes;
-        let mut presses = 0;
+        let mut events = Vec::new();
+        let mut bounced = false;
         for event in self.pending[..complete].chunks_exact(event_bytes) {
             let kind = u16::from_ne_bytes([event[timeval_bytes], event[timeval_bytes + 1]]);
             let code = u16::from_ne_bytes([event[timeval_bytes + 2], event[timeval_bytes + 3]]);
@@ -126,19 +129,24 @@ impl PowerKey {
                 event[timeval_bytes + 6],
                 event[timeval_bytes + 7],
             ]);
-            if kind == EV_KEY && code == KEY_POWER && value == KEY_PRESSED {
+            if kind != EV_KEY || code != KEY_POWER {
+                continue;
+            }
+            if value == KEY_PRESSED {
                 let now = Instant::now();
-                if self
+                bounced = self
                     .last_press
-                    .is_none_or(|last| now.duration_since(last) >= Duration::from_millis(350))
-                {
+                    .is_some_and(|last| now.duration_since(last) < Duration::from_millis(350));
+                if !bounced {
                     self.last_press = Some(now);
-                    presses += 1;
+                    events.push(true);
                 }
+            } else if value == 0 && !bounced {
+                events.push(false);
             }
         }
         self.pending.drain(..complete);
-        Ok(presses)
+        Ok(events)
     }
 
     pub fn raw_fd(&self) -> RawFd {

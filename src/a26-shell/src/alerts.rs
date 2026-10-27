@@ -310,6 +310,10 @@ impl ShellState {
                 let urgent = notification.urgency == "high";
                 // A ringing call shows the call screen instead.
                 let call = notification.ringing && notification.app == "phone";
+                // So does the supervisor's critical-battery countdown.
+                let call = call
+                    || (notification.app == "moon"
+                        && notification.tag.as_deref() == Some(crate::power::CRITICAL_TAG));
                 let banner_allowed = notification.urgency != "low"
                     && !call
                     && self.screen_awake
@@ -398,6 +402,8 @@ impl ShellState {
             || self.alerts.centre.visible(now)
             || self.control.visible(now)
             || self.calls_cover()
+            || self.power.menu_visible(now)
+            || self.power_takes_over()
     }
 
     pub fn alerts_animating(&self, now: Instant) -> bool {
@@ -1576,6 +1582,7 @@ mod tests {
             seen: false,
             open: None,
             ringing: false,
+            expires_at: None,
         }
     }
 

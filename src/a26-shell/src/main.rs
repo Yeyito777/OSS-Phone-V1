@@ -26,6 +26,7 @@ mod memory;
 mod model;
 mod motion;
 mod notify_client;
+mod power;
 mod present;
 mod settings;
 mod status;
@@ -34,6 +35,7 @@ mod suspend;
 mod telephony_client;
 mod text;
 mod touch;
+mod tz;
 mod ui;
 mod volume;
 mod wallpaper;
@@ -82,6 +84,8 @@ use x11rb::wrapper::ConnectionExt as _;
 use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
 
 const DEVICE_STATUS_INTERVAL: Duration = Duration::from_secs(5);
+/// The supervisor's clean power-off / restart (docs/power.md).
+const POWER_HELPER: &str = "/opt/a26-shell/bin/moon-power";
 const MEDIA_ACTIVITY_INTERVAL: Duration = Duration::from_millis(250);
 const MEDIA_ACTIVITY_MAX_AGE: Duration = Duration::from_secs(2);
 const MEMORY_STATUS_INTERVAL: Duration = Duration::from_secs(5);
@@ -460,6 +464,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut state = ShellState::new(config.start_locked, initial_volume);
     let settings_path = settings::Settings::path();
     state.settings = settings::Settings::load(&settings_path);
+    // The user's time zone and clock (System's Date & Time) over config.json.
+    if let Some(rule) = state.settings.timezone.as_deref().and_then(tz::rule) {
+        tz::apply(rule);
+    }
+    renderer.twenty_four_hour = state.settings.clock_24h.unwrap_or(config.clock_24h);
     renderer.set_wallpaper(&conn, &state.settings.wallpaper)?;
     state.control.flashlight = control_centre::Flashlight::probe();
     eprintln!(
@@ -660,6 +669,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // An app's page transition waiting for its snapshot: the request, push
     // or pop, and when it came.
     let mut pending_transition: Option<(std::os::unix::net::UnixStream, bool, Instant)> = None;
+    // Power off / restart: when the screen started saying so, and the
+    // supervisor's helper while it runs.
+    let mut shutdown_shown: Option<Instant> = None;
+    let mut power_helper: Option<std::process::Child> = None;
     // Passes a screen-off has waited for the app to be released.
     let mut sleep_retries = 0_u32;
     while !state.should_exit {
@@ -856,16 +869,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         if let Some(device) = power_key.as_mut() {
-            match device.poll_presses() {
-                Ok(count) => {
-                    // While a call, an alarm or a timer rings the power key
-                    // silences, snoozes or stops it instead.
-                    if count > 0 {
+            match device.poll_events() {
+                Ok(events) => {
+                    for pressed in events {
+                        if !pressed {
+                            // A release: a short press sleeps (a hold opened
+                            // the power menu instead).
+                            state.power_key_up();
+                            continue;
+                        }
                         state.note_input();
-                        if !(state.screen_awake
-                            && (state.calls_power_key() || state.alerts_power_key()))
-                        {
+                        if !state.screen_awake {
+                            // Waking needs no hold.
                             state.power_key();
+                        } else if !(state.calls_power_key() || state.alerts_power_key()) {
+                            // While a call, an alarm or a timer rings the
+                            // power key silences, snoozes or stops it.
+                            state.power_key_down(Instant::now());
                         }
                     }
                 }
@@ -988,6 +1008,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let mut public =
                         state.public(width, height, apps.public(), suspend_coordinator.public());
                     public.animation = last_animation.clone();
+                    public.time = Some(model::PublicTime {
+                        zone: state.settings.timezone.clone(),
+                        tz: env::var("TZ").ok(),
+                        clock_24h: renderer.twenty_four_hour,
+                    });
                     public.display = Some(brightness.public());
                     ipc::respond(stream, Ok(&public));
                 }
@@ -1170,9 +1195,49 @@ fn main() -> Result<(), Box<dyn Error>> {
             telephonyd.send(command);
         }
         send_app_pointer(&conn, root, std::mem::take(&mut state.app_pointer));
+        // Power off or restart: the screen says so first (one frame, then
+        // the helper), and the supervisor's helper takes it from there.
+        if let Some(action) = state.power.pending_action
+            && shutdown_shown.get_or_insert_with(Instant::now).elapsed()
+                >= Duration::from_millis(150)
+        {
+            state.power.pending_action = None;
+            shutdown_shown = None;
+            let helper = env::var_os("MOON_POWER")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(POWER_HELPER));
+            eprintln!("power: {} {}", helper.display(), action.hook_argument());
+            if let Err(error) = state.settings.save(&settings_path) {
+                eprintln!("settings not saved: {error}");
+            }
+            match std::process::Command::new(&helper)
+                .arg(action.hook_argument())
+                .stdin(std::process::Stdio::null())
+                .spawn()
+            {
+                Ok(child) => power_helper = Some(child),
+                Err(error) => {
+                    eprintln!("power: cannot run {}: {error}", helper.display());
+                    state.shutdown_failed();
+                }
+            }
+        }
+        // The helper starts the ordered shutdown detached and exits at
+        // once; anything but 0 means it did not.
+        if let Some(child) = power_helper.as_mut()
+            && let Ok(Some(status)) = child.try_wait()
+        {
+            power_helper = None;
+            if !status.success() {
+                eprintln!("power: helper failed: {status}");
+                state.shutdown_failed();
+            }
+        }
 
         if Instant::now() >= next_device_status {
             let device_status = status::DeviceStatus::read();
+            let was_charging = state.battery_charging;
+            state.battery_changed(device_status.battery_charging, was_charging);
             state.update_device_status(
                 device_status.battery_percent,
                 device_status.battery_charging,
@@ -1203,6 +1268,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 eprintln!("settings not saved: {error}");
             }
             renderer.set_wallpaper(&conn, &state.settings.wallpaper)?;
+            if let Some(rule) = state.settings.timezone.as_deref().and_then(tz::rule) {
+                tz::apply(rule);
+            }
+            renderer.twenty_four_hour = state.settings.clock_24h.unwrap_or(config.clock_24h);
+            // Every clock shows the new time.
+            next_clock_tick = Instant::now();
             state.redraw = true;
         }
         // Auto-Lock: dim five seconds ahead, then the power fade; any input
@@ -1348,7 +1419,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         if status_bar_surface.sync(
             &conn,
             status_bar_visible,
-            &StatusInfo::from_state(&state, config.clock_24h),
+            &StatusInfo::from_state(&state, renderer.twenty_four_hour),
         )? {
             banner_surface.request_raise();
         }
@@ -1542,6 +1613,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         if retry_sleep {
             deadline = now;
+        }
+        if state.power.pending_action.is_some() || power_helper.is_some() {
+            // The shutdown screen's frame, then the helper, then its exit.
+            deadline = deadline.min(now + Duration::from_millis(20));
         }
         if pending_transition.is_some() {
             // The snapshot's completion comes as an X event; look again soon.
@@ -2463,6 +2538,12 @@ fn pointer_begin(
         state.keyboard.release_key_index(index);
     }
     let (pointer, action) = new_pointer_gesture(state, keyboard_geometry, x, y, repeat_timing);
+    if state.power_pointer_begin(f32::from(x), f32::from(y)) {
+        // The power menu (or a shutdown screen) owns every touch.
+        state.pointer = Some(pointer);
+        state.last_action = "pointer_begin".into();
+        return None;
+    }
     if !pointer.keyboard_owned
         && !state.control.visible(Instant::now())
         && state.call_pointer_begin(f32::from(x), f32::from(y))
@@ -2572,8 +2653,14 @@ fn pointer_move(
         // A long drag (a slider, a scrolling list) is input all along.
         state.note_input();
     }
-    if state.call_touch_active() || state.control_touch_active() || state.alerts_touch_active() {
-        if state.call_touch_active() {
+    if state.power_touch_active()
+        || state.call_touch_active()
+        || state.control_touch_active()
+        || state.alerts_touch_active()
+    {
+        if state.power_touch_active() {
+            state.power_pointer_move(f32::from(x), f32::from(y));
+        } else if state.call_touch_active() {
             state.call_pointer_move(f32::from(x), f32::from(y));
         } else if state.control_touch_active() {
             state.control_pointer_move(f32::from(x), f32::from(y));
@@ -3012,6 +3099,10 @@ fn pointer_end(
         finish_keyboard_pointer(conn, state, pointer, keyboard_geometry, key_injector);
         return;
     }
+    if state.power_touch_active() {
+        state.power_pointer_end(f32::from(x), f32::from(y));
+        return;
+    }
     if state.call_touch_active() {
         state.call_pointer_end(f32::from(x), f32::from(y));
         return;
@@ -3322,6 +3413,8 @@ fn apply_command(
                 state.power_key();
             }
         }
+        Command::PowerMenu(action) => state.open_power_menu(action),
+        Command::System(action) => state.begin_shutdown(action),
         Command::ScreenOff => state.screen_off(),
         Command::ScreenOn => state.screen_on(),
         Command::LightProbe(rect) => {

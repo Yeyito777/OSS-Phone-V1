@@ -95,6 +95,12 @@ echo 'blocking event-loop guard: PASS'
 sh -n "$PROJECT_ROOT/scripts/device/moon-boot-supervisor.sh"
 
 mkdir -p "$IMAGE/bin" "$IMAGE/source" "$IMAGE/share/fonts"
+# What About shows: the OSS Phone version and this build.
+{
+    echo "OSS Phone $(tr -d '[:space:]' <"$PROJECT_ROOT/VERSION")"
+    echo "build $(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)$(git -C "$PROJECT_ROOT" diff --quiet HEAD 2>/dev/null || echo +)"
+    echo "built $(date -u +%Y-%m-%d)"
+} >"$IMAGE/share/VERSION"
 # Fallback fonts for text Inter lacks (emoji, Greek, Cyrillic, symbols).
 "$PROJECT_ROOT/scripts/a26-shell/fetch-fonts.sh" "$PROJECT_ROOT/images/fonts"
 while read -r name _; do

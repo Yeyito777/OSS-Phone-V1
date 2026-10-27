@@ -31,6 +31,10 @@ pub struct Settings {
     /// Tuned pulse lengths (ms) for `selection`, `light`, `medium`, `error`;
     /// 0 keeps moon-notifyd's default for that style.
     pub haptic_ms: [u32; 4],
+    /// An IANA zone id from tz.rs; None keeps config.json's `timezone`.
+    pub timezone: Option<String>,
+    /// 24-hour clock; None keeps config.json's `clock_24h`.
+    pub clock_24h: Option<bool>,
 }
 
 impl Default for Settings {
@@ -43,6 +47,8 @@ impl Default for Settings {
             // (the wrong-passcode buzz plays regardless).
             haptics: false,
             haptic_ms: [0; 4],
+            timezone: None,
+            clock_24h: None,
         }
     }
 }
@@ -71,6 +77,13 @@ impl Settings {
         }
         if !AUTO_LOCK_CHOICES.contains(&self.auto_lock_s) {
             self.auto_lock_s = defaults.auto_lock_s;
+        }
+        if self
+            .timezone
+            .as_deref()
+            .is_some_and(|zone| crate::tz::rule(zone).is_none())
+        {
+            self.timezone = None;
         }
         for ms in &mut self.haptic_ms {
             if *ms != 0 && !(5..=400).contains(ms) {
@@ -109,6 +122,19 @@ impl Settings {
                     .ok()
                     .filter(|v| AUTO_LOCK_CHOICES.contains(v))
                     .ok_or("auto_lock_s must be 15, 30, 60, 120, 300 or 0")?;
+            }
+            "timezone" => {
+                if crate::tz::rule(value).is_none() {
+                    return Err("unknown time zone");
+                }
+                self.timezone = Some(value.to_owned());
+            }
+            "clock_24h" => {
+                self.clock_24h = Some(match value {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err("clock_24h must be on or off"),
+                });
             }
             "haptics" => {
                 self.haptics = match value {
@@ -153,6 +179,10 @@ mod tests {
         assert!(settings.set("haptics", "on").is_ok());
         assert!(settings.haptics);
         assert!(settings.set("haptics", "maybe").is_err());
+        assert!(settings.set("timezone", "America/Panama").is_ok());
+        assert!(settings.set("timezone", "Mars/Olympus").is_err());
+        assert!(settings.set("clock_24h", "on").is_ok());
+        assert_eq!(settings.clock_24h, Some(true));
         assert!(settings.set("haptic_light_ms", "18").is_ok());
         assert_eq!(settings.haptic_ms, [0, 18, 0, 0]);
         assert!(settings.set("haptic_error_ms", "500").is_err());

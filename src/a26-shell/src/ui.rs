@@ -20,6 +20,7 @@ use crate::compositor::{Compositor, Frame, Node, SurfaceId};
 use crate::gfx::{self, Canvas, Image, Path, RectF, Rgb};
 use crate::interaction::{CARD_RADIUS, SCREEN, SCREEN_H, SCREEN_W, SWITCHER_DIM};
 use crate::model::{AppId, Press, SHAKE_ANIMATION, ShellState, UNLOCK_ANIMATION, View};
+use crate::power;
 use crate::present::Damage;
 use crate::status_bar;
 use crate::telephony_client::Cellular;
@@ -374,6 +375,11 @@ pub struct Renderer {
     /// X mirror as a node source.
     page_snapshot: Option<SurfaceId>,
     mirror_node: Option<SurfaceId>,
+    /// The power menu (or a takeover screen: shutting down, critical
+    /// battery), its slider knob, and the lock screen's charging card.
+    power: Layer<u64>,
+    power_knob: Layer<power::PowerAction>,
+    charge_card: Layer<Option<u8>>,
 }
 
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
@@ -498,6 +504,21 @@ impl Renderer {
             )?,
             ring: Layer::new(conn, &mut compositor, w, h, true)?,
             call: Layer::new(conn, &mut compositor, w, h, true)?,
+            power: Layer::new(conn, &mut compositor, w, h, true)?,
+            power_knob: Layer::new(
+                conn,
+                &mut compositor,
+                power::KNOB as i32,
+                power::KNOB as i32,
+                true,
+            )?,
+            charge_card: Layer::new(
+                conn,
+                &mut compositor,
+                power::CARD.w as i32,
+                power::CARD.h as i32,
+                true,
+            )?,
             call_line: Layer::new(conn, &mut compositor, w, calls::LINE.h as i32, true)?,
             call_knob: Layer::new(
                 conn,
@@ -710,6 +731,7 @@ impl Renderer {
         if state.alerts.ring_sheet.visible()
             || state.alerts.centre.visible(display_time)
             || state.calls_cover()
+            || state.power.menu_visible(display_time)
         {
             // Their background: the darkest wallpaper copy.
             let max = self.wall_levels.max_level();
@@ -1059,6 +1081,41 @@ impl Renderer {
                 );
             })?;
         }
+        // The power menu, or a takeover screen in its place.
+        let takeover = if let Some(action) = state.power.shutting_down {
+            Some(power::TakeoverKey::ShuttingDown(action))
+        } else {
+            state
+                .critical_seconds()
+                .map(|seconds| power::TakeoverKey::Critical { seconds })
+        };
+        if let Some(key) = takeover {
+            self.power
+                .update(conn, compositor, key_of(&key), |canvas| {
+                    power::draw_takeover(canvas, &key);
+                })?;
+        } else if let Some(menu) = &state.power.menu {
+            let key = power::MenuKey {
+                action: menu.action,
+                pressed: menu.pressed,
+            };
+            let drawn = key.clone();
+            self.power
+                .update(conn, compositor, key_of(&key), |canvas| {
+                    power::draw_menu(canvas, &drawn);
+                })?;
+            let action = menu.action;
+            self.power_knob.update(conn, compositor, action, |canvas| {
+                power::draw_knob(canvas, action);
+            })?;
+        }
+        if state.power.charging_card.is_some() {
+            let percent = state.battery_percent;
+            self.charge_card
+                .update(conn, compositor, percent, |canvas| {
+                    power::draw_charging_card(canvas, percent);
+                })?;
+        }
         if let Some(view) = state.call_view() {
             let calls = &state.calls;
             let key = calls::CallKey {
@@ -1211,6 +1268,45 @@ impl Renderer {
                 smooth: false,
             });
         }
+        // The power menu drops over everything, as a curtain.
+        let edge = state
+            .power
+            .menu
+            .as_ref()
+            .map_or(0.0, |menu| menu.edge(t).round());
+        nodes.push(clipped(deep, 0.0, edge, 1.0));
+        nodes.push(clipped(self.power.id, 0.0, edge, 1.0));
+        let offset = state
+            .power
+            .menu
+            .as_ref()
+            .map_or(0.0, |menu| menu.knob_offset(t).round());
+        let (knob_x, knob_y) = power::knob_origin(offset);
+        let shown = (edge - knob_y).clamp(0.0, power::KNOB);
+        nodes.push(Node::Image {
+            surface: self.power_knob.id,
+            src: RectF::new(0.0, 0.0, power::KNOB, shown),
+            dst: RectF::new(knob_x, knob_y, power::KNOB, shown),
+            alpha: if shown > 0.0 { 1.0 } else { 0.0 },
+            radius: 0.0,
+            smooth: false,
+        });
+        // The charging card on the lock screen.
+        let on_clock =
+            state.view == View::Locked && state.lock_face == crate::model::LockFace::Clock;
+        let card_alpha = if on_clock {
+            state.power.charging_card_alpha(t)
+        } else {
+            0.0
+        };
+        nodes.push(Node::Image {
+            surface: self.charge_card.id,
+            src: RectF::new(0.0, 0.0, power::CARD.w, power::CARD.h),
+            dst: power::CARD,
+            alpha: (card_alpha * 255.0).round() / 255.0,
+            radius: 0.0,
+            smooth: false,
+        });
     }
 
     /// Shows a built-in wallpaper (settings.rs); the darkened copies are
@@ -1484,6 +1580,17 @@ impl Renderer {
                 base: Some(self.wall),
                 nodes,
             };
+        }
+        if state.screen_awake && state.power_takes_over() {
+            // Shutting down, or the battery's last seconds: nothing else.
+            nodes.push(Node::Fill {
+                dst: SCREEN,
+                color: BLACK,
+                alpha: 1.0,
+                radius: 0.0,
+            });
+            nodes.push(Self::full(self.power.id, SCREEN_W, SCREEN_H, 0.0, 0.0, 1.0));
+            return Frame { base: None, nodes };
         }
         if !state.screen_awake {
             nodes.push(Node::Fill {
