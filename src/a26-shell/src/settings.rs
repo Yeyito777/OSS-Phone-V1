@@ -28,6 +28,9 @@ pub struct Settings {
     pub auto_lock_s: u32,
     /// Short vibrator taps on keys and toggles.
     pub haptics: bool,
+    /// Tuned pulse lengths (ms) for `selection`, `light`, `medium`, `error`;
+    /// 0 keeps moon-notifyd's default for that style.
+    pub haptic_ms: [u32; 4],
 }
 
 impl Default for Settings {
@@ -37,6 +40,7 @@ impl Default for Settings {
             wallpaper: "moon".into(),
             auto_lock_s: 30,
             haptics: true,
+            haptic_ms: [0; 4],
         }
     }
 }
@@ -65,6 +69,11 @@ impl Settings {
         }
         if !AUTO_LOCK_CHOICES.contains(&self.auto_lock_s) {
             self.auto_lock_s = defaults.auto_lock_s;
+        }
+        for ms in &mut self.haptic_ms {
+            if *ms != 0 && !(5..=100).contains(ms) {
+                *ms = 0;
+            }
         }
         self.version = 1;
         self
@@ -106,6 +115,17 @@ impl Settings {
                     _ => return Err("haptics must be on or off"),
                 };
             }
+            "haptic_selection_ms" | "haptic_light_ms" | "haptic_medium_ms" | "haptic_error_ms" => {
+                let index = ["selection", "light", "medium", "error"]
+                    .iter()
+                    .position(|style| key == format!("haptic_{style}_ms"))
+                    .unwrap_or(0);
+                self.haptic_ms[index] = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|ms| *ms == 0 || (5..=100).contains(ms))
+                    .ok_or("a haptic length is 5..100 ms, or 0 for the default")?;
+            }
             _ => return Err("unknown setting"),
         }
         Ok(())
@@ -130,6 +150,9 @@ mod tests {
         assert!(settings.set("haptics", "off").is_ok());
         assert!(!settings.haptics);
         assert!(settings.set("haptics", "maybe").is_err());
+        assert!(settings.set("haptic_light_ms", "18").is_ok());
+        assert_eq!(settings.haptic_ms, [0, 18, 0, 0]);
+        assert!(settings.set("haptic_error_ms", "500").is_err());
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);
         // Unknown keys and a newer field never break loading.

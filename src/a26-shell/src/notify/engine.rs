@@ -368,6 +368,11 @@ impl Engine {
                         ));
                     }
                 };
+                let ms = match a.ms {
+                    None => ms,
+                    Some(ms @ 5..=100) => ms,
+                    Some(_) => return Err(fail("invalid_argument", "ms is 5..100")),
+                };
                 // Stateless: never while anything rings (whatever its
                 // vibrate setting), and the daemon drops it if the
                 // vibrator is busy. Not governed by `vibrate` (alerts) or
@@ -1108,6 +1113,9 @@ struct AppFilter {
 #[serde(deny_unknown_fields)]
 struct Haptic {
     style: String,
+    /// The pulse length in ms (5-100), overriding the style's default:
+    /// Moon's tuned lengths.
+    ms: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -1526,9 +1534,15 @@ mod tests {
                 "invalid_argument"
             );
             assert_eq!(
-                error(&mut e, "haptic", json!({"style": "light", "ms": 5}), T0),
+                error(&mut e, "haptic", json!({"style": "light", "ms": 200}), T0),
                 "invalid_argument"
             );
+            assert_eq!(
+                error(&mut e, "haptic", json!({"style": "light", "extra": 1}), T0),
+                "invalid_argument"
+            );
+            run(&mut e, "haptic", json!({"style": "light", "ms": 22}), T0);
+            assert_eq!(e.take_effects(), [Effect::Haptic(22)]);
             // Nothing while a timer rings.
             run(&mut e, "timer.create", json!({"duration_s": 1}), T0);
             e.tick(T0 + 1);

@@ -55,7 +55,8 @@ pub enum Command {
     /// reply comes once its current page is snapshotted).
     Transition(bool),
     /// `haptic STYLE`: a tap haptic for an app's control (System's switches).
-    Haptic(crate::notify_client::Haptic),
+    /// (`haptic STYLE MS` plays that length once, for tuning.)
+    Haptic(crate::notify_client::Haptic, Option<u32>),
     Quit,
 }
 
@@ -297,7 +298,18 @@ fn parse_command(line: &str) -> Result<Command, String> {
             _ => return Err("transition requires push or pop".into()),
         },
         "haptic" => match parts.next().and_then(crate::notify_client::Haptic::parse) {
-            Some(style) => Command::Haptic(style),
+            Some(style) => Command::Haptic(
+                style,
+                match parts.next() {
+                    None => None,
+                    Some(ms) => Some(
+                        ms.parse::<u32>()
+                            .ok()
+                            .filter(|ms| (5..=100).contains(ms))
+                            .ok_or("haptic length is 5..100 ms")?,
+                    ),
+                },
+            ),
             None => return Err("haptic requires selection, light, medium or error".into()),
         },
         "screen" => match parts.next() {

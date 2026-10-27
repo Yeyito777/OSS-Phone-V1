@@ -205,7 +205,7 @@ they reflect what the user did.
 | `notify.dismiss_all` | optional `app` | all (of that app) removed, reason `dismissed` |
 | `notify.activate` | `notification` | removed with reason `activated`; a `notification_activated` event (with `app`, `tag`, `open`) goes to every subscriber, so the posting app can react; Moon itself performs `open` |
 | `notify.mark_seen` | `ids` (array) or `all: true` | sets `seen`; `notifications_seen` event |
-| `haptic` (r4) | `style`: `selection`, `light`, `medium`, `error` | `{}`; one short pulse (12, 16, 24, 40 ms for now; to be tuned by hand), see below |
+| `haptic` (r4) | `style`: `selection`, `light`, `medium`, `error`; optional `ms` (5–100) | `{}`; one short pulse: `ms`, else 12, 16, 24 or 40 ms (Moon sends its tuned lengths), see below |
 | `alarm.list` | — | `{"alarms":[…]}` sorted by `next_fire_at` |
 | `alarm.create` | `hour` 0–23, `minute` 0–59, optional `days`, `label` (≤ 40), `enabled` (true), `sound`, `vibrate` (true), `snooze_minutes` | the alarm |
 | `alarm.update` | `alarm` + any alarm field above | the alarm (recomputed `next_fire_at`; clears a pending snooze) |
@@ -238,7 +238,9 @@ do-not-disturb.
 best-effort: the daemon writes the vibrator once, or not at all when
 anything rings (a call, an alarm or a timer, whatever its `vibrate`), while
 a notification buzz runs (so a tap never cuts one short), or within 40 ms of
-the previous pulse (so typing or scrolling cannot flood sysfs). Haptics obey
+the previous pulse began or 25 ms of the previous pulse ending (so typing
+or scrolling cannot flood sysfs, and quick taps of a long pulse stay
+separate taps instead of merging into one buzz). Haptics obey
 only Moon's own `haptics` setting (`settings.md`): not `vibrate`, which is
 for alerts, and not do-not-disturb. Moon sends them only for the user's own
 touches with the screen on, and never waits for the reply.

@@ -304,6 +304,16 @@ impl Haptic {
         }
     }
 
+    /// Its slot in `Settings::haptic_ms`.
+    pub fn index(self) -> usize {
+        match self {
+            Self::Selection => 0,
+            Self::Light => 1,
+            Self::Medium => 2,
+            Self::Error => 3,
+        }
+    }
+
     fn name(self) -> &'static str {
         match self {
             Self::Selection => "selection",
@@ -325,9 +335,15 @@ impl NotifyClient {
 
     /// A short vibrator pulse, if the daemon knows `haptic` (revision 4);
     /// an older one would refuse it.
-    pub fn haptic(&mut self, style: Haptic) {
+    /// `ms` overrides the style's length (Moon's tuned lengths).
+    pub fn haptic(&mut self, style: Haptic, ms: Option<u32>) {
         if self.line.connected() && self.revision.is_some_and(|revision| revision >= 4) {
-            self.line.send("haptic", json!({ "style": style.name() }));
+            match ms {
+                Some(ms) => self
+                    .line
+                    .send("haptic", json!({ "style": style.name(), "ms": ms })),
+                None => self.line.send("haptic", json!({ "style": style.name() })),
+            }
         }
     }
 
@@ -496,7 +512,7 @@ mod tests {
         assert!(lines[2]["id"].as_u64().is_some());
         assert_eq!(lines[2]["notification"], json!("n9"));
         // No haptics until the daemon says it has them (revision 4).
-        client.haptic(Haptic::Error);
+        client.haptic(Haptic::Error, None);
         server
             .write_all(
                 format!(
@@ -521,7 +537,7 @@ mod tests {
             matches!(&got[1], Incoming::Event(Event::NotificationRemoved { id }) if id == "n9")
         );
         assert_eq!(client.revision, Some(4));
-        client.haptic(Haptic::Light);
+        client.haptic(Haptic::Light, None);
         client.service(Instant::now());
         let mut more = String::new();
         while !more.contains('\n') {

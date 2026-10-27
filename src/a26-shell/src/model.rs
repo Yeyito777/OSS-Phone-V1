@@ -522,10 +522,16 @@ impl ShellState {
     /// A tap haptic, when the user wants them and the screen is on (it
     /// never wakes anything).
     pub fn haptic(&mut self, style: crate::notify_client::Haptic) {
+        let ms = Some(self.settings.haptic_ms[style.index()]).filter(|ms| *ms > 0);
+        self.haptic_ms(style, ms);
+    }
+
+    /// A haptic of a given length (`ctl haptic STYLE MS`, for tuning).
+    pub fn haptic_ms(&mut self, style: crate::notify_client::Haptic, ms: Option<u32>) {
         if self.settings.haptics && self.screen_awake {
             self.alerts
                 .outbox
-                .push(crate::alerts::Outgoing::Haptic(style));
+                .push(crate::alerts::Outgoing::Haptic(style, ms));
         }
     }
 

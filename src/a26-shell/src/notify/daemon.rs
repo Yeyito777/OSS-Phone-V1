@@ -163,15 +163,19 @@ struct Daemon {
     vibrating: bool,
     /// A notification buzz runs until then: a haptic must not cut it short.
     buzz_until: Option<Instant>,
-    /// The last haptic pulse, for the rate limit.
-    last_haptic: Option<Instant>,
+    /// The last haptic pulse: when it started and when it ends, for the
+    /// rate limit.
+    last_haptic: Option<(Instant, Instant)>,
     player: Player,
     last_wake_written: Option<Option<i64>>,
 }
 
 /// At most one haptic pulse per this long, so typing or scrolling never
-/// floods the vibrator's sysfs file.
+/// floods the vibrator's sysfs file; and a pause of at least
+/// `HAPTIC_MIN_REST` after one ends, so quick taps of a long pulse (error)
+/// stay separate pulses instead of merging into one buzz.
 const HAPTIC_MIN_GAP: Duration = Duration::from_millis(40);
+const HAPTIC_MIN_REST: Duration = Duration::from_millis(25);
 
 impl Daemon {
     fn poll_once(&mut self) -> Result<(), Box<dyn Error>> {
@@ -402,12 +406,13 @@ impl Daemon {
                 Effect::Haptic(ms) => {
                     let now = Instant::now();
                     let buzzing = self.buzz_until.is_some_and(|until| now < until);
-                    let too_soon = self
-                        .last_haptic
-                        .is_some_and(|at| now.saturating_duration_since(at) < HAPTIC_MIN_GAP);
+                    let too_soon = self.last_haptic.is_some_and(|(at, end)| {
+                        now.saturating_duration_since(at) < HAPTIC_MIN_GAP
+                            || now < end + HAPTIC_MIN_REST
+                    });
                     if !self.vibrating && !buzzing && !too_soon {
                         let _ = sound::vibrate(ms);
-                        self.last_haptic = Some(now);
+                        self.last_haptic = Some((now, now + Duration::from_millis(ms.into())));
                     }
                 }
             }

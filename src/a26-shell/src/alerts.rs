@@ -73,7 +73,8 @@ pub enum Outgoing {
     MarkSeen(Vec<String>),
     Ring(RingKind, String, RingAction),
     SetDnd(bool),
-    Haptic(crate::notify_client::Haptic),
+    /// A haptic and its length (ms; None for the style's default).
+    Haptic(crate::notify_client::Haptic, Option<u32>),
 }
 
 #[derive(Debug)]

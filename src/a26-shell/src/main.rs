@@ -1096,7 +1096,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 alerts::Outgoing::MarkSeen(ids) => notifyd.mark_seen(&ids),
                 alerts::Outgoing::Ring(kind, id, action) => notifyd.ring_action(kind, &id, action),
                 alerts::Outgoing::SetDnd(on) => notifyd.set_do_not_disturb(on),
-                alerts::Outgoing::Haptic(style) => notifyd.haptic(style),
+                alerts::Outgoing::Haptic(style, ms) => notifyd.haptic(style, ms),
             }
         }
         for command in std::mem::take(&mut state.calls.outbox) {
@@ -3189,7 +3189,8 @@ fn apply_command(
         | Command::ProfileFrames(_)
         | Command::SettingsSet(..)
         | Command::Transition(_) => {}
-        Command::Haptic(style) => state.haptic(style),
+        Command::Haptic(style, None) => state.haptic(style),
+        Command::Haptic(style, ms) => state.haptic_ms(style, ms),
         Command::Digit(digit) => state.input_digit(digit, config),
         Command::Backspace => state.backspace_pin(),
         Command::Submit => {
