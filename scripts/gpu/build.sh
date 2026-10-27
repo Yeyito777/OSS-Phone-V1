@@ -27,7 +27,9 @@ elif [[ -n "${MOON_GPU_BUILD_HOST:-}" ]]; then
     remote_dir=".cache/moon-gpu-build"
     ssh "$MOON_GPU_BUILD_HOST" "mkdir -p $remote_dir"
     rsync -a --delete "$PROJECT_ROOT/src/moon-gpu/" "$MOON_GPU_BUILD_HOST:$remote_dir/src/"
-    ssh "$MOON_GPU_BUILD_HOST" "cd $remote_dir && NDK=\${NDK:-${NDK:-}} sh src/build.sh out"
+    # The compiler's temporary files stay in the build directory: a full
+    # shared /tmp there fails the build with a disk quota error.
+    ssh "$MOON_GPU_BUILD_HOST" "cd $remote_dir && mkdir -p tmp && TMPDIR=\$PWD/tmp NDK=\${NDK:-${NDK:-}} sh src/build.sh out"
     rsync -a "$MOON_GPU_BUILD_HOST:$remote_dir/out/" "$OUTPUT/"
 else
     echo "Android NDK not found; set NDK, run: brew install --cask android-ndk," >&2
