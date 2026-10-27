@@ -38,15 +38,21 @@ key policy, and a root-only Unix-socket control interface over ADB.
 - Static `aarch64-unknown-linux-musl` deployment binaries
 - Root-only JSON IPC and deterministic ADB test controls
 - X11-native screenshot capture independent of Android SurfaceFlinger
+- GPU display path by default: `moon-compositor` owns the panel and shows
+  each frame on the display planes, the Mali GPU or, failing both, the CPU,
+  one frame per vblank at 120 Hz; the XRender path remains the automatic
+  fallback (`notes/gpu/DESIGN.md`)
 
 ## Repository layout
 
 ```text
 src/a26-shell/          Rust window-manager crate
 src/moon-audiod/        Native AAudio sink and "permission" stand-in (no framework)
+src/moon-gpu/           moon-compositor: KMS planes, GLES and CPU composition (NDK)
 src/a26-audio-bridge/   Former Android AudioTrack bridge source
 scripts/direct-boot/    Boot-ramdisk overlay: power-on straight into Moon
 scripts/a26-shell/      build, install, lifecycle, IPC, and test helpers
+scripts/gpu/            moon-compositor build, install, measurement and test helpers
 notes/a26-shell/        curated screenshots and design verification
 ```
 
@@ -134,7 +140,13 @@ animation shows starts normal Android instead. Without that image, the Magisk
 `service.d` entry waits for Android to finish booting, suspends the framework,
 then performs the same proven DRM handoff. Either way the supervisor verifies
 Xorg locally, starts native audio and Moon, and monitors the session without a
-host computer. Android remains active
+host computer. By default the display is composited on the GPU: the session
+starts `moon-compositor` as the panel's owner, Xorg runs headless and Moon
+draws through the compositor. If the compositor is missing or not ready, the
+session uses Xorg on the panel (the XRender path) instead; if it fails at
+runtime it is restarted, and after repeated failures the session falls back
+to the XRender path in place. `scripts/gpu/install.sh --disable` opts out,
+`--enable` opts back in (both take effect at the next boot). Android remains active
 instead when the preceding boot was a kernel panic, required hardware is
 missing, startup repeatedly fails, or the battery is too low. At runtime Moon
 returns to Android charging mode at 8% rather than reaching PMIC undervoltage

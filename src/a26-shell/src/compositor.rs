@@ -34,6 +34,7 @@ use x11rb::protocol::xproto::{
 };
 
 use crate::gfx::{Canvas, RectF, Rgb};
+use crate::gpu::GpuBackend;
 use crate::present::{Damage, Uploader};
 
 /// Picture formats resolved at startup.
@@ -45,7 +46,7 @@ pub struct Formats {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SurfaceId(usize);
+pub struct SurfaceId(pub(crate) usize);
 
 /// One drawing step of a frame, composited over the base layer in order.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -70,6 +71,68 @@ pub enum Node {
     /// opaque surfaces (`Compositor::set_rows`); `generation` changes
     /// whenever any row does.
     Rows { generation: u32 },
+}
+
+/// When two image nodes differ only in how much of the same unscaled
+/// surface they show (same placement), the regions between their bounds;
+/// everything else on screen is unchanged.
+fn clip_change(old: &Node, new: &Node) -> Option<Vec<Damage>> {
+    let (
+        Node::Image {
+            surface: a_surface,
+            src: a_src,
+            dst: a_dst,
+            alpha: a_alpha,
+            radius: a_radius,
+            smooth: a_smooth,
+        },
+        Node::Image {
+            surface: b_surface,
+            src: b_src,
+            dst: b_dst,
+            alpha: b_alpha,
+            radius: b_radius,
+            smooth: b_smooth,
+        },
+    ) = (*old, *new)
+    else {
+        return None;
+    };
+    let unscaled =
+        |src: RectF, dst: RectF| (src.w - dst.w).abs() < 1e-3 && (src.h - dst.h).abs() < 1e-3;
+    let placement = |src: RectF, dst: RectF| ((dst.x - src.x).round(), (dst.y - src.y).round());
+    if a_surface != b_surface
+        || a_alpha != b_alpha
+        || a_radius != b_radius
+        || a_smooth != b_smooth
+        || a_alpha <= 0.0
+        || a_radius > 0.0
+        || !unscaled(a_src, a_dst)
+        || !unscaled(b_src, b_dst)
+        || placement(a_src, a_dst) != placement(b_src, b_dst)
+    {
+        return None;
+    }
+    let bounds = |dst: RectF| Damage {
+        x0: dst.x.floor() as i32,
+        y0: dst.y.floor() as i32,
+        x1: (dst.x + dst.w).ceil() as i32,
+        y1: (dst.y + dst.h).ceil() as i32,
+    };
+    let (a, b) = (bounds(a_dst), bounds(b_dst));
+    let empty = |d: Damage| d.x1 <= d.x0 || d.y1 <= d.y0;
+    let mut strips = Vec::new();
+    for (area, hole) in [(a, b), (b, a)] {
+        if empty(area) {
+            continue;
+        }
+        if empty(hole) {
+            strips.push(area);
+        } else {
+            strips.extend(subtract(area, hole));
+        }
+    }
+    Some(strips)
 }
 
 /// Appends screen row `y` to a list of row runs, extending the last run
@@ -288,6 +351,8 @@ pub struct Compositor {
     /// MOON_DEBUG_FRAMES=1 logs every frame's node list.
     pub debug_frames: bool,
     pub stats: FrameStats,
+    /// GPU mode: frames go to moon-compositor instead (see gpu.rs).
+    gpu: Option<GpuBackend>,
 }
 
 struct PresentState {
@@ -450,6 +515,7 @@ impl Compositor {
             clip: Vec::new(),
             debug_frames: std::env::var_os("MOON_DEBUG_FRAMES").is_some(),
             stats: FrameStats::default(),
+            gpu: None,
         };
         for step in 0..=64_u32 {
             let picture = conn.generate_id()?;
@@ -477,10 +543,52 @@ impl Compositor {
 
     pub fn set_profile(&mut self, enabled: bool) {
         self.profile = enabled;
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.set_profile(enabled);
+        }
     }
 
     pub fn present_enabled(&self) -> bool {
-        self.present.is_some()
+        self.gpu.is_some() || self.present.is_some()
+    }
+
+    /// Hands every frame from now on to moon-compositor.
+    pub fn attach_gpu(&mut self, gpu: GpuBackend) {
+        self.gpu = Some(gpu);
+    }
+
+    pub fn gpu(&self) -> bool {
+        self.gpu.is_some()
+    }
+
+    /// The GPU backend, for showing Wayland client buffers directly.
+    pub fn gpu_mut(&mut self) -> Option<&mut GpuBackend> {
+        self.gpu.as_mut()
+    }
+
+    /// The compositor socket, for the event loop's poll set.
+    pub fn gpu_fd(&self) -> Option<std::os::fd::RawFd> {
+        self.gpu.as_ref().and_then(GpuBackend::raw_fd)
+    }
+
+    /// GPU mode, once per loop iteration: compositor messages, reconnects,
+    /// and the X mirror while it is on screen (`mirror`: an app is in front).
+    pub fn dispatch_gpu<C: Connection>(&mut self, conn: &C, mirror: bool) {
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.set_mirror_mode(conn, mirror);
+            gpu.dispatch(conn, &mut self.stats);
+        }
+    }
+
+    /// Changes the brightness of a darkened surface (GPU mode, where a dim
+    /// is a factor rather than a copy).
+    pub fn set_dim(&mut self, id: SurfaceId, dim: f32) {
+        if let Some(gpu) = self.gpu.as_mut()
+            && gpu.set_dim(id, dim)
+        {
+            // The frame's nodes are unchanged but it must be drawn again.
+            self.last = None;
+        }
     }
 
     /// An A8 mask that is opaque outside a rounded corner of `radius` (the
@@ -554,6 +662,9 @@ impl Compositor {
         height: u16,
         transparent: bool,
     ) -> Result<SurfaceId, Box<dyn Error>> {
+        if let Some(gpu) = self.gpu.as_mut() {
+            return gpu.create_layer(width, height, transparent);
+        }
         let depth = if transparent { 32 } else { 24 };
         let uploader = Uploader::create(conn, self.window, depth, width, height)?;
         let picture = conn.generate_id()?;
@@ -588,6 +699,9 @@ impl Compositor {
         id: SurfaceId,
         canvas: &Canvas,
     ) -> Result<Vec<Damage>, Box<dyn Error>> {
+        if let Some(gpu) = self.gpu.as_mut() {
+            return gpu.upload(id, canvas);
+        }
         let Some(surface) = self.surfaces.get_mut(id.0).and_then(Option::as_mut) else {
             return Err("unknown layer".into());
         };
@@ -608,10 +722,24 @@ impl Compositor {
     }
 
     /// A full-screen surface for an app snapshot (see `capture_root`).
+    /// The live X mirror as a node source (GPU mode only).
+    pub fn create_mirror_node(&mut self) -> Option<SurfaceId> {
+        self.gpu.as_mut().map(GpuBackend::create_mirror_node)
+    }
+
+    /// GPU mode: the snapshot's copy is on its way, ahead of anything Xorg
+    /// draws next.
+    pub fn snapshot_taken(&self, id: SurfaceId) -> bool {
+        self.gpu.as_ref().is_some_and(|gpu| gpu.snapshot_taken(id))
+    }
+
     pub fn create_snapshot<C: Connection>(
         &mut self,
         conn: &C,
     ) -> Result<SurfaceId, Box<dyn Error>> {
+        if let Some(gpu) = self.gpu.as_mut() {
+            return Ok(gpu.create_snapshot());
+        }
         let pixmap = conn.generate_id()?;
         conn.create_pixmap(24, pixmap, self.window, self.width, self.height)?;
         let picture = conn.generate_id()?;
@@ -641,6 +769,9 @@ impl Compositor {
         conn: &C,
         id: SurfaceId,
     ) -> Result<(), Box<dyn Error>> {
+        if let Some(gpu) = self.gpu.as_mut() {
+            return gpu.capture_root(conn, id);
+        }
         self.drop_prescaled(conn, id);
         let Some(surface) = self.surfaces.get_mut(id.0).and_then(Option::as_mut) else {
             return Err("unknown snapshot".into());
@@ -666,6 +797,10 @@ impl Compositor {
     }
 
     pub fn free<C: Connection>(&mut self, conn: &C, id: SurfaceId) {
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.free(id);
+            return;
+        }
         self.drop_prescaled(conn, id);
         if let Some(surface) = self.surfaces.get_mut(id.0).and_then(Option::take) {
             let _ = conn.render_free_picture(surface.picture);
@@ -682,6 +817,7 @@ impl Compositor {
     /// The window lost its contents (expose); the next frame redraws and
     /// presents everything.
     pub fn invalidate(&mut self) {
+        self.last = None;
         self.force_full = true;
         for buffer in &mut self.buffers {
             buffer.stale = true;
@@ -691,6 +827,9 @@ impl Compositor {
     /// Whether a new frame may be submitted now. With Present this waits for
     /// the previous frame to reach the screen (one frame per vblank).
     pub fn ready(&mut self, now: Instant) -> bool {
+        if let Some(gpu) = self.gpu.as_mut() {
+            return gpu.ready(now);
+        }
         match self.present.as_mut() {
             Some(present) => match &present.in_flight {
                 None => true,
@@ -718,6 +857,9 @@ impl Compositor {
 
     /// When the loop should wake to submit or recover the next frame.
     pub fn next_deadline(&self) -> Option<Instant> {
+        if let Some(gpu) = self.gpu.as_ref() {
+            return gpu.next_deadline();
+        }
         match &self.present {
             Some(present) => present
                 .in_flight
@@ -730,6 +872,9 @@ impl Compositor {
     /// Best estimate of when the next submitted frame reaches the panel; the
     /// time every animation should be sampled at.
     pub fn next_display_time(&self, now: Instant) -> Instant {
+        if let Some(gpu) = self.gpu.as_ref() {
+            return gpu.next_display_time(now, monotonic_micros());
+        }
         match &self.present {
             Some(present) if present.last_ust > 0 => {
                 let now_us = monotonic_micros();
@@ -748,6 +893,9 @@ impl Compositor {
     }
 
     pub fn frame_in_flight(&self) -> bool {
+        if let Some(gpu) = self.gpu.as_ref() {
+            return gpu.frame_in_flight();
+        }
         self.present
             .as_ref()
             .is_some_and(|present| present.in_flight.is_some())
@@ -755,6 +903,9 @@ impl Compositor {
 
     /// Handles Present events; returns true when the event was Moon's.
     pub fn handle_event(&mut self, event: &Event) -> bool {
+        if let Some(gpu) = self.gpu.as_mut() {
+            return gpu.handle_event(event);
+        }
         let Some(present) = self.present.as_mut() else {
             return false;
         };
@@ -850,6 +1001,35 @@ impl Compositor {
         conn: &C,
         frame: Frame,
     ) -> Result<bool, Box<dyn Error>> {
+        if let Some(gpu) = self.gpu.as_mut() {
+            // Unchanged frames are not re-sent: the compositor redraws by
+            // itself when a layer the frame shows is uploaded.
+            if self.last.as_ref() == Some(&frame) {
+                return Ok(false);
+            }
+            let sent = gpu.compose(frame.base, &frame.nodes);
+            if self.debug_frames {
+                // `profile frames on`: what each frame shows, by its base
+                // and first nodes (enough to tell home from an app).
+                let first: Vec<String> = frame
+                    .nodes
+                    .iter()
+                    .take(3)
+                    .map(|node| match node {
+                        Node::Image { surface, .. } => format!("img {}", surface.0),
+                        Node::Fill { alpha, .. } => format!("fill {alpha:.2}"),
+                        Node::Rows { .. } => "rows".into(),
+                    })
+                    .collect();
+                eprintln!(
+                    "gpu frame base {:?} nodes {} first {first:?}",
+                    frame.base.map(|b| b.0),
+                    frame.nodes.len()
+                );
+            }
+            self.last = Some(frame);
+            return Ok(sent);
+        }
         let started = Instant::now();
         let row_changes = std::mem::take(&mut self.row_changes);
         let (w, h) = (i32::from(self.width), i32::from(self.height));
@@ -897,44 +1077,27 @@ impl Compositor {
                     continue;
                 }
                 if old != new {
+                    // Content uploaded this frame: its old pixels may lie
+                    // outside the surface's new content tiles.
+                    for node in [old, new] {
+                        damage.extend(self.pending_damage(node));
+                    }
+                    if let Some(strips) = clip_change(old, new) {
+                        // Only the image's clip moved (a curtain's edge):
+                        // just what it uncovered or covered changes.
+                        let mut covered = Vec::new();
+                        self.node_damage(old, &mut covered);
+                        self.node_damage(new, &mut covered);
+                        damage.extend(covered.iter().flat_map(|piece| {
+                            strips.iter().filter_map(|strip| intersect(*piece, *strip))
+                        }));
+                        continue;
+                    }
                     self.node_damage(old, &mut damage);
                     self.node_damage(new, &mut damage);
                     continue;
                 }
-                let Node::Image {
-                    surface,
-                    src,
-                    dst,
-                    alpha,
-                    ..
-                } = *new
-                else {
-                    continue;
-                };
-                let Some(pending) = self.pending(surface) else {
-                    continue;
-                };
-                if alpha <= 0.0 {
-                    continue;
-                }
-                let untransformed = (src.w - dst.w).abs() < 1e-3 && (src.h - dst.h).abs() < 1e-3;
-                let changed = if untransformed {
-                    // Only the uploaded part of an unscaled layer changed.
-                    let (dx, dy) = (
-                        (dst.x - src.x).round() as i32,
-                        (dst.y - src.y).round() as i32,
-                    );
-                    Some(Damage {
-                        x0: pending.x0 + dx,
-                        y0: pending.y0 + dy,
-                        x1: pending.x1 + dx,
-                        y1: pending.y1 + dy,
-                    })
-                    .and_then(|d| self.node_bounds(new).and_then(|b| intersect(d, b)))
-                } else {
-                    self.node_bounds(new)
-                };
-                damage.extend(changed);
+                damage.extend(self.pending_damage(new));
             }
         }
         // Snap to a 32-pixel grid and coalesce: overlapping rectangles at
@@ -1160,6 +1323,43 @@ impl Compositor {
         }
     }
 
+    /// Where a node shows content uploaded since the last frame.
+    fn pending_damage(&self, node: &Node) -> Option<Damage> {
+        let Node::Image {
+            surface,
+            src,
+            dst,
+            alpha,
+            ..
+        } = *node
+        else {
+            return None;
+        };
+        let pending = self.pending(surface)?;
+        if alpha <= 0.0 {
+            return None;
+        }
+        // The node's whole placement, not its content's bounds: the new
+        // content may no longer reach where the old content was.
+        let bounds = node.bounds(i32::from(self.width), i32::from(self.height))?;
+        let untransformed = (src.w - dst.w).abs() < 1e-3 && (src.h - dst.h).abs() < 1e-3;
+        if !untransformed {
+            return Some(bounds);
+        }
+        // Only the uploaded part of an unscaled layer changed.
+        let (dx, dy) = (
+            (dst.x - src.x).round() as i32,
+            (dst.y - src.y).round() as i32,
+        );
+        let moved = Damage {
+            x0: pending.x0 + dx,
+            y0: pending.y0 + dy,
+            x1: pending.x1 + dx,
+            y1: pending.y1 + dy,
+        };
+        intersect(moved, bounds)
+    }
+
     /// Appends what a node covers: its content tiles for an unscaled layer,
     /// otherwise its bounds.
     fn node_damage(&self, node: &Node, out: &mut Vec<Damage>) {
@@ -1256,6 +1456,10 @@ impl Compositor {
         width: u16,
         height: u16,
     ) -> Result<(), Box<dyn Error>> {
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.prescale(id, width, height);
+            return Ok(());
+        }
         let Some(surface) = self.surface(id) else {
             return Ok(());
         };
@@ -1322,6 +1526,9 @@ impl Compositor {
         source: SurfaceId,
         dim: f32,
     ) -> Result<SurfaceId, Box<dyn Error>> {
+        if let Some(gpu) = self.gpu.as_mut() {
+            return Ok(gpu.create_dimmed(source, dim));
+        }
         let id = self.create_snapshot(conn)?;
         self.refresh_dimmed(conn, id, source, dim)?;
         Ok(id)
@@ -1352,6 +1559,9 @@ impl Compositor {
         dim: f32,
         regions: &[Damage],
     ) -> Result<(), Box<dyn Error>> {
+        if self.gpu.is_some() {
+            return Ok(());
+        }
         let Some(source) = self.set_transform(conn, source, [0x10000, 0, 0x10000, 0], false)?
         else {
             return Ok(());
@@ -1404,6 +1614,9 @@ impl Compositor {
     /// Sets the surface each screen row of the background shows and returns
     /// the node that draws it; only rows that changed are redrawn.
     pub fn set_rows(&mut self, rows: &[SurfaceId]) -> Node {
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.set_rows(rows);
+        }
         let width = i32::from(self.width);
         let mut changed = false;
         if self.rows.len() != rows.len() {

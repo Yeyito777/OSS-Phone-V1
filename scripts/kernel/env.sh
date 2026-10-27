@@ -20,13 +20,20 @@ CLANG_BIN_SHA256=d505bf5264ad893a5aca90c543adff6152967d695acf50a199a1210e645d71c
 LLD_BIN_SHA256=84468a97fedc56ffa2a477050863d9ac231fbc507f3826263237eda4dc0a23d9   # bin/ld.lld
 CLANG="$KROOT/toolchain/$CLANG_DIR_NAME"
 
-# Source. Preferred: Samsung's own SM-A266M_LA_15_Opensource.zip (firmware
-# A266MUBU1AYB8, opensource.samsung.com upload 13000, attach 38622), which needs
-# a human to accept Samsung's download terms; see README.md. Until then: the
-# public GPL mirror below, whose tree is that release plus a "-physwizz"
-# LOCALVERSION in the saved defconfig (we use our own config anyway).
+# Source: Samsung's own SM-A266M_LA_15_Opensource.zip for firmware
+# A266MUBU1AYB8 (opensource.samsung.com upload 13000, attach 38622). Getting it
+# needs a person to accept Samsung's download terms (README.md); build-all.sh
+# uses it from $SAMSUNG_ZIP when present. Its kernel tree is file-for-file
+# identical to the public mirror below except the saved defconfig's
+# LOCALVERSION, and both build to bit-identical kernels, so the mirror is a
+# verified fallback for hosts without the zip.
 SAMSUNG_ZIP_NAME=SM-A266M_LA_15_Opensource.zip
 SAMSUNG_ZIP_SIZE=278700980
+SAMSUNG_ZIP_SHA256=6b993454a1ddd97fd36a94b0ee61bbe97165db5c22674f82010aece86210453f
+SAMSUNG_KERNEL_TAR_SHA256=f9ca20b4addcb9042c294969fc589f1aeaca85c42ebdfd6208949d1bc0ecd357
+# sha256 of `find . -type f | sort | xargs sha256sum` over the extracted tree.
+SAMSUNG_TREE_CONTENT_SHA256=7ce9859ea9edcbe7ae127010f93925d7592d6d7b329983e17dd0e8bbdd3c0f38
+SAMSUNG_ZIP="${SAMSUNG_ZIP:-$KROOT/dl/$SAMSUNG_ZIP_NAME}"
 MIRROR_URL=https://github.com/physwizz/A266m-V-LA.git
 MIRROR_COMMIT=d569a47723e6eade9e97756db0b65c477f4db570
 MIRROR_TREE=d779b6c1f9810bc9a78d75a58f9163ee3b82dc23

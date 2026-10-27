@@ -94,12 +94,20 @@ grep -Fq 'libc::poll(' "$SOURCE/src/main.rs" || {
 echo 'blocking event-loop guard: PASS'
 sh -n "$PROJECT_ROOT/scripts/device/moon-boot-supervisor.sh"
 
-mkdir -p "$IMAGE/bin" "$IMAGE/source"
+mkdir -p "$IMAGE/bin" "$IMAGE/source" "$IMAGE/share/fonts"
+# Fallback fonts for text Inter lacks (emoji, Greek, Cyrillic, symbols).
+"$PROJECT_ROOT/scripts/a26-shell/fetch-fonts.sh" "$PROJECT_ROOT/images/fonts"
+while read -r name _; do
+    [[ -z "$name" || "$name" == \#* ]] && continue
+    install -m0644 "$PROJECT_ROOT/images/fonts/$name" "$IMAGE/share/fonts/$name"
+done <"$PROJECT_ROOT/scripts/a26-shell/fonts.manifest"
 install -m0755 "$SOURCE/target/$TARGET/release/a26-shell" "$IMAGE/bin/a26-shell"
 install -m0755 "$SOURCE/target/$TARGET/release/a26-shellctl" "$IMAGE/bin/a26-shellctl"
 install -m0755 "$SOURCE/target/$TARGET/release/a26-shellshot" "$IMAGE/bin/a26-shellshot"
 install -m0755 "$SOURCE/target/$TARGET/release/a26-renderbench" "$IMAGE/bin/a26-renderbench"
 install -m0755 "$SOURCE/target/$TARGET/release/a26-touchpath" "$IMAGE/bin/a26-touchpath"
+install -m0755 "$SOURCE/target/$TARGET/release/moon-notifyd" "$IMAGE/bin/moon-notifyd"
+install -m0755 "$SOURCE/target/$TARGET/release/moon-notifyctl" "$IMAGE/bin/moon-notifyctl"
 tar --exclude=target -czf "$IMAGE/source/a26-shell-0.1.0.tar.gz" \
     -C "$PROJECT_ROOT/src" a26-shell
 
@@ -112,6 +120,6 @@ display=:0
 resolution=1080x2340
 EOF
 
-(cd "$IMAGE" && sha256sum MANIFEST.txt bin/a26-shell bin/a26-shellctl bin/a26-shellshot bin/a26-renderbench bin/a26-touchpath \
+(cd "$IMAGE" && sha256sum MANIFEST.txt bin/a26-shell bin/a26-shellctl bin/a26-shellshot bin/a26-renderbench bin/a26-touchpath bin/moon-notifyd bin/moon-notifyctl \
     source/a26-shell-0.1.0.tar.gz > SHA256SUMS)
 (cd "$IMAGE" && sha256sum -c SHA256SUMS)

@@ -12,7 +12,9 @@ use std::time::Instant;
 
 use x11rb::connection::Connection;
 
+use crate::alerts::{self, CARD_W, CARD_X, Icons, RingInfo};
 use crate::backdrop::{self, DimLevels, LEVEL_STEP, RowFade, level_dims};
+use crate::calls;
 use crate::clock::LocalTime;
 use crate::compositor::{Compositor, Frame, Node, SurfaceId};
 use crate::gfx::{self, Canvas, Image, Path, RectF, Rgb};
@@ -20,6 +22,7 @@ use crate::interaction::{CARD_RADIUS, SCREEN, SCREEN_H, SCREEN_W, SWITCHER_DIM};
 use crate::model::{AppId, Press, SHAKE_ANIMATION, ShellState, UNLOCK_ANIMATION, View};
 use crate::present::Damage;
 use crate::status_bar;
+use crate::telephony_client::Cellular;
 use crate::text::{self, Weight};
 
 pub const BLACK: Rgb = 0x000000;
@@ -53,7 +56,8 @@ const DOCK_RADIUS: f32 = 98.0;
 /// Center-to-center spacing of dock icons.
 const DOCK_PITCH: f32 = 254.0;
 /// The order of apps in the dock.
-pub const LAUNCHER_APPS: [AppId; 2] = [AppId::Browser, AppId::System];
+pub const LAUNCHER_APPS: [AppId; 4] =
+    [AppId::Phone, AppId::Browser, AppId::Messages, AppId::System];
 
 // Lock screen and passcode geometry.
 const PASSCODE_TITLE_BASELINE: f32 = 612.0;
@@ -78,12 +82,24 @@ pub enum KeypadAction {
 }
 
 /// Everything the status bar shows; surfaces repaint only when it changes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StatusInfo {
     pub time: String,
     pub wifi_connected: bool,
     pub battery_percent: Option<u8>,
     pub battery_charging: bool,
+    /// An alarm is set (the status bar shows a small alarm clock).
+    pub alarm_set: bool,
+    /// Do Not Disturb is on (a crescent).
+    pub dnd: bool,
+    /// Signal bars or a short state ("No SIM"), from moon-telephonyd.
+    pub cellular: Cellular,
+    /// The carrier, shown where the time would be (lock screen, Control
+    /// Centre).
+    pub carrier: Option<String>,
+    /// A call is up with its screen tucked away: the time sits in a green
+    /// pill.
+    pub call_pill: bool,
 }
 
 impl StatusInfo {
@@ -93,9 +109,44 @@ impl StatusInfo {
             wifi_connected: state.wifi_connected,
             battery_percent: state.battery_percent.map(|value| value.min(100)),
             battery_charging: state.battery_charging,
+            alarm_set: state.alerts.store.alarm_set(),
+            dnd: state.alerts.store.do_not_disturb,
+            cellular: if state.calls.store.connected {
+                state.calls.store.state.cellular()
+            } else {
+                Cellular::Hidden
+            },
+            carrier: state
+                .calls
+                .store
+                .connected
+                .then(|| state.calls.store.state.carrier())
+                .flatten(),
+            call_pill: state.calls.pill(),
         }
     }
 }
+
+/// The app icons notifications show, by app id.
+struct IconSet<'a>(&'a [AppIcon; AppId::COUNT]);
+
+impl Icons for IconSet<'_> {
+    fn icon(&self, app: &str) -> Option<&Image> {
+        AppId::parse(app).map(|app| &self.0[app.index()].large)
+    }
+}
+
+/// A layer key for content that is cheaper to hash than to compare.
+fn key_of(value: &impl std::hash::Hash) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Banner and swiped-card layers draw the card this far down, leaving room
+/// for its shadow.
+const CARD_LAYER_INSET: f32 = 20.0;
 
 fn load_icon(variable: &str, default: &str) -> Option<Image> {
     let path = std::env::var_os(variable).unwrap_or_else(|| default.into());
@@ -118,6 +169,8 @@ impl AppIcon {
         let artwork = match app {
             AppId::System => load_icon("A26_SYSTEM_ICON", SYSTEM_ICON_PATH),
             AppId::Browser => load_icon("A26_BROWSER_ICON", BROWSER_ICON_PATH),
+            // Moon draws these two itself.
+            AppId::Phone | AppId::Messages => None,
         }
         .unwrap_or_else(|| fallback_icon(app));
         let splash = artwork.pixels[(6 * artwork.width + 6) as usize] & 0x00ff_ffff;
@@ -132,15 +185,46 @@ impl AppIcon {
     }
 }
 
-/// Artwork for an app whose installation provides none (development hosts).
+/// The Messages icon's bubble: an ellipse with a tail at its lower left.
+fn draw_speech_bubble(canvas: &mut Canvas, cx: f32, cy: f32, scale: f32) {
+    let (rx, ry) = (76.0 * scale, 62.0 * scale);
+    let mut bubble = Path::new();
+    let steps = 96;
+    let points: Vec<(f32, f32)> = (0..steps)
+        .map(|step| {
+            let angle = std::f32::consts::TAU * step as f32 / steps as f32;
+            (cx + rx * angle.cos(), cy + ry * angle.sin())
+        })
+        .collect();
+    bubble.polygon(&points);
+    canvas.fill_path(&bubble, WHITE, 1.0);
+    let mut tail = Path::new();
+    tail.polygon(&[
+        (cx - 50.0 * scale, cy + 34.0 * scale),
+        (cx - 22.0 * scale, cy + 54.0 * scale),
+        (cx - 70.0 * scale, cy + 78.0 * scale),
+        (cx - 56.0 * scale, cy + 62.0 * scale),
+    ]);
+    canvas.fill_path(&tail, WHITE, 1.0);
+}
+
+/// Artwork for an app whose installation provides none (development hosts),
+/// and Moon's own Phone and Messages icons.
 fn fallback_icon(app: AppId) -> Image {
     let size = ICON_SOURCE_SIZE;
     let mut canvas = Canvas::new(size, size);
     let (top, bottom, letter) = match app {
         AppId::System => (0x8e8e93, 0x48484a, "S"),
         AppId::Browser => (0x5ac8fa, 0x0a64d8, "B"),
+        AppId::Phone | AppId::Messages => (0x6ce87a, 0x1fc04a, ""),
     };
     canvas.fill_rows(|y| gfx::mix(top, bottom, y as f32 / size as f32));
+    let c = size as f32 / 2.0;
+    match app {
+        AppId::Phone => calls::draw_handset(&mut canvas, c, c, 1.6, false, WHITE),
+        AppId::Messages => draw_speech_bubble(&mut canvas, c, c - 4.0, 1.0),
+        AppId::System | AppId::Browser => {}
+    }
     let baseline = text::centered_baseline(size as f32 / 2.0, Weight::SemiBold, 120.0);
     text::draw_centered(
         &mut canvas,
@@ -159,91 +243,11 @@ fn fallback_icon(app: AppId) -> Image {
     }
 }
 
-/// Moon's default wallpaper: a deep night-sky gradient lit by soft indigo,
-/// blue, and violet glows, dithered so the 8-bit panel shows no banding.
-fn wallpaper(width: i32, height: i32) -> Canvas {
-    struct Glow {
-        x: f32,
-        y: f32,
-        radius: f32,
-        color: (f32, f32, f32),
-        strength: f32,
-    }
-    let glows = [
-        Glow {
-            x: 0.86,
-            y: 0.10,
-            radius: 0.62,
-            color: (94.0, 92.0, 230.0),
-            strength: 0.62,
-        },
-        Glow {
-            x: 0.06,
-            y: 0.58,
-            radius: 0.64,
-            color: (10.0, 110.0, 230.0),
-            strength: 0.42,
-        },
-        Glow {
-            x: 0.78,
-            y: 0.98,
-            radius: 0.56,
-            color: (150.0, 70.0, 210.0),
-            strength: 0.40,
-        },
-    ];
-    let w = width as f32;
-    let mut canvas = Canvas::new(width, height);
-    let mut columns: Vec<Vec<f32>> = Vec::with_capacity(glows.len());
-    for glow in &glows {
-        let sigma = glow.radius * w;
-        columns.push(
-            (0..width)
-                .map(|x| {
-                    let d = x as f32 - glow.x * w;
-                    (-(d * d) / (2.0 * sigma * sigma)).exp()
-                })
-                .collect(),
-        );
-    }
-    for y in 0..height {
-        let t = y as f32 / height as f32;
-        let base = (
-            gfx::lerp(10.0, 4.0, t),
-            gfx::lerp(12.0, 5.0, t),
-            gfx::lerp(30.0, 16.0, t),
-        );
-        let rows: Vec<f32> = glows
-            .iter()
-            .map(|glow| {
-                let sigma = glow.radius * w;
-                let d = y as f32 - glow.y * height as f32;
-                (-(d * d) / (2.0 * sigma * sigma)).exp() * glow.strength
-            })
-            .collect();
-        for x in 0..width {
-            let (mut r, mut g, mut b) = base;
-            for (index, glow) in glows.iter().enumerate() {
-                let k = rows[index] * columns[index][x as usize];
-                r += glow.color.0 * k;
-                g += glow.color.1 * k;
-                b += glow.color.2 * k;
-            }
-            // Ordered-noise dither of +/- half a code value.
-            let hash = (x as u32).wrapping_mul(0x9e37_79b1) ^ (y as u32).wrapping_mul(0x85eb_ca77);
-            let noise = ((hash >> 13) & 0xff) as f32 / 255.0 - 0.5;
-            let channel = |v: f32| (v + noise).clamp(0.0, 255.0) as u32;
-            canvas.pixels[(y * width + x) as usize] =
-                channel(r) << 16 | channel(g) << 8 | channel(b);
-        }
-    }
-    canvas
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HomeKey {
     status: StatusInfo,
     date: (u8, u8, u8),
+    wallpaper: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -319,6 +323,10 @@ pub struct Renderer {
     pin_length: usize,
     pub compositor: Compositor,
     wallpaper: Canvas,
+    wallpaper_id: String,
+    /// Control Centre: its toggles, and the brightness and volume sliders.
+    control: Layer<u64>,
+    sliders: [Layer<u64>; 2],
     wall: SurfaceId,
     /// The wallpaper darkened toward the keypad's dim.
     wall_levels: DimLevels,
@@ -329,6 +337,9 @@ pub struct Renderer {
     /// The lock/home split of the previous frame, to start a screen's
     /// background at its level rather than fading into it.
     last_locked: Option<bool>,
+    /// GPU mode: the wallpaper and home screen with an exact dim each,
+    /// instead of rows of darkened copies.
+    gpu_backdrops: [Option<SurfaceId>; 2],
     /// When idle time may draw the next darkened copy.
     next_idle_copy: Instant,
     /// Power and wake fades ramp the panel backlight (no frames are drawn);
@@ -342,11 +353,27 @@ pub struct Renderer {
     dots: Layer<usize>,
     volume: Layer<u8>,
     spinner: Layer<u32>,
-    icons: [AppIcon; 2],
-    icon_layers: [SurfaceId; 2],
-    labels: [SurfaceId; 2],
-    snapshots: [Option<SurfaceId>; 2],
+    icons: [AppIcon; AppId::COUNT],
+    icon_layers: [SurfaceId; AppId::COUNT],
+    labels: [SurfaceId; AppId::COUNT],
+    snapshots: [Option<SurfaceId>; AppId::COUNT],
     fade_snapshot: Option<SurfaceId>,
+    /// Notifications and alarms (see alerts.rs).
+    banner: Layer<u64>,
+    banner_height: f32,
+    lock_list: Layer<u64>,
+    centre: Layer<u64>,
+    centre_card: Layer<u64>,
+    ring: Layer<u64>,
+    /// The call screen, its status line and its slide-to-answer knob
+    /// (calls.rs).
+    call: Layer<u64>,
+    call_line: Layer<u64>,
+    call_knob: Layer<u8>,
+    /// An app page transition (GPU mode): the outgoing page and the live
+    /// X mirror as a node source.
+    page_snapshot: Option<SurfaceId>,
+    mirror_node: Option<SurfaceId>,
 }
 
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
@@ -393,14 +420,14 @@ impl Renderer {
         pin_length: usize,
     ) -> Result<Self, Box<dyn Error>> {
         let (w, h) = (i32::from(width), i32::from(height));
-        let wallpaper = wallpaper(w, h);
+        let wallpaper = crate::wallpaper::render("moon", w, h);
         let wall = compositor.create_layer(conn, width, height, false)?;
         compositor.upload(conn, wall, &wallpaper)?;
         let wall_levels = DimLevels::new(wall, level_dims(&LOCK_DIM_STOPS, LEVEL_STEP));
-        let icons = [AppIcon::new(AppId::System), AppIcon::new(AppId::Browser)];
-        let mut icon_layers = [wall; 2];
-        let mut labels = [wall; 2];
-        for app in [AppId::System, AppId::Browser] {
+        let icons = AppId::ALL.map(AppIcon::new);
+        let mut icon_layers = [wall; AppId::COUNT];
+        let mut labels = [wall; AppId::COUNT];
+        for app in AppId::ALL {
             let icon = &icons[app.index()];
             let id = compositor.create_layer(
                 conn,
@@ -452,20 +479,68 @@ impl Renderer {
                 true,
             )?,
             spinner: Layer::new(conn, &mut compositor, SPINNER_SIZE, SPINNER_SIZE, true)?,
+            banner: Layer::new(
+                conn,
+                &mut compositor,
+                w,
+                alerts::BANNER_LAYER_H as i32,
+                true,
+            )?,
+            banner_height: 0.0,
+            lock_list: Layer::new(conn, &mut compositor, w, alerts::LOCK_LIST_H as i32, true)?,
+            centre: Layer::new(conn, &mut compositor, w, h, true)?,
+            centre_card: Layer::new(
+                conn,
+                &mut compositor,
+                w,
+                alerts::BANNER_LAYER_H as i32,
+                true,
+            )?,
+            ring: Layer::new(conn, &mut compositor, w, h, true)?,
+            call: Layer::new(conn, &mut compositor, w, h, true)?,
+            call_line: Layer::new(conn, &mut compositor, w, calls::LINE.h as i32, true)?,
+            call_knob: Layer::new(
+                conn,
+                &mut compositor,
+                calls::KNOB as i32,
+                calls::KNOB as i32,
+                true,
+            )?,
+            control: Layer::new(conn, &mut compositor, w, h, true)?,
+            sliders: [
+                Layer::new(
+                    conn,
+                    &mut compositor,
+                    crate::control_centre::BRIGHTNESS.w as i32,
+                    crate::control_centre::BRIGHTNESS.h as i32,
+                    true,
+                )?,
+                Layer::new(
+                    conn,
+                    &mut compositor,
+                    crate::control_centre::VOLUME.w as i32,
+                    crate::control_centre::VOLUME.h as i32,
+                    true,
+                )?,
+            ],
             compositor,
             wallpaper,
+            wallpaper_id: "moon".into(),
             wall,
             wall_levels,
             home_levels: DimLevels::new(wall, Vec::new()),
             lock_fade: RowFade::new(usize::from(height)),
             home_fade: RowFade::new(usize::from(height)),
             last_locked: None,
+            gpu_backdrops: [None, None],
             next_idle_copy: Instant::now(),
             backlight_fades: false,
             icons,
             icon_layers,
             labels,
-            snapshots: [None, None],
+            snapshots: [None; AppId::COUNT],
+            page_snapshot: None,
+            mirror_node: None,
             fade_snapshot: None,
         };
         renderer.home_levels =
@@ -492,6 +567,100 @@ impl Renderer {
             }
         };
         self.compositor.capture_root(conn, id)
+    }
+
+    /// Snapshots the page on screen for an app's page transition. GPU mode
+    /// only (the live app moves inside Moon's frame there); false otherwise.
+    pub fn capture_page<C: Connection>(&mut self, conn: &C) -> Result<bool, Box<dyn Error>> {
+        if !self.compositor.gpu() {
+            return Ok(false);
+        }
+        if self.mirror_node.is_none() {
+            self.mirror_node = self.compositor.create_mirror_node();
+        }
+        let id = match self.page_snapshot {
+            Some(id) => id,
+            None => {
+                let id = self.compositor.create_snapshot(conn)?;
+                self.page_snapshot = Some(id);
+                id
+            }
+        };
+        self.compositor.capture_root(conn, id)?;
+        Ok(self.mirror_node.is_some())
+    }
+
+    pub fn page_snapshot_taken(&self) -> bool {
+        self.page_snapshot
+            .is_some_and(|id| self.compositor.snapshot_taken(id))
+    }
+
+    /// The page transition: the status bar stays put (from the live
+    /// mirror); below it, a push slides the new page in from the right over
+    /// the old one, which drifts left and darkens; a pop is the reverse.
+    fn page_nodes(
+        &self,
+        transition: crate::model::PageTransition,
+        t: Instant,
+        nodes: &mut Vec<Node>,
+    ) -> bool {
+        let (Some(old), Some(live)) = (self.page_snapshot, self.mirror_node) else {
+            return false;
+        };
+        let p = transition.progress(t);
+        let top = f32::from(status_bar::HEIGHT);
+        let body = RectF::new(0.0, top, SCREEN_W, SCREEN_H - top);
+        let image = |surface, x: f32| Node::Image {
+            surface,
+            src: body,
+            dst: RectF::new(x.round(), top, SCREEN_W, SCREEN_H - top),
+            alpha: 1.0,
+            radius: 0.0,
+            smooth: false,
+        };
+        let shade = |x: f32, alpha: f32| Node::Fill {
+            dst: RectF::new(x.round(), top, SCREEN_W, SCREEN_H - top),
+            color: BLACK,
+            alpha,
+            radius: 0.0,
+        };
+        nodes.push(Node::Fill {
+            dst: SCREEN,
+            color: BLACK,
+            alpha: 1.0,
+            radius: 0.0,
+        });
+        let strip = RectF::new(0.0, 0.0, SCREEN_W, top);
+        nodes.push(Node::Image {
+            surface: live,
+            src: strip,
+            dst: strip,
+            alpha: 1.0,
+            radius: 0.0,
+            smooth: false,
+        });
+        // (under, its shade, over): the page beneath drifts by a third.
+        let (under, under_x, shade_alpha, over, over_x) = if transition.push {
+            (
+                old,
+                -SCREEN_W * 0.3 * p,
+                0.25 * p,
+                live,
+                SCREEN_W * (1.0 - p),
+            )
+        } else {
+            (
+                live,
+                -SCREEN_W * 0.3 * (1.0 - p),
+                0.25 * (1.0 - p),
+                old,
+                SCREEN_W * p,
+            )
+        };
+        nodes.push(image(under, under_x));
+        nodes.push(shade(under_x, shade_alpha));
+        nodes.push(image(over, over_x));
+        true
     }
 
     /// Snapshots the screen for the power fade.
@@ -538,6 +707,15 @@ impl Renderer {
             }
         }
         self.update_background(conn, state, display_time)?;
+        if state.alerts.ring_sheet.visible()
+            || state.alerts.centre.visible(display_time)
+            || state.calls_cover()
+        {
+            // Their background: the darkest wallpaper copy.
+            let max = self.wall_levels.max_level();
+            self.wall_levels
+                .ensure(conn, &mut self.compositor, max..=max)?;
+        }
         let frame = self.frame(state, display_time);
         self.compositor.compose(conn, frame)
     }
@@ -560,6 +738,7 @@ impl Renderer {
             let key = HomeKey {
                 status: status.clone(),
                 date: (time.weekday, time.day, time.month),
+                wallpaper: self.wallpaper_id.clone(),
             };
             let wallpaper = &self.wallpaper;
             let icons = &self.icons;
@@ -725,6 +904,8 @@ impl Renderer {
                 }
             })?;
         }
+        self.refresh_alert_layers(conn, state, &status)?;
+        let compositor = &mut self.compositor;
         let volume = state.volume;
         self.volume.update(conn, compositor, volume, |canvas| {
             canvas.clear(0);
@@ -743,6 +924,344 @@ impl Renderer {
             })?;
         }
         Ok(())
+    }
+
+    /// Banner, lock-screen list, centre and ringing-screen artwork.
+    fn refresh_alert_layers<C: Connection>(
+        &mut self,
+        conn: &C,
+        state: &ShellState,
+        status: &StatusInfo,
+    ) -> Result<(), Box<dyn Error>> {
+        let compositor = &mut self.compositor;
+        let icons = IconSet(&self.icons);
+        let now = crate::clock::unix_now();
+        let minute = now / 60;
+        let store = &state.alerts.store;
+        if let Some(notification) = state
+            .alerts
+            .banner
+            .as_ref()
+            .and_then(|banner| store.notification(&banner.id))
+        {
+            self.banner_height = alerts::card_height(notification);
+            let height = self.banner_height;
+            self.banner.update(
+                conn,
+                compositor,
+                key_of(&(notification, minute)),
+                |canvas| {
+                    canvas.clear(0);
+                    let rect = RectF::new(CARD_X, CARD_LAYER_INSET, CARD_W, height);
+                    alerts::draw_card(canvas, rect, notification, now, &icons, false);
+                },
+            )?;
+        }
+        if state.view == View::Locked {
+            let unseen = state.alerts.unseen();
+            self.lock_list
+                .update(conn, compositor, key_of(&(&unseen, minute)), |canvas| {
+                    alerts::draw_lock_list(canvas, &unseen, now, &icons);
+                })?;
+        }
+        let centre = &state.alerts.centre;
+        if centre.visible(Instant::now()) {
+            let skip = centre.swipe.as_ref().map(|swipe| swipe.id.as_str());
+            let key = key_of(&(&store.notifications, minute, centre.clear_armed, skip));
+            let key = key_of(&(key, status));
+            self.centre.update(conn, compositor, key, |canvas| {
+                alerts::draw_centre(
+                    canvas,
+                    store,
+                    skip,
+                    centre.clear_armed,
+                    now,
+                    &status.time,
+                    &icons,
+                );
+                draw_status_bar(canvas, status, None);
+            })?;
+            if let Some(swipe) = &centre.swipe
+                && let Some(notification) = store.notification(&swipe.id)
+            {
+                let height = swipe.rect.h;
+                self.centre_card.update(
+                    conn,
+                    compositor,
+                    key_of(&(notification, minute)),
+                    |canvas| {
+                        canvas.clear(0);
+                        let rect = RectF::new(CARD_X, CARD_LAYER_INSET, CARD_W, height);
+                        alerts::draw_card(canvas, rect, notification, now, &icons, false);
+                    },
+                )?;
+            }
+        }
+        if state.control.visible(Instant::now()) {
+            use crate::control_centre::{self as cc, ControlKey, Slider};
+            let next_alarm = store
+                .alarms
+                .iter()
+                .filter_map(|a| a.snoozed_until.or(a.next_fire_at))
+                .min()
+                .map(|at| LocalTime::at(at).time_text(self.twenty_four_hour));
+            let key = ControlKey {
+                wifi: state.wifi_connected.then(|| "Wi-Fi".to_owned()),
+                dnd: store.do_not_disturb,
+                flashlight: state.control.flashlight.as_ref().map(|f| f.on),
+                alarm: next_alarm,
+                pressed: state.control.pressed,
+            };
+            let drawn = key.clone();
+            // The carrier stands where the time would be, as on iPhone.
+            let cc_status = match &status.carrier {
+                Some(_) => StatusInfo {
+                    time: String::new(),
+                    ..status.clone()
+                },
+                None => status.clone(),
+            };
+            self.control
+                .update(conn, compositor, key_of(&(key, &cc_status)), |canvas| {
+                    cc::draw_control(canvas, &drawn);
+                    draw_status_bar(canvas, &cc_status, None);
+                })?;
+            for (index, slider) in [Slider::Brightness, Slider::Volume].into_iter().enumerate() {
+                let value = state
+                    .control
+                    .slider_value(slider, state.display_view, state.volume);
+                let auto = match slider {
+                    Slider::Brightness => state
+                        .display_view
+                        .filter(|view| view.sensor_available)
+                        .map(|view| view.auto),
+                    Slider::Volume => None,
+                };
+                self.sliders[index].update(conn, compositor, key_of(&(value, auto)), |canvas| {
+                    cc::draw_slider(canvas, slider, value, auto);
+                })?;
+            }
+        }
+        if let Some(ring) = state.alerts.ringing() {
+            let info = RingInfo::from_store(store, ring);
+            let time = LocalTime::now().time_text(self.twenty_four_hour);
+            let pressed = state.alerts.ring_pressed;
+            let key = key_of(&format!("{info:?}{time}{pressed:?}"));
+            self.ring.update(conn, compositor, key, |canvas| {
+                alerts::draw_ring_screen(canvas, &info, &time, pressed);
+                draw_status_bar(
+                    canvas,
+                    &StatusInfo {
+                        time: time.clone(),
+                        ..status.clone()
+                    },
+                    None,
+                );
+            })?;
+        }
+        if let Some(view) = state.call_view() {
+            let calls = &state.calls;
+            let key = calls::CallKey {
+                view: view.clone(),
+                keypad: calls.keypad,
+                digits: calls.keypad_digits.clone(),
+                mute: calls.mute,
+                speaker: calls.speaker,
+                pressed: calls.pressed,
+            };
+            let call_status = StatusInfo {
+                call_pill: false,
+                ..status.clone()
+            };
+            self.call
+                .update(conn, compositor, key_of(&(&key, &call_status)), |canvas| {
+                    calls::draw_call_screen(canvas, &key);
+                    draw_status_bar(canvas, &call_status, None);
+                })?;
+            let line = calls::status_line(&view, now);
+            self.call_line
+                .update(conn, compositor, key_of(&line), |canvas| {
+                    calls::draw_status_line(canvas, &line);
+                })?;
+            self.call_knob
+                .update(conn, compositor, 0, calls::draw_knob)?;
+        }
+        Ok(())
+    }
+
+    /// Notification centre, ringing screen and banner nodes, always the same
+    /// number of them so showing or hiding one never restructures a frame.
+    fn alert_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) {
+        let deep = self.wall_levels.surface(self.wall_levels.max_level());
+        let clipped = |surface, top: f32, bottom: f32, alpha: f32| {
+            let rect = RectF::new(0.0, top, SCREEN_W, (bottom - top).max(0.0));
+            Node::Image {
+                surface,
+                src: rect,
+                dst: rect,
+                alpha: if rect.h > 0.0 { alpha } else { 0.0 },
+                radius: 0.0,
+                smooth: false,
+            }
+        };
+        // The centre: a curtain whose content stays put while its edge
+        // moves, so a frame redraws only the strip the edge crossed.
+        let centre = &state.alerts.centre;
+        let edge = centre.edge(t).round();
+        nodes.push(clipped(deep, 0.0, edge, 1.0));
+        nodes.push(clipped(self.centre.id, 0.0, edge, 1.0));
+        let swipe = centre.swipe.as_ref().filter(|_| edge > 0.0);
+        nodes.push(Node::Image {
+            surface: self.centre_card.id,
+            src: RectF::new(0.0, 0.0, SCREEN_W, alerts::BANNER_LAYER_H),
+            dst: RectF::new(
+                swipe.map_or(0.0, |s| s.offset(t).round()),
+                swipe.map_or(0.0, |s| s.rect.y - CARD_LAYER_INSET),
+                SCREEN_W,
+                alerts::BANNER_LAYER_H,
+            ),
+            alpha: swipe.map_or(0.0, |s| {
+                (1.0 - s.offset(t).abs() / SCREEN_W * 0.6).clamp(0.0, 1.0)
+            }),
+            radius: 0.0,
+            smooth: false,
+        });
+        // The ringing screen and the call screen rise from the bottom and
+        // leave the same way, as curtains.
+        let (top, bottom) = state.alerts.ring_sheet.bounds(t, SCREEN_H);
+        let ringing = state.alerts.ring_sheet.visible();
+        nodes.push(clipped(deep, top, bottom, 1.0));
+        nodes.push(clipped(self.ring.id, top, bottom, 1.0));
+        let (top, bottom) = state.calls.sheet.bounds(t, SCREEN_H);
+        nodes.push(clipped(deep, top, bottom, 1.0));
+        nodes.push(clipped(self.call.id, top, bottom, 1.0));
+        // Its status line and slide knob are layers of their own, shown
+        // through the same curtain.
+        let within = |surface, rect: RectF, alpha: f32| {
+            let y0 = rect.y.max(top);
+            let y1 = (rect.y + rect.h).min(bottom);
+            let h = (y1 - y0).max(0.0);
+            Node::Image {
+                surface,
+                src: RectF::new(0.0, y0 - rect.y, rect.w, h),
+                dst: RectF::new(rect.x, y0, rect.w, h),
+                alpha: if h > 0.0 { alpha } else { 0.0 },
+                radius: 0.0,
+                smooth: false,
+            }
+        };
+        nodes.push(within(self.call_line.id, calls::LINE, 1.0));
+        let sliding = matches!(
+            state.call_view(),
+            Some(calls::CallView::Incoming {
+                locked: true,
+                waiting: false,
+                ..
+            })
+        );
+        let (knob_x, knob_y) = calls::knob_origin(state.calls.knob_offset(t).round());
+        nodes.push(within(
+            self.call_knob.id,
+            RectF::new(knob_x, knob_y, calls::KNOB, calls::KNOB),
+            if sliding { 1.0 } else { 0.0 },
+        ));
+        // Banners: drawn here unless they float over an app in their own
+        // window (main.rs).
+        let banner = state
+            .alerts
+            .banner
+            .as_ref()
+            .filter(|_| !banner_in_window(state));
+        nodes.push(Node::Image {
+            surface: self.banner.id,
+            src: RectF::new(0.0, 0.0, SCREEN_W, alerts::BANNER_LAYER_H),
+            dst: RectF::new(
+                0.0,
+                banner.map_or(0.0, |b| (b.y(t) - CARD_LAYER_INSET).round()),
+                SCREEN_W,
+                alerts::BANNER_LAYER_H,
+            ),
+            alpha: if banner.is_some() && !ringing {
+                1.0
+            } else {
+                0.0
+            },
+            radius: 0.0,
+            smooth: false,
+        });
+        // Control Centre: the same curtain, with its sliders.
+        let edge = state.control.edge(t).round();
+        nodes.push(clipped(deep, 0.0, edge, 1.0));
+        nodes.push(clipped(self.control.id, 0.0, edge, 1.0));
+        for (index, slider) in [
+            crate::control_centre::Slider::Brightness,
+            crate::control_centre::Slider::Volume,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let rect = slider.rect();
+            let shown = (edge - rect.y).clamp(0.0, rect.h);
+            nodes.push(Node::Image {
+                surface: self.sliders[index].id,
+                src: RectF::new(0.0, 0.0, rect.w, shown),
+                dst: RectF::new(rect.x, rect.y, rect.w, shown),
+                alpha: if shown > 0.0 { 1.0 } else { 0.0 },
+                radius: 0.0,
+                smooth: false,
+            });
+        }
+    }
+
+    /// Shows a built-in wallpaper (settings.rs); the darkened copies are
+    /// redrawn in idle time.
+    pub fn set_wallpaper<C: Connection>(
+        &mut self,
+        conn: &C,
+        id: &str,
+    ) -> Result<(), Box<dyn Error>> {
+        if self.wallpaper_id == id {
+            return Ok(());
+        }
+        self.wallpaper = crate::wallpaper::render(id, self.wallpaper.width, self.wallpaper.height);
+        self.compositor.upload(conn, self.wall, &self.wallpaper)?;
+        self.wallpaper_id = id.to_owned();
+        if !self.compositor.gpu() {
+            self.wall_levels.invalidate_all();
+            self.home_levels.invalidate_all();
+        }
+        Ok(())
+    }
+
+    /// The banner over an app (its own window, see banner.rs): its top,
+    /// card height, and a key for its content; None when not shown.
+    pub fn banner_window(&self, state: &ShellState, now: Instant) -> Option<(i32, f32, u64)> {
+        if !banner_in_window(state) || state.alerts.ringing().is_some() {
+            return None;
+        }
+        let banner = state.alerts.banner.as_ref()?;
+        let notification = state.alerts.store.notification(&banner.id)?;
+        let minute = crate::clock::unix_now() / 60;
+        Some((
+            banner.y(now).round() as i32,
+            alerts::card_height(notification),
+            key_of(&(notification, minute)),
+        ))
+    }
+
+    /// Draws the banner window's card: solid, at its top-left corner.
+    pub fn draw_banner_window(&self, canvas: &mut Canvas, state: &ShellState) {
+        let Some(notification) = state
+            .alerts
+            .banner
+            .as_ref()
+            .and_then(|banner| state.alerts.store.notification(&banner.id))
+        else {
+            return;
+        };
+        let rect = RectF::new(0.0, 0.0, CARD_W, alerts::card_height(notification));
+        let now = crate::clock::unix_now();
+        alerts::draw_card(canvas, rect, notification, now, &IconSet(&self.icons), true);
     }
 
     fn card_face(&self, app: AppId) -> CardFace {
@@ -876,6 +1395,28 @@ impl Renderer {
             return Ok(());
         }
         let locked = state.view == View::Locked;
+        if self.compositor.gpu() {
+            let (source, dim) = if locked {
+                (
+                    self.wall,
+                    state.lock_motion.progress(t).clamp(0.0, 1.0) * DIMMED,
+                )
+            } else {
+                (self.home.id, home_dim(state, t))
+            };
+            let slot = usize::from(locked);
+            let id = match self.gpu_backdrops[slot] {
+                Some(id) => id,
+                None => {
+                    let id = self.compositor.create_dimmed(conn, source, dim)?;
+                    self.gpu_backdrops[slot] = Some(id);
+                    id
+                }
+            };
+            self.compositor.set_dim(id, dim);
+            self.last_locked = Some(locked);
+            return Ok(());
+        }
         let (levels, fade, dim) = if locked {
             let shown = state.lock_motion.progress(t).clamp(0.0, 1.0);
             (&mut self.wall_levels, &mut self.lock_fade, shown * DIMMED)
@@ -916,6 +1457,9 @@ impl Renderer {
 
     /// Background rows still moving toward their target: keep drawing.
     pub fn settling(&self) -> bool {
+        if self.compositor.gpu() {
+            return false;
+        }
         // Only the background on screen; the other one is snapped to its
         // level when its screen next appears.
         match self.last_locked {
@@ -927,6 +1471,20 @@ impl Renderer {
 
     fn frame(&mut self, state: &ShellState, t: Instant) -> Frame {
         let mut nodes = Vec::new();
+        if let Some(square) = state.light_probe.filter(|_| state.screen_awake) {
+            for (dst, color) in [(SCREEN, BLACK), (square, WHITE)] {
+                nodes.push(Node::Fill {
+                    dst,
+                    color,
+                    alpha: 1.0,
+                    radius: 0.0,
+                });
+            }
+            return Frame {
+                base: Some(self.wall),
+                nodes,
+            };
+        }
         if !state.screen_awake {
             nodes.push(Node::Fill {
                 dst: SCREEN,
@@ -953,10 +1511,27 @@ impl Renderer {
                 nodes,
             };
         }
-        let base = match state.view {
-            View::Locked => self.lock_nodes(state, t, &mut nodes),
-            _ => self.home_nodes(state, t, &mut nodes),
+        if let Some(transition) = state.page_transition
+            && self.page_nodes(transition, t, &mut nodes)
+        {
+            self.alert_nodes(state, t, &mut nodes);
+            return Frame { base: None, nodes };
+        }
+        // The centre or the ringing screen over an app: the app's snapshot
+        // lies beneath them.
+        // (Also on the frame where an overlay over the app has just closed:
+        // frames are sampled ahead, at `t`, so the overlay may already be
+        // gone there while the app is not back on screen yet. The home
+        // screen must never flash in between.)
+        let app_beneath = AppId::from_view(state.view).filter(|_| {
+            state.launch().is_none() && state.gesture.is_none() && state.returning.is_none()
+        });
+        let base = match (app_beneath, state.view) {
+            (Some(app), _) => Some(self.snapshots[app.index()].unwrap_or(self.wall)),
+            (None, View::Locked) => self.lock_nodes(state, t, &mut nodes),
+            (None, _) => self.home_nodes(state, t, &mut nodes),
         };
+        self.alert_nodes(state, t, &mut nodes);
         let volume_visible = state
             .volume_overlay_until
             .is_some_and(|deadline| deadline > t);
@@ -991,11 +1566,10 @@ impl Renderer {
         let p = state.lock_motion.progress(t);
         // The keypad's darker wallpaper, row by row from pre-darkened
         // copies (see backdrop.rs): no full-screen blend per frame.
-        nodes.push(Self::background_node(
-            &mut self.compositor,
-            &self.wall_levels,
-            &self.lock_fade,
-        ));
+        nodes.push(match self.gpu_backdrops[1] {
+            Some(id) if self.compositor.gpu() => backdrop_node(id),
+            _ => Self::background_node(&mut self.compositor, &self.wall_levels, &self.lock_fade),
+        });
         // The clock rises with the finger and fades out first; then the
         // keypad cascades in a row at a time. Only a row or two change per
         // frame, which keeps the drag within a 120 Hz refresh.
@@ -1008,6 +1582,21 @@ impl Renderer {
             -p * 520.0,
             clock_alpha,
         ));
+        // Notifications under the clock fade out first (a list fading is
+        // costly; this keeps it to the swipe's first few frames).
+        let list_alpha = if state.alerts.unseen().is_empty() {
+            0.0
+        } else {
+            (1.0 - p * 5.0).clamp(0.0, 1.0)
+        };
+        nodes.push(Node::Image {
+            surface: self.lock_list.id,
+            src: RectF::new(0.0, 0.0, SCREEN_W, alerts::LOCK_LIST_H),
+            dst: RectF::new(0.0, alerts::LOCK_LIST_TOP, SCREEN_W, alerts::LOCK_LIST_H),
+            alpha: (list_alpha * 255.0).round() / 255.0,
+            radius: 0.0,
+            smooth: false,
+        });
         let shake = state
             .pin_error_at
             .map(|at| {
@@ -1038,11 +1627,10 @@ impl Renderer {
     ) -> Option<SurfaceId> {
         // The home screen, darkened (row by row from copies) for unlock,
         // the switcher, and the held home gesture.
-        nodes.push(Self::background_node(
-            &mut self.compositor,
-            &self.home_levels,
-            &self.home_fade,
-        ));
+        nodes.push(match self.gpu_backdrops[0] {
+            Some(id) if self.compositor.gpu() => backdrop_node(id),
+            _ => Self::background_node(&mut self.compositor, &self.home_levels, &self.home_fade),
+        });
         // Unlock: the keypad cascades away over the home screen, bottom row
         // first (the lock swipe's cascade in reverse).
         let unlock = unlock_progress(state, t);
@@ -1349,16 +1937,37 @@ pub fn draw_status_bar(canvas: &mut Canvas, status: &StatusInfo, background: Opt
         canvas.fill_rect(0, 0, canvas.width, status_bar::HEIGHT.into(), color, 1.0);
     }
     let cy = height / 2.0 + 2.0;
-    text::draw_centered(
-        canvas,
-        &status.time,
-        168.0,
-        text::centered_baseline(cy, Weight::SemiBold, 47.0),
-        Weight::SemiBold,
-        47.0,
-        WHITE,
-        1.0,
-    );
+    if status.time.is_empty() {
+        // The lock screen's big clock stands in for the time; the carrier
+        // takes its place, as on iPhone.
+        if let Some(carrier) = &status.carrier {
+            let carrier = text::fit(carrier, Weight::SemiBold, 38.0, 520.0);
+            text::draw(
+                canvas,
+                &carrier,
+                72.0,
+                text::centered_baseline(cy, Weight::SemiBold, 38.0),
+                Weight::SemiBold,
+                38.0,
+                WHITE,
+                1.0,
+            );
+        }
+    } else {
+        if status.call_pill {
+            crate::calls::draw_pill(canvas);
+        }
+        text::draw_centered(
+            canvas,
+            &status.time,
+            168.0,
+            text::centered_baseline(cy, Weight::SemiBold, 47.0),
+            Weight::SemiBold,
+            47.0,
+            WHITE,
+            1.0,
+        );
+    }
     let mut right = canvas.width as f32 - 66.0;
     if status.battery_charging {
         draw_bolt(canvas, right - 12.0, cy, 0.72, WHITE);
@@ -1371,12 +1980,111 @@ pub fn draw_status_bar(canvas: &mut Canvas, status: &StatusInfo, background: Opt
         status.battery_percent,
         status.battery_charging,
     );
-    draw_wifi_glyph(
-        canvas,
-        right - 92.0 - 46.0,
-        cy + 15.0,
-        status.wifi_connected,
-    );
+    // Then, leftward: Wi-Fi (or the cellular data technology when Wi-Fi is
+    // off), the cellular bars, and the alarm and Do Not Disturb glyphs.
+    let wifi_x = right - 92.0 - 46.0;
+    let cellular_rat = match &status.cellular {
+        Cellular::Bars { rat, .. } => *rat,
+        _ => None,
+    };
+    let mut edge = if status.wifi_connected || status.cellular == Cellular::Hidden {
+        draw_wifi_glyph(canvas, wifi_x, cy + 15.0, status.wifi_connected);
+        wifi_x - 35.0
+    } else if let Some(rat) = cellular_rat {
+        let width = text::measure(rat, Weight::SemiBold, 40.0);
+        let x = wifi_x + 35.0 - width;
+        let baseline = text::centered_baseline(cy, Weight::SemiBold, 40.0);
+        text::draw(canvas, rat, x, baseline, Weight::SemiBold, 40.0, WHITE, 1.0);
+        x
+    } else {
+        wifi_x + 35.0
+    };
+    match &status.cellular {
+        Cellular::Hidden => {}
+        Cellular::Bars { level, .. } => {
+            draw_signal_bars(canvas, edge - 20.0, cy, *level);
+            edge -= 20.0 + SIGNAL_W;
+        }
+        Cellular::Text(label) => {
+            let width = text::measure(label, Weight::SemiBold, 34.0);
+            let baseline = text::centered_baseline(cy, Weight::SemiBold, 34.0);
+            let x = edge - 20.0 - width;
+            text::draw(
+                canvas,
+                label,
+                x,
+                baseline,
+                Weight::SemiBold,
+                34.0,
+                WHITE,
+                1.0,
+            );
+            edge = x;
+        }
+        Cellular::Airplane => {
+            draw_airplane(canvas, edge - 20.0 - 24.0, cy);
+            edge -= 20.0 + 48.0;
+        }
+    }
+    let mut glyph_x = edge - 43.0;
+    if status.alarm_set {
+        alerts::draw_status_alarm(canvas, (glyph_x, cy), WHITE);
+        glyph_x -= 60.0;
+    }
+    if status.dnd {
+        crate::control_centre::draw_status_moon(canvas, (glyph_x, cy));
+    }
+}
+
+/// Width of the four signal bars.
+const SIGNAL_W: f32 = 4.0 * 10.0 + 3.0 * 5.0;
+
+/// iOS-style signal: four rising bars ending at `right`, lit up to `level`.
+fn draw_signal_bars(canvas: &mut Canvas, right: f32, cy: f32, level: u8) {
+    let bottom = cy + 16.0;
+    for bar in 0..4_u8 {
+        let x = right - SIGNAL_W + f32::from(bar) * 15.0;
+        let h = 11.0 + f32::from(bar) * 7.0;
+        let alpha = if bar < level { 1.0 } else { 0.32 };
+        canvas.fill_rrect(RectF::new(x, bottom - h, 10.0, h), 3.0, WHITE, alpha);
+    }
+}
+
+fn draw_airplane(canvas: &mut Canvas, cx: f32, cy: f32) {
+    let mut plane = Path::new();
+    // Fuselage, wings and tail, nose pointing right.
+    plane.stroke_segment((cx - 22.0, cy), (cx + 20.0, cy), 8.0);
+    plane.polygon(&[
+        (cx + 2.0, cy - 3.0),
+        (cx - 8.0, cy - 22.0),
+        (cx - 2.0, cy - 22.0),
+        (cx + 12.0, cy - 3.0),
+    ]);
+    plane.polygon(&[
+        (cx + 2.0, cy + 3.0),
+        (cx - 8.0, cy + 22.0),
+        (cx - 2.0, cy + 22.0),
+        (cx + 12.0, cy + 3.0),
+    ]);
+    plane.polygon(&[
+        (cx - 16.0, cy - 2.0),
+        (cx - 22.0, cy - 11.0),
+        (cx - 18.0, cy - 11.0),
+        (cx - 10.0, cy - 2.0),
+    ]);
+    plane.polygon(&[
+        (cx - 16.0, cy + 2.0),
+        (cx - 22.0, cy + 11.0),
+        (cx - 18.0, cy + 11.0),
+        (cx - 10.0, cy + 2.0),
+    ]);
+    canvas.fill_path(&plane, WHITE, 1.0);
+}
+
+/// A banner over an app floats in its own small window (the app is not
+/// Moon's to draw); everywhere else the shell composes it.
+pub fn banner_in_window(state: &ShellState) -> bool {
+    state.screen_awake && state.view.is_app() && !state.shell_covers_app()
 }
 
 /// iOS-style battery: a gray body, a level fill, and the percentage inside
@@ -1417,13 +2125,23 @@ fn draw_battery_glyph(
 /// Three-band Wi-Fi fan with its apex at (`cx`, `apex_y`); dimmed when
 /// disconnected.
 fn draw_wifi_glyph(canvas: &mut Canvas, cx: f32, apex_y: f32, connected: bool) {
+    draw_wifi_glyph_in(canvas, cx, apex_y, connected, WHITE);
+}
+
+pub(crate) fn draw_wifi_glyph_in(
+    canvas: &mut Canvas,
+    cx: f32,
+    apex_y: f32,
+    connected: bool,
+    color: Rgb,
+) {
     let alpha = if connected { 1.0 } else { 0.32 };
     let quarter = std::f32::consts::FRAC_PI_4;
     let mut wedge = Path::new();
     wedge.move_to(cx, apex_y);
     wedge.arc(cx, apex_y, 11.5, -3.0 * quarter, -quarter);
     wedge.close();
-    canvas.fill_path(&wedge, WHITE, alpha);
+    canvas.fill_path(&wedge, color, alpha);
     for radius in [23.0, 35.0] {
         canvas.ring_arc(
             cx,
@@ -1432,7 +2150,7 @@ fn draw_wifi_glyph(canvas: &mut Canvas, cx: f32, apex_y: f32, connected: bool) {
             7.0,
             -quarter + 0.08,
             quarter - 0.08,
-            WHITE,
+            color,
             alpha,
         );
     }
@@ -1611,7 +2329,7 @@ pub fn draw_volume_hud(canvas: &mut Canvas, rect: RectF, volume: u8) {
     draw_speaker(canvas, rect.x + rect.w / 2.0 - 8.0, icon_cy, volume, color);
 }
 
-fn draw_speaker(canvas: &mut Canvas, cx: f32, cy: f32, volume: u8, color: Rgb) {
+pub(crate) fn draw_speaker(canvas: &mut Canvas, cx: f32, cy: f32, volume: u8, color: Rgb) {
     let mut body = Path::new();
     body.polygon(&[
         (cx - 18.0, cy - 8.0),
@@ -1648,15 +2366,16 @@ mod tests {
 
     #[test]
     fn launcher_tiles_have_separate_hit_regions() {
-        let browser = app_icon_rect(0);
-        let system = app_icon_rect(1);
-        let (bx, by) = browser.center();
-        let (sx, sy) = system.center();
-        assert_eq!(launcher_app_at(bx as i16, by as i16), Some(AppId::Browser));
-        assert_eq!(launcher_app_at(sx as i16, sy as i16), Some(AppId::System));
+        for (index, app) in LAUNCHER_APPS.into_iter().enumerate() {
+            let (x, y) = app_icon_rect(index).center();
+            assert_eq!(launcher_app_at(x as i16, y as i16), Some(app));
+        }
+        let (_, by) = app_icon_rect(0).center();
         assert_eq!(launcher_app_at(540, 1200), None);
+        // Between the middle two icons, and past the dock's ends.
         assert_eq!(launcher_app_at(540, by as i16), None);
-        assert_eq!(launcher_app_at(1000, by as i16), None);
+        assert_eq!(launcher_app_at(1070, by as i16), None);
+        assert_eq!(launcher_app_at(10, by as i16), None);
     }
 
     #[test]
@@ -1691,6 +2410,14 @@ mod tests {
             wifi_connected: true,
             battery_percent: Some(100),
             battery_charging: true,
+            alarm_set: true,
+            dnd: true,
+            cellular: Cellular::Bars {
+                level: 3,
+                rat: Some("LTE"),
+            },
+            carrier: None,
+            call_pill: true,
         };
         draw_status_bar(&mut canvas, &status, Some(BLACK));
         let below = &canvas.pixels[(status_bar::HEIGHT as usize) * 1080..];
@@ -1725,7 +2452,7 @@ mod bench {
     #[ignore]
     fn primitive_costs() {
         let t = Instant::now();
-        let wall = wallpaper(1080, 2340);
+        let wall = crate::wallpaper::render("moon", 1080, 2340);
         eprintln!("wallpaper {:?}", t.elapsed());
         let mut canvas = Canvas::new(1080, 2340);
         for _ in 0..3 {
@@ -1744,6 +2471,11 @@ mod bench {
                 wifi_connected: true,
                 battery_percent: Some(80),
                 battery_charging: false,
+                alarm_set: false,
+                dnd: false,
+                cellular: Cellular::Hidden,
+                carrier: None,
+                call_pill: false,
             };
             let t = Instant::now();
             draw_status_bar(&mut canvas, &status, None);
@@ -1752,5 +2484,17 @@ mod bench {
             draw_spinner(&mut canvas, 540.0, 1400.0, 3, 1.0);
             eprintln!("spinner {:?}", t.elapsed());
         }
+    }
+}
+
+/// A full-screen background with an exact dim (GPU mode).
+fn backdrop_node(surface: SurfaceId) -> Node {
+    Node::Image {
+        surface,
+        src: SCREEN,
+        dst: SCREEN,
+        alpha: 1.0,
+        radius: 0.0,
+        smooth: false,
     }
 }

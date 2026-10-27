@@ -16,6 +16,7 @@ for script in \
     "$PROJECT_ROOT/scripts/device/moon-audio-start.sh" \
     "$PROJECT_ROOT/scripts/device/moon-audio-stop.sh" \
     "$PROJECT_ROOT/scripts/device/moon-audio-keeper.sh" \
+    "$PROJECT_ROOT/scripts/device/moon-gpu-session.sh" \
     "$PROJECT_ROOT/scripts/device/moon-suspend-cycle.sh" \
     "$PROJECT_ROOT/scripts/device/a26-enter-chroot.sh" \
     "$PROJECT_ROOT/scripts/device/90-moon-autostart.sh" \
@@ -38,6 +39,8 @@ adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-audio-stop.sh" \
     /data/local/tmp/moon-audio-stop.sh >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-audio-keeper.sh" \
     /data/local/tmp/moon-audio-keeper.sh >/dev/null
+adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-gpu-session.sh" \
+    /data/local/tmp/moon-gpu-session.sh >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-suspend-cycle.sh" \
     /data/local/tmp/moon-suspend-cycle.sh >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-direct-policy.sh" \
@@ -79,6 +82,8 @@ cp /data/local/tmp/moon-audio-stop.sh \
     /data/adb/moon/moon-audio-stop.sh.new
 cp /data/local/tmp/moon-audio-keeper.sh \
     /data/adb/moon/moon-audio-keeper.sh.new
+cp /data/local/tmp/moon-gpu-session.sh \
+    /data/adb/moon/moon-gpu-session.sh.new
 cp /data/local/tmp/moon-suspend-cycle.sh \
     /data/adb/moon/moon-suspend-cycle.sh.new
 cp /data/local/tmp/moon-direct-policy.sh \
@@ -108,6 +113,7 @@ chown 0:0 \
     /data/adb/moon/moon-audio-start.sh.new \
     /data/adb/moon/moon-audio-stop.sh.new \
     /data/adb/moon/moon-audio-keeper.sh.new \
+    /data/adb/moon/moon-gpu-session.sh.new \
     /data/adb/moon/moon-suspend-cycle.sh.new \
     /data/adb/moon/moon-direct-policy.sh.new \
     /data/adb/moon/moon-post-ready.sh.new \
@@ -124,6 +130,7 @@ chmod 0700 \
     /data/adb/moon/moon-audio-start.sh.new \
     /data/adb/moon/moon-audio-stop.sh.new \
     /data/adb/moon/moon-audio-keeper.sh.new \
+    /data/adb/moon/moon-gpu-session.sh.new \
     /data/adb/moon/moon-suspend-cycle.sh.new \
     /data/adb/moon/moon-direct-policy.sh.new \
     /data/adb/moon/moon-post-ready.sh.new
@@ -149,6 +156,8 @@ mv -f /data/adb/moon/moon-audio-stop.sh.new \
     /data/adb/moon/moon-audio-stop.sh
 mv -f /data/adb/moon/moon-audio-keeper.sh.new \
     /data/adb/moon/moon-audio-keeper.sh
+mv -f /data/adb/moon/moon-gpu-session.sh.new \
+    /data/adb/moon/moon-gpu-session.sh
 mv -f /data/adb/moon/moon-suspend-cycle.sh.new \
     /data/adb/moon/moon-suspend-cycle.sh
 mv -f /data/adb/moon/moon-direct-policy.sh.new \
@@ -173,6 +182,7 @@ OVERRIDE_WINDOW_SECONDS=8
 DIRECT_BOOT=1
 DIRECT_OVERRIDE_SECONDS=3
 AUDIO_STREAM_INDEX=5
+GPU_COMPOSITOR=1
 EOF
     chown 0:0 /data/adb/moon/config
     chmod 0600 /data/adb/moon/config
@@ -186,6 +196,11 @@ if [ -f "$XCONF" ] && grep -q "\"DPMS\" \"false\"" "$XCONF"; then
     sed -i "s/\"DPMS\" \"false\"/\"DPMS\" \"true\"/" "$XCONF"
 fi
 
+# Non-root clients of moon-notifyd (docs/notifications-protocol.md) join this
+# group; root needs nothing.
+grep -q "^moon-notify:" /data/local/a26-linux/etc/group ||
+    echo "moon-notify:x:1801:" >>/data/local/a26-linux/etc/group
+
 rm -f /data/adb/moon/disabled
 rm -f \
     /data/local/tmp/moon-boot-supervisor.sh \
@@ -193,6 +208,7 @@ rm -f \
     /data/local/tmp/moon-audio-start.sh \
     /data/local/tmp/moon-audio-stop.sh \
     /data/local/tmp/moon-audio-keeper.sh \
+    /data/local/tmp/moon-gpu-session.sh \
     /data/local/tmp/moon-suspend-cycle.sh \
     /data/local/tmp/moon-direct-policy.sh \
     /data/local/tmp/moon-post-ready.sh \
@@ -221,3 +237,8 @@ ls -lZ \
 
 echo 'Installed and enabled autonomous Moon boot: direct boot when the boot image'
 echo 'carries scripts/direct-boot, otherwise the Magisk service.d takeover.'
+
+# Moon's GPU display path (the default; notes/gpu/DESIGN.md): moon-compositor,
+# headless Xorg's configuration and the dummy driver. It keeps the user's
+# GPU_COMPOSITOR choice; `scripts/gpu/install.sh --disable` opts out.
+"$PROJECT_ROOT/scripts/gpu/install.sh"

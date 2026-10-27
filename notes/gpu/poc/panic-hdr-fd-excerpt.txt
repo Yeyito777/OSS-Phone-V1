@@ -1,0 +1,85 @@
+[  569.738634] [0:tz_iwlog_thread:  348] SW> VaultKeeper :: I'm sorry. VaultKeeper is closed today. So pack it up, and get out of here(00100000).
+[  569.738641] [0:tz_iwlog_thread:  348] SW> VaultKeeper :: Returning [0xffff8ab0]
+[  569.990909] [6:   moon-gpu-poc: 3241] panel-drv:I:panel_bl_set_brightness: bl-0 br:200 nit:306 acl:1 cnt:2
+[  569.997995] [6:   moon-gpu-poc: 3241] exynos-drmhdr[0]: hdr_prepare_context:190 invalid size: total 0
+[  569.998383] [6:   moon-gpu-poc: 3241] exynos-drmhdr[0]: hdr_prepare_context:190 invalid size: total 0
+[  570.013957] [6:   moon-gpu-poc: 3241] Unable to handle kernel paging request at virtual address ffffffc02c916000
+[  570.014126] [6:   moon-gpu-poc: 3241] Mem abort info:
+[  570.014128] [6:   moon-gpu-poc: 3241]   ESR = 0x96000007
+[  570.014130] [6:   moon-gpu-poc: 3241]   EC = 0x25: DABT (current EL), IL = 32 bits
+[  570.014132] [6:   moon-gpu-poc: 3241]   SET = 0, FnV = 0
+[  570.014134] [6:   moon-gpu-poc: 3241]   EA = 0, S1PTW = 0
+[  570.014135] [6:   moon-gpu-poc: 3241] Data abort info:
+[  570.014137] [6:   moon-gpu-poc: 3241]   ISV = 0, ISS = 0x00000007
+[  570.014139] [6:   moon-gpu-poc: 3241]   CM = 0, WnR = 0
+[  570.014141] [6:   moon-gpu-poc: 3241] swapper pgtable: 4k pages, 39-bit VAs, pgdp=0000000081c68000
+[  570.014143] [6:   moon-gpu-poc: 3241] [ffffffc02c916000] pgd=00000009fec00003, p4d=00000009fec00003, pud=00000009fec00003, pmd=08000008d449d003, pte=0000000000000000
+[  570.014152] [6:   moon-gpu-poc: 3241] Internal error: Oops: 96000007 [#1] PREEMPT SMP
+[  570.014158] [6:   moon-gpu-poc: 3241] debug-snapshot dss: core register saved(CPU:6)
+[  570.014162] [6:   moon-gpu-poc: 3241] DSU: NO Error: [NUM:0][ERXSTATUS_EL1:0x00000000000000]
+[  570.014164] [6:   moon-gpu-poc: 3241]  L1: NO Error: [NUM:1][ERXSTATUS_EL1:0x00000000000000]
+[  570.014166] [6:   moon-gpu-poc: 3241] debug-snapshot dss: context saved(CPU:6)
+[  570.014319] [6:   moon-gpu-poc: 3241] item - log_kevents is disabled
+[  570.014350] [6:   moon-gpu-poc: 3241] secdbg_exin_set_regs: set regs
+[  570.015168] [6:   moon-gpu-poc: 3241] exynos_cm_debug_handler: debug handler timestamp 0x389e89c99
+[  570.015176] [6:   moon-gpu-poc: 3241] exynos_cm_set_sss_debug_mem: dump success.
+[  570.015180] [6:   moon-gpu-poc: 3241] PC is at __memcpy+0x114/0x180
+[  570.015212] [6:   moon-gpu-poc: 3241] LR is at hdr_prepare_context+0x3fc/0x6e0 [exynos_drm]
+[  570.015380] [3:           cass: 3134] cpif: bootdump_release: umts_boot0 (opened 1) by cass
+[  570.015394] [6:   moon-gpu-poc: 3241] 
+[  570.015394] [6:   moon-gpu-poc: 3241] PC: 
+[  570.015396] [6:   moon-gpu-poc: 3241] 78d4 : F2400C84 540001C0 CB040042 36000064 38401423 380014C3 36080064 78402423
+[  570.018741] [6:   moon-gpu-poc: 3241]  abc debug_snapshot_debug_kinfo samsung_dma pl330 clk_exynos_audss pwm_samsung pinctrl_samsung_s2mpu14 pinctrl_samsung_s2mpu13 s2mpu13_mfd s2mpu14_mfd phy_exynos_usbdrd_super phy_exynos_mipi phy_exynos_mipi_dsim ssg blk_sec_stats lzo_rle lzo zsmalloc sec_debug_mode i2c_exynos5 clk_exynos exynos_tty exynos_cpupm pinctrl_samsung_core common_muic if_cb_manager usb_notify_layer sec_switch_class(C) exynos_flexpmu_dbg ems cmupmucal exynos_adv_tracer sec_debug_extra_info exynos_pd_el3 exynos_el2 exynos_s2mpu exynos_pm_qos exynos_acpm ect_parser sec_class exynos_mct sec_debug_base_early sec_debug_dprt dss exynos_pmu_if exynos_reboot exynos_chipid_v2
+[  570.018778] [6:   moon-gpu-poc: 3241] CPU: 6 PID: 3241 Comm: moon-gpu-poc Tainted: G         C        5.10.223-android12-9-30597860-abA266MUBU1AYB8 #1
+[  570.018780] [6:   moon-gpu-poc: 3241] Hardware name: Samsung S5E8825 based on ERD8825 (DT)
+[  570.018782] [6:   moon-gpu-poc: 3241] pstate: 20400005 (nzCv daif +PAN -UAO -TCO BTYPE=--)
+[  570.018786] [6:   moon-gpu-poc: 3241] pc : __memcpy+0x114/0x180
+[  570.018816] [6:   moon-gpu-poc: 3241] lr : hdr_prepare_context+0x3fc/0x6e0 [exynos_drm]
+[  570.018821] [0:           init:    1] Unable to handle kernel paging request at virtual address 006d1218ff6d1208
+[  570.018832] [6:   moon-gpu-poc: 3241] sp : ffffffc028c63780
+[  570.018833] [6:   moon-gpu-poc: 3241] x29: ffffffc028c63790 x28: ffffff8853201800 
+[  570.018836] [6:   moon-gpu-poc: 3241] x27: ffffffc001f67d78 x26: 0000000000000038 
+[  570.018839] [6:   moon-gpu-poc: 3241] x25: ffffff881f314088 x24: ffffffc001f72000 
+[  570.018841] [6:   moon-gpu-poc: 3241] x23: ffffffc001f72000 x22: ffffff8814846f20 
+[  570.018843] [6:   moon-gpu-poc: 3241] x21: ffffff8837d72600 x20: ffffffc02bf5f000 
+[  570.018846] [6:   moon-gpu-poc: 3241] x19: ffffff8814846e80 x18: ffffffc01da85030 
+[  570.018848] [6:   moon-gpu-poc: 3241] x17: 0000000000000010 x16: 0000000000000924 
+[  570.018851] [6:   moon-gpu-poc: 3241] x15: 0000000000000438 x14: 0000000000000000 
+[  570.018853] [6:   moon-gpu-poc: 3241] x13: 0000000000000000 x12: 0000000000000000 
+[  570.018856] [6:   moon-gpu-poc: 3241] x11: 0000000000000000 x10: 0000000000000000 
+[  570.018858] [6:   moon-gpu-poc: 3241] x9 : 0000000000000000 x8 : 0000000000000000 
+[  570.018861] [6:   moon-gpu-poc: 3241] x7 : 0000000000000000 x6 : ffffff88482a1fd0 
+[  570.018863] [6:   moon-gpu-poc: 3241] x5 : 00000000ff861c09 x4 : 0000000000000000 
+[  570.018865] [6:   moon-gpu-poc: 3241] x3 : ffffffc028c63728 x2 : 00000000feeaabc9 
+[  570.018868] [6:   moon-gpu-poc: 3241] x1 : ffffffc02c916000 x0 : ffffff88478eb000 
+[  570.018871] [6:   moon-gpu-poc: 3241] Call trace:
+[  570.018875] [6:   moon-gpu-poc: 3241]  __memcpy+0x114/0x180
+[  570.018904] [6:   moon-gpu-poc: 3241]  __exynos_hdr_prepare+0x6c/0xbc [exynos_drm]
+[  570.018932] [6:   moon-gpu-poc: 3241]  exynos_hdr_prepare+0x44/0x84 [exynos_drm]
+[  570.018961] [6:   moon-gpu-poc: 3241]  dpp_check+0xfb8/0x11cc [exynos_drm]
+[  570.018964] [0:           init:    1] Mem abort info:
+[  570.018967] [0:           init:    1]   ESR = 0x96000004
+[  570.018972] [0:           init:    1]   EC = 0x25: DABT (current EL), IL = 32 bits
+[  570.018975] [0:           init:    1]   SET = 0, FnV = 0
+[  570.018978] [0:           init:    1]   EA = 0, S1PTW = 0
+[  570.018980] [0:           init:    1] Data abort info:
+[  570.018983] [0:           init:    1]   ISV = 0, ISS = 0x00000004
+[  570.018986] [0:           init:    1]   CM = 0, WnR = 0
+[  570.018990] [0:           init:    1] [006d1218ff6d1208] address between user and kernel address ranges
+[  570.019017] [6:   moon-gpu-poc: 3241]  exynos_plane_atomic_check+0xe8/0x13c [exynos_drm]
+[  570.019024] [6:   moon-gpu-poc: 3241]  drm_atomic_helper_check_planes+0xf0/0x1d0
+[  570.019056] [6:   moon-gpu-poc: 3241]  exynos_atomic_check+0x2a4/0x820 [exynos_drm]
+[  570.019062] [6:   moon-gpu-poc: 3241]  drm_atomic_check_only+0x384/0x62c
+[  570.019067] [6:   moon-gpu-poc: 3241]  drm_atomic_nonblocking_commit+0x1c/0x5c
+[  570.019073] [6:   moon-gpu-poc: 3241]  drm_mode_atomic_ioctl+0x63c/0x79c
+[  570.019079] [6:   moon-gpu-poc: 3241]  drm_ioctl_kernel+0xe4/0x160
+[  570.019084] [6:   moon-gpu-poc: 3241]  drm_ioctl+0x224/0x344
+[  570.019090] [6:   moon-gpu-poc: 3241]  __arm64_sys_ioctl+0x90/0xcc
+[  570.019096] [6:   moon-gpu-poc: 3241]  el0_svc_common.llvm.17175770275725533261+0xb4/0x1a4
+[  570.019102] [6:   moon-gpu-poc: 3241]  do_el0_svc+0x24/0x90
+[  570.019108] [6:   moon-gpu-poc: 3241]  el0_svc+0x10/0x1c
+[  570.019113] [6:   moon-gpu-poc: 3241]  el0_sync_handler+0x84/0xe4
+[  570.019118] [6:   moon-gpu-poc: 3241]  el0_sync+0x1b8/0x1c0
+[  570.019123] [6:   moon-gpu-poc: 3241] Code: a8c12829 a8c1302b a8c1382d a88120c7 (a8c12027) 
+[  570.019127] [6:   moon-gpu-poc: 3241] ---[ end trace c9881cfb9e0d646c ]---
+[  570.019132] [6:   moon-gpu-poc: 3241] Kernel panic - not syncing: Oops: Fatal exception

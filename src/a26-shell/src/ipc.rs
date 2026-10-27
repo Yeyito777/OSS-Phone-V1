@@ -33,22 +33,60 @@ pub enum Command {
     ProfileBudget(u32),
     /// Diagnostics: log every composed frame's nodes.
     ProfileFrames(bool),
-    LaunchSystem,
-    LaunchBrowser,
+    Launch(AppId),
     KeyboardShow(KeyboardPurpose),
     KeyboardHide,
     SwipeUp,
     VolumeUp,
     VolumeDown,
     VolumeSet(u8),
+    /// `brightness` (read), `brightness set N`, `brightness auto on|off`.
+    Brightness(Option<crate::display::DisplayRequest>),
     Power,
     ScreenOff,
     ScreenOn,
+    /// `light-probe X Y SIZE` / `light-probe off`: a debug frame, black with
+    /// one white square, for locating the light sensor under the panel.
+    LightProbe(Option<crate::gfx::RectF>),
     LeaseAcquire(AppId, LeaseKind, u64),
     LeaseRelease(AppId, LeaseKind),
     SimulateMemoryPressure,
     SuspendTest(u64),
+    /// `settings set KEY VALUE` (docs/settings.md).
+    SettingsSet(String, String),
+    /// `transition push|pop`: an app is about to show another page (the
+    /// reply comes once its current page is snapshotted).
+    Transition(bool),
+    /// `transition ready`: the new page is fully drawn; the slide starts.
+    TransitionReady,
+    /// `haptic STYLE`: a tap haptic for an app's control (System's switches).
+    /// (`haptic STYLE MS` plays that length once, for tuning.)
+    Haptic(crate::notify_client::Haptic, Option<u32>),
     Quit,
+}
+
+impl Command {
+    /// Commands that stand in for the user's own touches and keys (tests,
+    /// `ctl`): like real input they count for Auto-Lock. Requests apps make
+    /// on the user's behalf (keyboard, brightness, settings) do not.
+    pub fn is_user_input(&self) -> bool {
+        matches!(
+            self,
+            Command::Digit(_)
+                | Command::Backspace
+                | Command::Submit
+                | Command::Tap(..)
+                | Command::PointerBegin(..)
+                | Command::PointerMove(..)
+                | Command::PointerEnd(..)
+                | Command::Home
+                | Command::Switcher
+                | Command::SwipeUp
+                | Command::VolumeUp
+                | Command::VolumeDown
+                | Command::Power
+        )
+    }
 }
 
 pub struct IpcServer {
@@ -204,9 +242,10 @@ fn parse_command(line: &str) -> Result<Command, String> {
             Command::PointerEnd(parse_i16(parts.next(), "x")?, parse_i16(parts.next(), "y")?)
         }
         "launch" => match parts.next() {
-            Some(value) if value.eq_ignore_ascii_case("system") => Command::LaunchSystem,
-            Some(value) if value.eq_ignore_ascii_case("browser") => Command::LaunchBrowser,
-            Some(_) => return Err("app must be System or Browser".into()),
+            Some(value) => match AppId::parse(&value.to_ascii_lowercase()) {
+                Some(app) => Command::Launch(app),
+                None => return Err("app must be System, Browser, Phone or Messages".into()),
+            },
             None => return Err("missing app noun".into()),
         },
         "keyboard" => match parts.next() {
@@ -223,6 +262,24 @@ fn parse_command(line: &str) -> Result<Command, String> {
             Some(_) => return Err("keyboard requires show or hide".into()),
             None => return Err("keyboard requires show or hide".into()),
         },
+        "brightness" => match parts.next() {
+            None => Command::Brightness(None),
+            Some("set") => Command::Brightness(Some(crate::display::DisplayRequest::Set(
+                parts
+                    .next()
+                    .and_then(|value| value.parse::<u8>().ok())
+                    .filter(|value| *value <= 100)
+                    .ok_or_else(|| "brightness set requires 0..100".to_string())?,
+            ))),
+            Some("auto") => match parts.next() {
+                Some("on") => Command::Brightness(Some(crate::display::DisplayRequest::Auto(true))),
+                Some("off") => {
+                    Command::Brightness(Some(crate::display::DisplayRequest::Auto(false)))
+                }
+                _ => return Err("brightness auto requires on or off".into()),
+            },
+            Some(_) => return Err("brightness requires set N or auto on|off".into()),
+        },
         "volume" => match parts.next() {
             Some("up") => Command::VolumeUp,
             Some("down") => Command::VolumeDown,
@@ -233,6 +290,48 @@ fn parse_command(line: &str) -> Result<Command, String> {
                     .min(100),
             ),
             None => return Err("volume requires up, down, or 0..100".into()),
+        },
+        "settings" => match (parts.next(), parts.next(), parts.next()) {
+            (Some("set"), Some(key), Some(value)) => {
+                Command::SettingsSet(key.to_owned(), value.to_owned())
+            }
+            _ => return Err("settings requires set KEY VALUE".into()),
+        },
+        "transition" => match parts.next() {
+            Some("push") => Command::Transition(true),
+            Some("pop") => Command::Transition(false),
+            Some("ready") => Command::TransitionReady,
+            _ => return Err("transition requires push or pop".into()),
+        },
+        "haptic" => match parts.next().and_then(crate::notify_client::Haptic::parse) {
+            Some(style) => Command::Haptic(
+                style,
+                match parts.next() {
+                    None => None,
+                    Some(ms) => Some(
+                        ms.parse::<u32>()
+                            .ok()
+                            .filter(|ms| (5..=400).contains(ms))
+                            .ok_or("haptic length is 5..400 ms")?,
+                    ),
+                },
+            ),
+            None => return Err("haptic requires selection, light, medium or error".into()),
+        },
+        "light-probe" => match parts.next() {
+            Some("off") => Command::LightProbe(None),
+            Some(x) => {
+                let number = |text: Option<&str>| -> Result<f32, String> {
+                    text.and_then(|t| t.parse::<f32>().ok())
+                        .filter(|v| v.is_finite() && (0.0..=4000.0).contains(v))
+                        .ok_or_else(|| "light-probe requires X Y SIZE or off".to_string())
+                };
+                let x = number(Some(x))?;
+                let y = number(parts.next())?;
+                let size = number(parts.next())?;
+                Command::LightProbe(Some(crate::gfx::RectF::new(x, y, size, size)))
+            }
+            None => return Err("light-probe requires X Y SIZE or off".into()),
         },
         "screen" => match parts.next() {
             Some("off") => Command::ScreenOff,

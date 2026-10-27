@@ -3,13 +3,18 @@ set -u
 
 LOG=/root/Xorg.persistent.log
 STATUS=/root/xorg-session.status
+# --gpu: moon-compositor owns the panel; Xorg runs headless (dummy driver) and
+# reaches the screen through Moon's X mirror (notes/gpu/DESIGN.md).
+CONFIGDIR=/etc/X11/xorg.conf.d
+[ "${1:-}" != --gpu ] || CONFIGDIR=/etc/X11/xorg-gpu.conf.d
 rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 "$STATUS"
 mkdir -p /tmp/.X11-unix /run
 
 xpid=''
 cleanup() {
     trap - EXIT HUP INT TERM
-    if [ -x /opt/a26-system/libexec/a26-wifi-stop ]; then
+    # A GPU-to-software fallback replaces only Xorg: keep Wi-Fi up.
+    if [ -x /opt/a26-system/libexec/a26-wifi-stop ] && [ ! -e /run/moon-gpu/fallback ]; then
         /opt/a26-system/libexec/a26-wifi-stop 2>/dev/null || true
     fi
     if [ -n "$xpid" ] && kill -0 "$xpid" 2>/dev/null; then
@@ -26,7 +31,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 Xorg :0 \
-    -configdir /etc/X11/xorg.conf.d \
+    -configdir "$CONFIGDIR" \
     -logfile "$LOG" \
     -novtswitch -sharevts -keeptty -noreset -nolisten tcp &
 xpid=$!

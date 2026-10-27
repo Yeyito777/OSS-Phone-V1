@@ -23,6 +23,8 @@ pub enum View {
     Launcher,
     System,
     Browser,
+    Phone,
+    Messages,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -30,14 +32,30 @@ pub enum View {
 pub enum AppId {
     System,
     Browser,
+    Phone,
+    Messages,
 }
 
 impl AppId {
+    pub const COUNT: usize = 4;
+    pub const ALL: [Self; Self::COUNT] = [Self::System, Self::Browser, Self::Phone, Self::Messages];
+
     pub fn from_view(view: View) -> Option<Self> {
         match view {
             View::System => Some(Self::System),
             View::Browser => Some(Self::Browser),
+            View::Phone => Some(Self::Phone),
+            View::Messages => Some(Self::Messages),
             View::Locked | View::Launcher => None,
+        }
+    }
+
+    pub fn view(self) -> View {
+        match self {
+            Self::System => View::System,
+            Self::Browser => View::Browser,
+            Self::Phone => View::Phone,
+            Self::Messages => View::Messages,
         }
     }
 
@@ -45,28 +63,26 @@ impl AppId {
         match self {
             Self::System => "System",
             Self::Browser => "Browser",
+            Self::Phone => "Phone",
+            Self::Messages => "Messages",
         }
     }
 
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "system" => Some(Self::System),
-            "browser" => Some(Self::Browser),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|app| app.cgroup_name() == value)
     }
 
     pub fn index(self) -> usize {
-        match self {
-            Self::System => 0,
-            Self::Browser => 1,
-        }
+        self as usize
     }
 
+    /// The app's id (`ctl`, notifications, its freezer cgroup).
     pub fn cgroup_name(self) -> &'static str {
         match self {
             Self::System => "system",
             Self::Browser => "browser",
+            Self::Phone => "phone",
+            Self::Messages => "messages",
         }
     }
 }
@@ -94,7 +110,7 @@ pub struct PublicAppState {
 
 impl View {
     pub fn is_app(self) -> bool {
-        matches!(self, Self::System | Self::Browser)
+        AppId::from_view(self).is_some()
     }
 }
 
@@ -158,10 +174,116 @@ pub struct PointerGesture {
     pub keyboard_initial_sent: bool,
     pub keyboard_repeat_uppercase: bool,
     pub keyboard_next_repeat_at: Option<Instant>,
+    /// The touch belongs to the app in front (see `AppPointer`).
+    pub forwarding: bool,
+}
+
+/// An app page push or pop (System, Phone, Messages; GPU mode): the
+/// outgoing page, snapshotted, slides away while the live app slides in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PageTransition {
+    pub push: bool,
+    /// When the slide began, or (while `waiting`) when it was asked for.
+    pub started: Instant,
+    /// The old page holds still until the app says its new page is fully
+    /// drawn (`transition ready`), so the slide never shows it half drawn.
+    pub waiting: bool,
+}
+
+pub const PAGE_TRANSITION: Duration = Duration::from_millis(380);
+/// The slide starts anyway if the app never says it is ready.
+pub const PAGE_READY_WAIT: Duration = Duration::from_millis(150);
+
+impl PageTransition {
+    pub fn new(push: bool, now: Instant) -> Self {
+        Self {
+            push,
+            started: now,
+            waiting: true,
+        }
+    }
+
+    /// The new page is drawn: slide.
+    pub fn ready(&mut self, now: Instant) {
+        if self.waiting {
+            self.waiting = false;
+            self.started = now;
+        }
+    }
+
+    /// Eased progress, 0 to 1.
+    pub fn progress(&self, now: Instant) -> f32 {
+        if self.waiting {
+            return 0.0;
+        }
+        crate::gfx::ease_out(
+            now.saturating_duration_since(self.started).as_secs_f32()
+                / PAGE_TRANSITION.as_secs_f32(),
+        )
+    }
+}
+
+/// What a tapped notification asked its app to show (`open.target`):
+/// handed over in Moon's state, where the app looks when it comes forward.
+#[derive(Debug, Clone)]
+pub struct OpenTarget {
+    pub app: AppId,
+    pub target: String,
+    pub serial: u64,
+    pub at: Instant,
+}
+
+impl OpenTarget {
+    pub fn new(app: AppId, target: String) -> Self {
+        static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self {
+            app,
+            target,
+            serial: SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            at: Instant::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicOpenTarget {
+    pub app: AppId,
+    pub target: String,
+    pub serial: u64,
+    pub age_ms: u64,
+}
+
+/// Pointer events for the app in front, sent through XTEST by the main
+/// loop. Moon's own apps (System, Phone, Messages) get each touch as a held
+/// button from touch-down to release; the Browser gets taps on release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppPointer {
+    Press(i16, i16),
+    Motion(i16, i16),
+    Release(i16, i16),
+}
+
+impl View {
+    /// Moon's own apps take drags (the Browser keeps its own gestures).
+    pub fn takes_drags(self) -> bool {
+        matches!(self, Self::System | Self::Phone | Self::Messages)
+    }
 }
 
 #[derive(Debug)]
 pub struct ShellState {
+    /// In-shell brightness requests, drained by the brightness backend.
+    #[allow(dead_code)]
+    pub display_requests: Vec<crate::display::DisplayRequest>,
+    /// Brightness as in-shell controls should show it (backend-refreshed).
+    #[allow(dead_code)]
+    pub display_view: Option<crate::display::DisplayView>,
+    /// Auto-Lock's pre-timeout dim is active: the brightness backend must not
+    /// write the backlight, and restores its level when this clears.
+    #[allow(dead_code)]
+    pub idle_dimmed: bool,
+    /// Debug: the light-sensor probe frame (`light-probe`), drawn over all.
+    pub light_probe: Option<crate::gfx::RectF>,
     pub view: View,
     pub screen_awake: bool,
     pub pin_input: Vec<u8>,
@@ -177,6 +299,10 @@ pub struct ShellState {
     pub redraw: bool,
     pub should_exit: bool,
     pub managed_windows: Vec<u32>,
+    /// Managed windows that are proxies of Wayland toplevels: keys for them
+    /// go to the Wayland server (`wayland_keys`) instead of XTEST.
+    pub wayland_windows: Vec<u32>,
+    pub wayland_keys: Vec<crate::keyboard::KeyboardInput>,
     pub keyboard: KeyboardState,
     pub lock_face: LockFace,
     pub last_lock_input: Instant,
@@ -208,6 +334,24 @@ pub struct ShellState {
     pub pending_switcher: bool,
     /// The shell window was exposed and must be recopied from its pixmap.
     pub shell_exposed: bool,
+    /// Notifications, alarms and timers on screen (alerts.rs).
+    pub alerts: crate::alerts::Alerts,
+    /// Quick settings (control_centre.rs).
+    pub control: crate::control_centre::ControlCentre,
+    /// Telephony status and the call screens (calls.rs).
+    pub calls: crate::calls::CallUi,
+    /// Wallpaper and Auto-Lock (settings.rs); `settings_changed` asks the
+    /// main loop to save and apply them.
+    pub settings: crate::settings::Settings,
+    pub settings_changed: bool,
+    /// The last touch or key, for Auto-Lock.
+    pub last_input: Instant,
+    /// The app shown before the current one (the bottom-edge swipe).
+    previous_app: Option<AppId>,
+    /// Touch events for the app in front, drained by the main loop.
+    pub app_pointer: Vec<AppPointer>,
+    pub open_target: Option<OpenTarget>,
+    pub page_transition: Option<PageTransition>,
     active_app_focused: bool,
     launch: Option<Launch>,
 }
@@ -236,14 +380,27 @@ pub struct PublicState {
     pub apps: Vec<PublicAppState>,
     pub keyboard: PublicKeyboardState,
     pub suspend: PublicSuspendState,
+    pub alerts: crate::alerts::PublicAlerts,
+    pub settings: crate::settings::Settings,
+    pub control_centre_open: bool,
+    pub telephony: crate::calls::PublicCalls,
+    /// The last notification target for an app (see `OpenTarget`).
+    pub open_target: Option<PublicOpenTarget>,
     /// Frame timing of the last finished animation (see `profile on`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub animation: Option<String>,
+    /// Brightness (docs/display-brightness.md); filled in by the backend.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<crate::brightness::PublicDisplay>,
 }
 
 impl ShellState {
     pub fn new(start_locked: bool, initial_volume: u8) -> Self {
         Self {
+            display_requests: Vec::new(),
+            display_view: None,
+            idle_dimmed: false,
+            light_probe: None,
             view: if start_locked {
                 View::Locked
             } else {
@@ -263,6 +420,8 @@ impl ShellState {
             redraw: true,
             should_exit: false,
             managed_windows: Vec::new(),
+            wayland_windows: Vec::new(),
+            wayland_keys: Vec::new(),
             keyboard: KeyboardState::default(),
             lock_face: LockFace::Clock,
             last_lock_input: Instant::now(),
@@ -283,6 +442,16 @@ impl ShellState {
             pending_reveal: false,
             pending_switcher: false,
             shell_exposed: false,
+            alerts: Default::default(),
+            control: Default::default(),
+            calls: Default::default(),
+            settings: Default::default(),
+            settings_changed: false,
+            last_input: Instant::now(),
+            previous_app: None,
+            app_pointer: Vec::new(),
+            open_target: None,
+            page_transition: None,
             active_app_focused: false,
             launch: None,
         }
@@ -307,11 +476,7 @@ impl ShellState {
             pin_digits: self.pin_input.len(),
             failed_attempts: self.failed_attempts,
             lockout_remaining_ms: remaining.as_millis().min(u64::MAX as u128) as u64,
-            current_app: match self.view {
-                View::System => Some("System"),
-                View::Browser => Some("Browser"),
-                View::Locked | View::Launcher => None,
-            },
+            current_app: AppId::from_view(self.view).map(AppId::display_name),
             volume: self.volume,
             battery_percent: self.battery_percent,
             wifi_connected: self.wifi_connected,
@@ -326,7 +491,18 @@ impl ShellState {
             apps,
             keyboard: self.keyboard.public(),
             suspend,
+            alerts: self.alerts_public(),
+            settings: self.settings.clone(),
+            control_centre_open: self.control.open,
+            telephony: self.calls_public(),
+            open_target: self.open_target.as_ref().map(|open| PublicOpenTarget {
+                app: open.app,
+                target: open.target.clone(),
+                serial: open.serial,
+                age_ms: open.at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+            }),
             animation: None,
+            display: None,
         }
     }
 
@@ -348,6 +524,9 @@ impl ShellState {
         self.pin_error_at = None;
         self.active_app_focused = false;
         self.cancel_app_launch();
+        self.alerts_cancel_touch();
+        self.control_cancel_touch();
+        self.call_cancel_touch();
         self.last_action = "lock".into();
         self.redraw = true;
     }
@@ -362,7 +541,34 @@ impl ShellState {
     pub fn screen_on(&mut self) {
         self.lock();
         self.screen_awake = true;
+        self.last_input = Instant::now();
         self.last_action = "screen_on".into();
+    }
+
+    /// A touch or key: Auto-Lock starts over (and undims) and a
+    /// notification's wake no longer turns the screen back off.
+    /// A tap haptic, when the user wants them and the screen is on (it
+    /// never wakes anything).
+    pub fn haptic(&mut self, style: crate::notify_client::Haptic) {
+        let ms = Some(self.settings.haptic_ms[style.index()]).filter(|ms| *ms > 0);
+        self.haptic_ms(style, ms);
+    }
+
+    /// A haptic of a given length (`ctl haptic STYLE MS`, for tuning).
+    /// The wrong-passcode buzz plays even with tap haptics off.
+    pub fn haptic_ms(&mut self, style: crate::notify_client::Haptic, ms: Option<u32>) {
+        let wanted = self.settings.haptics || style == crate::notify_client::Haptic::Error;
+        if wanted && self.screen_awake {
+            self.alerts
+                .outbox
+                .push(crate::alerts::Outgoing::Haptic(style, ms));
+        }
+    }
+
+    pub fn note_input(&mut self) {
+        self.last_input = Instant::now();
+        self.idle_dimmed = false;
+        self.alerts_user_input();
     }
 
     /// The power key: fades to black before the screen-off transaction, or
@@ -610,11 +816,7 @@ impl ShellState {
             launch.resumed = true;
             launch.window_mapped_at.get_or_insert_with(Instant::now);
         }
-        self.last_action = match app {
-            AppId::System => "system_resumed",
-            AppId::Browser => "browser_resumed",
-        }
-        .into();
+        self.last_action = format!("{}_resumed", app.cgroup_name());
         self.redraw = true;
     }
 
@@ -630,8 +832,8 @@ impl ShellState {
         self.begin_launch(AppId::System);
     }
 
-    pub fn launch_browser(&mut self) {
-        self.begin_launch(AppId::Browser);
+    pub fn open_app(&mut self, app: AppId) {
+        self.begin_launch(app);
     }
 
     fn begin_launch(&mut self, app: AppId) {
@@ -640,10 +842,7 @@ impl ShellState {
     }
 
     fn begin_launch_from(&mut self, app: AppId, origin: RectF, radius: f32) {
-        let view = match app {
-            AppId::System => View::System,
-            AppId::Browser => View::Browser,
-        };
+        let view = app.view();
         if self.screen_awake && self.view != View::Locked && self.view != view {
             let now = Instant::now();
             self.keyboard.hide();
@@ -652,6 +851,9 @@ impl ShellState {
             {
                 // Switching straight from another app: keep its snapshot.
                 self.pending_capture = Some(current);
+            }
+            if let Some(current) = AppId::from_view(self.view) {
+                self.previous_app = Some(current);
             }
             self.view = view;
             self.active_app_focused = false;
@@ -669,21 +871,22 @@ impl ShellState {
                 resumed: false,
                 window_mapped_at: None,
             });
-            self.last_action = match app {
-                AppId::System => "launch_system",
-                AppId::Browser => "launch_browser",
-            }
-            .into();
+            self.last_action = format!("launch_{}", app.cgroup_name());
             self.redraw = true;
         }
     }
 
-    /// Switches straight to the other app (bottom-edge horizontal swipe).
+    /// Switches straight to the previous app (bottom-edge horizontal
+    /// swipe).
     pub fn switch_app(&mut self) {
-        let other = match self.view {
-            View::System => AppId::Browser,
-            View::Browser => AppId::System,
-            View::Locked | View::Launcher => return,
+        let Some(current) = AppId::from_view(self.view) else {
+            return;
+        };
+        let other = match self.previous_app.filter(|app| *app != current) {
+            Some(app) => app,
+            // Before any switch: the System app and the Browser swap.
+            None if current == AppId::System => AppId::Browser,
+            None => AppId::System,
         };
         self.begin_launch(other);
         self.last_action = "swipe_switch_app".into();
@@ -805,9 +1008,11 @@ impl ShellState {
             self.failed_attempts = 0;
             self.lockout_until = None;
             self.last_action = "unlock".into();
+            self.alerts_unlocked();
         } else {
             self.failed_attempts = self.failed_attempts.saturating_add(1);
             self.pin_error_at = Some(Instant::now());
+            self.haptic(crate::notify_client::Haptic::Error);
             self.last_action = "unlock_failed".into();
             if self.failed_attempts % 5 == 0 {
                 self.lockout_until = Some(Instant::now() + Duration::from_secs(30));
@@ -918,11 +1123,7 @@ impl ShellState {
             && launch.window_mapped_at.is_none()
         {
             launch.window_mapped_at = Some(Instant::now());
-            self.last_action = match launch.app {
-                AppId::System => "system_window_warming",
-                AppId::Browser => "browser_window_warming",
-            }
-            .into();
+            self.last_action = format!("{}_window_warming", launch.app.cgroup_name());
             self.redraw = true;
         }
     }
@@ -934,7 +1135,8 @@ impl ShellState {
             Duration::ZERO
         } else {
             match launch.app {
-                AppId::System => SYSTEM_FIRST_PAINT_DELAY,
+                // Phone and Messages are the System app's binary.
+                AppId::System | AppId::Phone | AppId::Messages => SYSTEM_FIRST_PAINT_DELAY,
                 AppId::Browser => BROWSER_FIRST_PAINT_DELAY,
             }
         };
@@ -957,7 +1159,8 @@ impl ShellState {
                 || self.returning.is_some()
                 || self
                     .fade
-                    .is_some_and(|fade| fade.out && !self.backlight_fades))
+                    .is_some_and(|fade| fade.out && !self.backlight_fades)
+                || self.alerts_cover_app(Instant::now()))
     }
 
     pub fn finish_app_launch(&mut self) {
@@ -965,11 +1168,7 @@ impl ShellState {
             return;
         };
         self.launch = None;
-        self.last_action = match launch.app {
-            AppId::System => "system_ready",
-            AppId::Browser => "browser_ready",
-        }
-        .into();
+        self.last_action = format!("{}_ready", launch.app.cgroup_name());
         self.redraw = true;
     }
 
@@ -1006,10 +1205,42 @@ impl ShellState {
             || self.fade.is_some()
             || shaking
             || unlocking
+            || self.alerts_animating(now)
+            || self.control.animating(now)
+            || self.calls_animating(now)
+            || self.page_transition.is_some()
+    }
+
+    /// An app may ask for a page transition now: its own app in front,
+    /// nothing of the shell over it.
+    pub fn page_transition_allowed(&self) -> bool {
+        self.screen_awake
+            && self.view.takes_drags()
+            && self.launch().is_none()
+            && self.gesture.is_none()
+            && self.switcher.is_none()
+            && !self.shell_covers_app()
     }
 
     pub fn tick(&mut self) {
         let now = Instant::now();
+        self.alerts_tick(now);
+        self.control_tick(now);
+        self.calls_tick(now);
+        if let Some(transition) = self.page_transition.as_mut()
+            && transition.waiting
+            && now.saturating_duration_since(transition.started) >= PAGE_READY_WAIT
+        {
+            transition.ready(now);
+        }
+        if let Some(transition) = self.page_transition
+            && ((!transition.waiting
+                && now.saturating_duration_since(transition.started) >= PAGE_TRANSITION)
+                || !self.page_transition_allowed())
+        {
+            self.page_transition = None;
+            self.redraw = true;
+        }
         if self.is_lockout_active() && self.view == View::Locked {
             // Repaint the "Try again in N s" countdown.
             self.redraw = true;
@@ -1039,7 +1270,12 @@ impl ShellState {
             let armed = gesture.armed();
             gesture.refresh_hold(now);
             if gesture.armed() != armed {
+                let engaged = gesture.armed();
                 self.redraw = true;
+                if engaged {
+                    // The app switcher is about to open.
+                    self.haptic(crate::notify_client::Haptic::Medium);
+                }
             }
         }
         if let Some(switcher) = self.switcher.as_mut() {
@@ -1105,6 +1341,7 @@ impl ShellState {
             passcode_timeout,
             self.gesture.as_ref().and_then(HomeGesture::hold_deadline),
             self.fade.map(|fade| fade.deadline()),
+            self.alerts_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -1228,7 +1465,7 @@ mod tests {
     #[test]
     fn browser_is_a_first_class_external_app() {
         let mut state = ShellState::new(false, 50);
-        state.launch_browser();
+        state.open_app(AppId::Browser);
         assert_eq!(state.view, View::Browser);
         assert_eq!(public(&state).current_app, Some("Browser"));
         assert!(state.view.is_app());
@@ -1267,7 +1504,7 @@ mod tests {
     #[test]
     fn resumed_app_reveals_without_waiting_for_first_paint() {
         let mut state = ShellState::new(false, 50);
-        state.launch_browser();
+        state.open_app(AppId::Browser);
         state.note_app_resumed(AppId::Browser);
         state.launch.as_mut().unwrap().card.spring.started -= Duration::from_secs(2);
         assert!(state.app_ready_to_reveal());
@@ -1374,6 +1611,36 @@ mod tests {
         assert_eq!(state.view, View::System);
         assert!(state.app_launching());
         assert!(state.switcher.is_none());
+    }
+
+    #[test]
+    fn page_transitions_run_their_course_and_stop_when_the_shell_takes_over() {
+        let mut state = ShellState::new(false, 50);
+        // Only Moon's own apps, in front, may ask.
+        assert!(!state.page_transition_allowed());
+        state.view = View::Messages;
+        assert!(state.page_transition_allowed());
+        let started = Instant::now();
+        let mut transition = PageTransition::new(true, started);
+        // Held still until the app's new page is drawn.
+        assert_eq!(transition.progress(started + PAGE_TRANSITION), 0.0);
+        transition.ready(started);
+        assert_eq!(transition.progress(started), 0.0);
+        assert_eq!(transition.progress(started + PAGE_TRANSITION), 1.0);
+        state.page_transition = Some(transition);
+        assert!(state.animating(started));
+        state.tick();
+        assert!(state.page_transition.is_some());
+        // Never ready: it slides anyway after a moment, then ends.
+        state.page_transition = Some(PageTransition::new(false, started - PAGE_READY_WAIT));
+        state.tick();
+        assert!(!state.page_transition.unwrap().waiting);
+        state.page_transition.as_mut().unwrap().started -= PAGE_TRANSITION;
+        state.tick();
+        assert!(state.page_transition.is_none());
+        // The browser keeps its own pages.
+        state.view = View::Browser;
+        assert!(!state.page_transition_allowed());
     }
 
     #[test]
@@ -1484,7 +1751,7 @@ mod tests {
         state.set_active_app_focused(true);
         assert!(!state.active_app_focused());
 
-        state.launch_browser();
+        state.open_app(AppId::Browser);
         state.replace_managed_windows(vec![42]);
         assert!(!state.active_app_focused());
         state.set_active_app_focused(true);
@@ -1530,7 +1797,7 @@ mod tests {
         let mut state = ShellState::new(true, 50);
         state.managed_windows.push(42);
         assert!(!state.show_keyboard(KeyboardPurpose::Url));
-        state.launch_browser();
+        state.open_app(AppId::Browser);
         state.launch_system();
         assert_eq!(state.view, View::Locked);
         assert!(!state.keyboard.is_visible());

@@ -113,6 +113,16 @@ fi
 if [ -d /data/local/tmp/moon-suspend ]; then
     bind_mount /data/local/tmp/moon-suspend "$A26_ROOT/run/moon-suspend"
 fi
+# moon-telephonyd (when installed) runs on the Android side: it talks to rild
+# over hwbinder and execs the bionic call-audio helper. Its socket lives here.
+if [ -x "$A26_ROOT/opt/moon-telephony/moon-telephonyd" ]; then
+    $BB mkdir -p /data/local/tmp/moon-telephony
+    bind_mount /data/local/tmp/moon-telephony "$A26_ROOT/run/moon-telephony"
+fi
+# GPU mode: moon-compositor (Android side) listens on a socket in here.
+if [ -d /data/local/tmp/moon-gpu ]; then
+    bind_mount /data/local/tmp/moon-gpu "$A26_ROOT/run/moon-gpu"
+fi
 
 # Android commonly has no useful /etc/resolv.conf.  Prefer any actual host
 # nameserver, then legacy net.dns properties, then explicit public fallbacks.

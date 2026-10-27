@@ -71,10 +71,21 @@ if [ -x /data/adb/moon/moon-audio-stop.sh ]; then
     /system/bin/sh /data/adb/moon/moon-audio-stop.sh 2>/dev/null || true
 fi
 
+# moon-telephonyd is rild's client in Moon mode and may own a mobile data
+# interface; end it so Android's phone process is the only client.
+if [ -x /data/adb/moon/moon-telephony-stop.sh ]; then
+    /system/bin/sh /data/adb/moon/moon-telephony-stop.sh 2>/dev/null || true
+fi
+
 # Native Wi-Fi owns wlan0 and Android policy table 1023 while Moon is active.
 # Always remove that state before restarting Android's framework/network stack.
 if [ -x /data/local/tmp/a26-wifi-cleanup-android.sh ]; then
     /system/bin/sh /data/local/tmp/a26-wifi-cleanup-android.sh 2>/dev/null || true
+fi
+
+# GPU mode: moon-compositor holds DRM master; release it before the composer.
+if [ -x /data/adb/moon/moon-gpu-session.sh ]; then
+    /system/bin/sh /data/adb/moon/moon-gpu-session.sh stop 2>/dev/null || true
 fi
 
 # Restore the three services deliberately stopped for DRM-master handoff.  The

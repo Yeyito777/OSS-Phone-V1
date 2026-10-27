@@ -46,7 +46,7 @@ pub struct PublicLeaseState {
 
 #[derive(Debug, Default)]
 pub struct LeaseManager {
-    deadlines: [[Option<Instant>; 2]; 2],
+    deadlines: [[Option<Instant>; 2]; AppId::COUNT],
 }
 
 impl LeaseManager {
@@ -116,6 +116,10 @@ impl LeaseManager {
             .copied()
             .filter(|deadline| *deadline > now)
             .min()
+    }
+
+    pub fn holds(&self, app: AppId, kind: LeaseKind, now: Instant) -> bool {
+        self.deadlines[app.index()][kind.index()].is_some_and(|deadline| deadline > now)
     }
 
     pub fn any_active(&mut self, now: Instant) -> bool {

@@ -68,20 +68,27 @@ if valid_bridge_pid && kill -0 "$pid" 2>/dev/null; then
 fi
 rm -f "$PIDFILE" "$MEDIA_HEARTBEAT"
 
-rm -f "$RUNTIME/pcm"
+rm -f "$RUNTIME/pcm" "$RUNTIME/alerts"
 mknod "$RUNTIME/pcm" p || exit 23
-# Moon may already be running and writing its volume here (audio is never
-# waited for at boot); keep that value, else the one saved at the last stop.
-if [ -r "$RUNTIME/volume" ]; then
-    volume="$(cat "$RUNTIME/volume" 2>/dev/null || echo 50)"
-elif [ -r "$PERSIST/volume" ]; then
-    volume="$(cat "$PERSIST/volume" 2>/dev/null || echo 50)"
-else
-    volume=50
+# moon-notifyd's alarm, timer and notification sounds, played as a second
+# (ALARM) stream; root-only, like the daemon that writes it.
+mknod "$RUNTIME/alerts" p || exit 23
+chmod 0600 "$RUNTIME/alerts"
+# The live volume file belongs to Moon, which may already be running (audio
+# is never waited for at boot) and owns the user's value. Never rewrite a valid
+# one: a truncate-and-write here once raced Moon's startup read and reset the
+# volume to Moon's default. Seed it only when missing or invalid, atomically.
+valid_volume() {
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$1" -le 100 ]
+}
+volume="$(cat "$RUNTIME/volume" 2>/dev/null || true)"
+if ! valid_volume "$volume"; then
+    volume="$(cat "$PERSIST/volume" 2>/dev/null || true)"
+    valid_volume "$volume" || volume=50
+    printf '%s\n' "$volume" >"$RUNTIME/volume.new.$$"
+    mv -f "$RUNTIME/volume.new.$$" "$RUNTIME/volume"
 fi
-case "$volume" in ''|*[!0-9]*) volume=50 ;; esac
-[ "$volume" -le 100 ] 2>/dev/null || volume=100
-printf '%s\n' "$volume" >"$RUNTIME/volume"
 chown 1000:1000 "$RUNTIME" "$RUNTIME/pcm" "$RUNTIME/volume"
 chmod 0770 "$RUNTIME"
 chmod 0660 "$RUNTIME/pcm" "$RUNTIME/volume"
@@ -93,7 +100,7 @@ chmod 0640 "$LOG"
 stream_index="$(sed -n 's/^AUDIO_STREAM_INDEX=//p' "$PERSIST/config" 2>/dev/null | tail -1)"
 case "$stream_index" in ''|*[!0-9]*) stream_index=5 ;; esac
 MOON_AUDIO_STREAM_INDEX="$stream_index" "$BB" nohup "$BB" setsid "$AUDIOD" \
-    "$RUNTIME/pcm" "$RUNTIME/volume" "$PIDFILE" "$MEDIA_HEARTBEAT" \
+    "$RUNTIME/pcm" "$RUNTIME/volume" "$PIDFILE" "$MEDIA_HEARTBEAT" "$RUNTIME/alerts" \
     >>"$LOG" 2>&1 </dev/null &
 launcher=$!
 

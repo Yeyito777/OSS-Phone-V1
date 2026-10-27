@@ -174,9 +174,11 @@ impl TouchscreenPower {
 pub struct Backlight {
     brightness_path: PathBuf,
     saved_brightness: u16,
+    max_brightness: u16,
     /// The last value a fade wrote, so `off` does not mistake a ramp's
     /// dimmed level for the user's brightness.
     last_written: std::cell::Cell<Option<u16>>,
+    history: std::cell::RefCell<std::collections::VecDeque<(u64, u16)>>,
 }
 
 impl Backlight {
@@ -200,8 +202,56 @@ impl Backlight {
         Ok(Self {
             brightness_path,
             saved_brightness,
+            max_brightness,
             last_written: std::cell::Cell::new(None),
+            history: std::cell::RefCell::new(std::collections::VecDeque::new()),
         })
+    }
+
+    /// Every value written, with CLOCK_BOOTTIME: which backlight a light
+    /// reading was measured under.
+    fn record(&self, value: u16) {
+        let mut history = self.history.borrow_mut();
+        if history.back().is_some_and(|&(_, last)| last == value) {
+            return;
+        }
+        history.push_back((crate::light::boottime_ns(), value));
+        while history.len() > 256 {
+            history.pop_front();
+        }
+    }
+
+    /// The backlight at `at_ns`, if it had not changed in the `settle_ns`
+    /// before (the sensor integrates over that time).
+    pub fn steady_at(&self, at_ns: u64, settle_ns: u64) -> Option<u16> {
+        let history = self.history.borrow();
+        let index = history.iter().rposition(|&(when, _)| when <= at_ns)?;
+        let (since, value) = history[index];
+        (at_ns.saturating_sub(since) >= settle_ns).then_some(value)
+    }
+
+    /// The backlight at `at_ns`, steady or not.
+    pub fn value_at(&self, at_ns: u64) -> Option<u16> {
+        let history = self.history.borrow();
+        history
+            .iter()
+            .rev()
+            .find(|&&(when, _)| when <= at_ns)
+            .map(|&(_, value)| value)
+    }
+
+    pub fn max(&self) -> u16 {
+        self.max_brightness
+    }
+
+    pub fn saved(&self) -> u16 {
+        self.saved_brightness
+    }
+
+    /// The level `on` restores and fades end at (the brightness backend's
+    /// current level). Writes nothing by itself.
+    pub fn set_saved(&mut self, value: u16) {
+        self.saved_brightness = value.clamp(1, self.max_brightness.max(1));
     }
 
     pub fn off(&mut self) -> io::Result<()> {
@@ -212,11 +262,13 @@ impl Backlight {
                 }
             }
         }
+        self.record(0);
         fs::write(&self.brightness_path, b"0\n")
     }
 
     pub fn on(&self) -> io::Result<()> {
         self.last_written.set(None);
+        self.record(self.saved_brightness);
         fs::write(
             &self.brightness_path,
             format!("{}\n", self.saved_brightness),
@@ -231,6 +283,7 @@ impl Backlight {
             return Ok(());
         }
         self.last_written.set(Some(value));
+        self.record(value);
         fs::write(&self.brightness_path, format!("{value}\n"))
     }
 }

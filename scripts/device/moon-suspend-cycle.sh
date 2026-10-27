@@ -173,16 +173,37 @@ printf 'disabled\n' >"$usb" || fail wake_policy_failed
 
 # Android AlarmManager may have left an RTC alarm armed before the framework
 # handoff. Moon cannot service those Android alarms, so never let one convert a
-# normal screen-off into an unsolicited full wake. Item 11 will replace this
-# clear with Moon's own alarm schedule. The root-only proof command installs its
-# explicitly bounded alarm after the clear.
+# normal screen-off into an unsolicited full wake: clear it, then arm Moon's
+# own. moon-notifyd keeps the next alarm/timer time (Unix seconds) in
+# next-wake; wake 60 s early because the warm reboot after a wake takes ~45 s
+# to bring Moon back, and moon-notifyd rings anything less than 15 minutes
+# late. The root-only proof command arms its own bounded alarm instead.
 echo 0 >/sys/class/rtc/rtc0/wakealarm || fail rtc_arm_failed
 alarm=0
+wake_reason=''
+NEXT_WAKE="$ROOT/var/lib/moon-notify/next-wake"
 if [ "$TEST_SECONDS" -gt 0 ]; then
     now="$(cat /sys/class/rtc/rtc0/since_epoch)"
     echo "+$TEST_SECONDS" >/sys/class/rtc/rtc0/wakealarm || fail rtc_arm_failed
     alarm="$(cat /sys/class/rtc/rtc0/wakealarm)"
     [ "$alarm" -ge $((now + TEST_SECONDS - 1)) ] || fail rtc_arm_failed
+    wake_reason=rtc_test
+else
+    next_wake="$(head -n 1 "$NEXT_WAKE" 2>/dev/null || true)"
+    case "$next_wake" in
+        ''|*[!0-9]*) ;;
+        *)
+            # wakealarm counts in RTC time; correct for any RTC offset.
+            rtc_now="$(cat /sys/class/rtc/rtc0/since_epoch)"
+            target=$((next_wake - 60 - $(date +%s) + rtc_now))
+            [ "$target" -ge $((rtc_now + 2)) ] || target=$((rtc_now + 2))
+            echo "$target" >/sys/class/rtc/rtc0/wakealarm || fail rtc_arm_failed
+            alarm="$(cat /sys/class/rtc/rtc0/wakealarm)"
+            [ "$alarm" = "$target" ] || fail rtc_arm_failed
+            wake_reason=moon_alarm
+            log "armed RTC for moon-notifyd next-wake=$next_wake rtc_alarm=$alarm"
+            ;;
+    esac
 fi
 
 irq_count() {
@@ -224,10 +245,10 @@ while :; do
         wake_kind=power_key
         break
     fi
-    if [ "$TEST_SECONDS" -gt 0 ] && {
+    if [ "$alarm" -gt 0 ] && {
        [ "$rtc_irq_after" -gt "$rtc_irq_before" ] || [ "$after" -ge "$alarm" ];
     }; then
-        wake_kind=rtc_test
+        wake_kind=$wake_reason
         break
     fi
 

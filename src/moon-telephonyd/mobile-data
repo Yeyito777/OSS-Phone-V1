@@ -1,0 +1,91 @@
+#!/system/bin/sh
+# moon-telephonyd's mobile-data hook (runs as root in Android's namespace).
+#
+#   mobile-data up IFNAME MTU "ADDRESSES" "GATEWAYS" "DNS"
+#   mobile-data down IFNAME
+#
+# ADDRESSES/GATEWAYS/DNS are the space-separated lists rild returned for the
+# data call (addresses carry a prefix length, e.g. "10.1.2.3/30 2001:db8::1/64").
+# Routing follows the Wi-Fi backend's scheme (a26-system's a26-udhcpc.script):
+# a per-interface table 1000+ifindex and one policy rule. Mobile data's rule
+# sits after Wi-Fi's (10550), so Wi-Fi wins whenever it has a route and the
+# phone falls back to mobile data when it does not.
+set -u
+
+IP=/system/bin/ip
+CHROOT=/data/local/a26-linux
+RULE_PRIORITY=10560
+
+iface=${2:-}
+case "$iface" in ''|*[!A-Za-z0-9_.-]*) echo "mobile-data: bad interface" >&2; exit 2 ;; esac
+[ -r "/sys/class/net/$iface/ifindex" ] || { echo "mobile-data: no $iface" >&2; exit 1; }
+table=$((1000 + $(cat "/sys/class/net/$iface/ifindex")))
+
+clear_routes() {
+    while $IP rule del priority "$RULE_PRIORITY" 2>/dev/null; do :; done
+    while $IP -6 rule del priority "$RULE_PRIORITY" 2>/dev/null; do :; done
+    $IP route flush table "$table" 2>/dev/null
+    $IP -6 route flush table "$table" 2>/dev/null
+    $IP addr flush dev "$iface" 2>/dev/null
+}
+
+wifi_active() {
+    $IP rule show 2>/dev/null | grep -q '^10550:'
+}
+
+write_dns() {
+    resolv="$CHROOT/etc/resolv.conf"
+    tmp="$resolv.mobile"
+    : > "$tmp"
+    for server in $1; do
+        case "$server" in *[!0-9a-fA-F:.]*) continue ;; esac
+        echo "nameserver $server" >> "$tmp"
+    done
+    printf '%s\n' 'nameserver 1.1.1.1' 'options timeout:2 attempts:2' >> "$tmp"
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$resolv"
+}
+
+case "${1:-}" in
+up)
+    mtu=${3:-0}
+    addresses=${4:-}
+    gateways=${5:-}
+    dns=${6:-}
+    clear_routes
+    $IP link set dev "$iface" up || exit 1
+    case "$mtu" in ''|*[!0-9]*) mtu=0 ;; esac
+    [ "$mtu" -ge 1280 ] && $IP link set dev "$iface" mtu "$mtu"
+    have4=0
+    have6=0
+    for address in $addresses; do
+        case "$address" in
+        *:*) $IP -6 addr add "$address" dev "$iface" && have6=1 ;;
+        */*) $IP -4 addr add "$address" dev "$iface" && have4=1 ;;
+        *) $IP -4 addr add "$address/32" dev "$iface" && have4=1 ;;
+        esac
+    done
+    # rmnet is a point-to-point raw-IP link: routes go straight to the
+    # device; a gateway, when given, is only a hint.
+    if [ "$have4" = 1 ]; then
+        $IP route replace table "$table" default dev "$iface"
+        $IP rule add priority "$RULE_PRIORITY" lookup "$table"
+    fi
+    if [ "$have6" = 1 ]; then
+        $IP -6 route replace table "$table" default dev "$iface"
+        $IP -6 rule add priority "$RULE_PRIORITY" lookup "$table"
+    fi
+    wifi_active || write_dns "$dns"
+    echo "mobile-data: $iface up ($addresses)"
+    ;;
+down)
+    clear_routes
+    $IP link set dev "$iface" down 2>/dev/null
+    echo "mobile-data: $iface down"
+    ;;
+*)
+    echo "usage: mobile-data up IFNAME MTU ADDRESSES GATEWAYS DNS | down IFNAME" >&2
+    exit 2
+    ;;
+esac
+exit 0

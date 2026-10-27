@@ -282,7 +282,7 @@ impl KeyAction {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyboardInput {
     Character(char),
     Backspace,

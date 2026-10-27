@@ -46,11 +46,18 @@ if pid_runs "$BASE/moon-audiod" "$pid"; then
     kill -KILL "$pid" 2>/dev/null || true
 fi
 
-# The native permission stand-in must be gone before the Java framework
-# starts, so system_server's own "permission" service is the only one.
+# The native stand-ins ("permission", "audio") must be gone before the Java
+# framework starts, so system_server's own services are the only ones.
 pid="$(cat "$PERMISSION_PIDFILE" 2>/dev/null || true)"
 if pid_runs "$BASE/moon-permissiond" "$pid"; then
     kill -KILL "$pid" 2>/dev/null || true
+    # AudioFlinger keeps the first "audio" service it found for good; restart
+    # audioserver (not a crash: init stop/start) so it binds to the
+    # framework's real AudioService instead of the stand-in's dead binder.
+    if [ "$(getprop init.svc.zygote)" != running ]; then
+        /system/bin/stop audioserver 2>/dev/null || true
+        /system/bin/start audioserver 2>/dev/null || true
+    fi
 fi
 
 rm -f "$PIDFILE" "$PERMISSION_PIDFILE" "$RUNTIME/pcm" "$RUNTIME/browser-media-active"

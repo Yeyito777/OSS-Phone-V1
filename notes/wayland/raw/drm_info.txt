@@ -1,0 +1,709 @@
+Node: /dev/dri/card0
+├───Driver: exynos-drmdpu (Samsung SoC DRM) version 1.0.0 (20110530)
+│   ├───DRM_CLIENT_CAP_STEREO_3D supported
+│   ├───DRM_CLIENT_CAP_UNIVERSAL_PLANES supported
+│   ├───DRM_CLIENT_CAP_ATOMIC supported
+│   ├───DRM_CLIENT_CAP_ASPECT_RATIO supported
+│   ├───DRM_CLIENT_CAP_WRITEBACK_CONNECTORS supported
+│   ├───DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT not supported
+│   ├───DRM_CAP_DUMB_BUFFER = 1
+│   ├───DRM_CAP_VBLANK_HIGH_CRTC = 1
+│   ├───DRM_CAP_DUMB_PREFERRED_DEPTH = 0
+│   ├───DRM_CAP_DUMB_PREFER_SHADOW = 0
+│   ├───DRM_CAP_PRIME = 3
+│   ├───DRM_CAP_TIMESTAMP_MONOTONIC = 1
+│   ├───DRM_CAP_ASYNC_PAGE_FLIP = 0
+│   ├───DRM_CAP_CURSOR_WIDTH = 64
+│   ├───DRM_CAP_CURSOR_HEIGHT = 64
+│   ├───DRM_CAP_ADDFB2_MODIFIERS = 1
+│   ├───DRM_CAP_PAGE_FLIP_TARGET = 0
+│   ├───DRM_CAP_CRTC_IN_VBLANK_EVENT = 1
+│   ├───DRM_CAP_SYNCOBJ = 0
+│   ├───DRM_CAP_SYNCOBJ_TIMELINE = 0
+│   └───DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP not supported
+├───Device: platform exynos-drm
+│   ├───Bus: exynos-drm
+│   └───Available nodes: primary, render
+├───Framebuffer size
+│   ├───Width: [0, 8192]
+│   └───Height: [0, 8192]
+├───Connectors
+│   ├───Connector 0
+│   │   ├───Object ID: 115
+│   │   ├───Type: writeback
+│   │   ├───Status: connected
+│   │   ├───Physical size: 0×0 mm
+│   │   ├───Subpixel: unknown
+│   │   ├───Encoders: {0}
+│   │   ├───Modes
+│   │   │   └───4096×4096@33.10 preferred driver phsync nvsync 
+│   │   └───Properties
+│   │       ├───"DPMS": enum {On, Standby, Suspend, Off} = On
+│   │       ├───"link-status": enum {Good, Bad} = Good
+│   │       ├───"non-desktop" (immutable): range [0, 1] = 0
+│   │       ├───"TILE" (immutable): blob = 0
+│   │       ├───"CRTC_ID" (atomic): object CRTC = 0
+│   │       ├───"WRITEBACK_OUT_FENCE_PTR" (atomic): range [0, UINT64_MAX] = 0
+│   │       ├───"WRITEBACK_FB_ID" (atomic): object framebuffer = 0
+│   │       ├───"WRITEBACK_PIXEL_FORMATS" (atomic, immutable): blob = 113
+│   │       │   ├───ABGR8888 (0x34324241)
+│   │       │   └───NV12 (0x3231564e)
+│   │       ├───"standard": enum {Unspecified, BT709, BT601_625, BT601_625_UNADJUSTED, BT601_525, BT601_525_UNADJUSTED, BT2020, BT2020_CONSTANT_LUMINANCE, BT470M, FILM, DCI-P3, Adobe RGB} = Unspecified
+│   │       ├───"range": enum {Unspecified, Full, Limited, Extended} = Unspecified
+│   │       └───"hw restrictions" (immutable): blob = 118
+│   └───Connector 1
+│       ├───Object ID: 123
+│       ├───Type: DSI
+│       ├───Status: connected
+│       ├───Physical size: 71×154 mm
+│       ├───Subpixel: unknown
+│       ├───Encoders: {1}
+│       ├───Modes
+│       │   ├───1080×2340@120.00 preferred driver 
+│       │   └───1080×2340@60.00 driver 
+│       └───Properties
+│           ├───"EDID" (immutable): blob = 124
+│           ├───"DPMS": enum {On, Standby, Suspend, Off} = Off
+│           ├───"link-status": enum {Good, Bad} = Good
+│           ├───"non-desktop" (immutable): range [0, 1] = 0
+│           ├───"TILE" (immutable): blob = 0
+│           ├───"CRTC_ID" (atomic): object CRTC = 120
+│           ├───"min_luminance": range [0, UINT32_MAX] = 0
+│           ├───"max_luminance": range [0, UINT32_MAX] = 0
+│           ├───"max_avg_luminance": range [0, UINT32_MAX] = 0
+│           ├───"hdr_formats": bitmask {Dolby Vision, HDR10, HLG} = ()
+│           └───"adjusted_fps": range [0, UINT32_MAX] = 120
+├───Encoders
+│   ├───Encoder 0
+│   │   ├───Object ID: 114
+│   │   ├───Type: virtual
+│   │   ├───CRTCS: {1}
+│   │   └───Clones: {0, 1}
+│   └───Encoder 1
+│       ├───Object ID: 122
+│       ├───Type: DSI
+│       ├───CRTCS: {0}
+│       └───Clones: {0, 1}
+├───CRTCs
+│   ├───CRTC 0
+│   │   ├───Object ID: 120
+│   │   ├───Legacy info
+│   │   │   ├───Mode: 1080×2340@120.00 
+│   │   │   └───Gamma size: 0
+│   │   └───Properties
+│   │       ├───"ACTIVE" (atomic): range [0, 1] = 0
+│   │       ├───"MODE_ID" (atomic): blob = 128
+│   │       │   └───1080×2340@120.00 
+│   │       ├───"OUT_FENCE_PTR" (atomic): range [0, UINT64_MAX] = 0
+│   │       ├───"VRR_ENABLED": range [0, 1] = 0
+│   │       ├───"color mode": enum {Native, DCI-P3, SRGB, BT601-625, BT601-625-UNADJUSTED, BT601-525, BT601-525-UNADJUSTED, BT709, ADOBE-RGB, DISPLAY-P3, BT2020, BT2100-PQ, BT2100-HLG, CUSTOM-0, CUSTOM-1, CUSTOM-2, CUSTOM-3, CUSTOM-4, CUSTOM-5, CUSTOM-6, CUSTOM-7, CUSTOM-8, CUSTOM-9, CUSTOM-10, CUSTOM-11, CUSTOM-12, CUSTOM-13, CUSTOM-14, CUSTOM-15, CUSTOM-16, CUSTOM-17, CUSTOM-18, CUSTOM-19, CUSTOM-20, CUSTOM-21, CUSTOM-22, CUSTOM-23, CUSTOM-24, CUSTOM-25, CUSTOM-26, CUSTOM-27, CUSTOM-28, CUSTOM-29} = Native
+│   │       ├───"render intent": enum {Colorimetric, Enhance, Tone Map Colorimetric, Tone Map Enhance, CUSTOM-0, CUSTOM-1, CUSTOM-2, CUSTOM-3} = Colorimetric
+│   │       ├───"DQE_FD": srange [-1, 1023] = 0
+│   │       ├───"adjusted_vblank": srange [0, INT64_MAX] = 2830314133217
+│   │       ├───"dsr_status": range [0, 1] = 0
+│   │       ├───"operation_mode" (immutable): enum {video_mode, command_mode} = video_mode
+│   │       ├───"modeset_only": range [0, 1] = 0
+│   │       ├───"partial_region": blob = 126
+│   │       └───"bts_fps": range [0, UINT64_MAX] = 120
+│   └───CRTC 1
+│       ├───Object ID: 121
+│       ├───Legacy info
+│       │   └───Gamma size: 0
+│       └───Properties
+│           ├───"ACTIVE" (atomic): range [0, 1] = 0
+│           ├───"MODE_ID" (atomic): blob = 0
+│           ├───"OUT_FENCE_PTR" (atomic): range [0, UINT64_MAX] = 0
+│           └───"VRR_ENABLED": range [0, 1] = 0
+└───Planes
+    ├───Plane 0
+    │   ├───Object ID: 54
+    │   ├───CRTCs: {0, 1}
+    │   ├───Legacy info
+    │   │   ├───FB ID: 127
+    │   │   │   ├───Object ID: 127
+    │   │   │   ├───Size: 1080×2340
+    │   │   │   ├───Format: XRGB8888 (0x34325258)
+    │   │   │   ├───Modifier: DRM_FORMAT_MOD_LINEAR (0x0000000000000000)
+    │   │   │   └───Planes:
+    │   │   │       └───Plane 0: offset = 0, pitch = 4320 bytes
+    │   │   └───Formats:
+    │   │       ├───ARGB8888 (0x34325241)
+    │   │       ├───ABGR8888 (0x34324241)
+    │   │       ├───RGBA8888 (0x34324152)
+    │   │       ├───BGRA8888 (0x34324142)
+    │   │       ├───XRGB8888 (0x34325258)
+    │   │       ├───XBGR8888 (0x34324258)
+    │   │       ├───RGBX8888 (0x34325852)
+    │   │       ├───BGRX8888 (0x34325842)
+    │   │       ├───RGB565 (0x36314752)
+    │   │       ├───BGR565 (0x36314742)
+    │   │       ├───ARGB2101010 (0x30335241)
+    │   │       ├───ABGR2101010 (0x30334241)
+    │   │       ├───RGBA1010102 (0x30334152)
+    │   │       └───BGRA1010102 (0x30334142)
+    │   └───Properties
+    │       ├───"type" (immutable): enum {Overlay, Primary, Cursor} = Primary
+    │       ├───"FB_ID" (atomic): object framebuffer = 127
+    │       │   ├───Object ID: 127
+    │       │   ├───Size: 1080×2340
+    │       │   ├───Format: XRGB8888 (0x34325258)
+    │       │   ├───Modifier: DRM_FORMAT_MOD_LINEAR (0x0000000000000000)
+    │       │   └───Planes:
+    │       │       └───Plane 0: offset = 0, pitch = 4320 bytes
+    │       ├───"IN_FENCE_FD" (atomic): srange [-1, INT32_MAX] = -1
+    │       ├───"CRTC_ID" (atomic): object CRTC = 120
+    │       ├───"CRTC_X" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_Y" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_W" (atomic): range [0, INT32_MAX] = 1080
+    │       ├───"CRTC_H" (atomic): range [0, INT32_MAX] = 2340
+    │       ├───"SRC_X" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_Y" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_W" (atomic): range [0, UINT32_MAX] = 1080
+    │       ├───"SRC_H" (atomic): range [0, UINT32_MAX] = 2340
+    │       ├───"IN_FORMATS" (immutable): blob = 55
+    │       │   ├───unknown (0x0400000000000004)
+    │       │   │   └───BGRA8888 (0x34324142)
+    │       │   └───unknown (0x0008000000000000)
+    │       │       ├───ARGB8888 (0x34325241)
+    │       │       ├───ABGR8888 (0x34324241)
+    │       │       ├───RGBA8888 (0x34324152)
+    │       │       ├───BGRA8888 (0x34324142)
+    │       │       ├───XRGB8888 (0x34325258)
+    │       │       ├───XBGR8888 (0x34324258)
+    │       │       ├───RGBX8888 (0x34325852)
+    │       │       ├───BGRX8888 (0x34325842)
+    │       │       ├───RGB565 (0x36314752)
+    │       │       ├───BGR565 (0x36314742)
+    │       │       ├───ARGB2101010 (0x30335241)
+    │       │       ├───ABGR2101010 (0x30334241)
+    │       │       ├───RGBA1010102 (0x30334152)
+    │       │       └───BGRA1010102 (0x30334142)
+    │       ├───"alpha": range [0, UINT16_MAX] = 65535
+    │       ├───"pixel blend mode": enum {None, Pre-multiplied, Coverage} = None
+    │       ├───"zpos": range [0, 8] = 0
+    │       ├───"rotation": bitmask {rotate-0, rotate-180, reflect-x, reflect-y} = (rotate-0)
+    │       ├───"HDR_FD": srange [-1, 1023] = 16
+    │       ├───"hw restrictions" (immutable): blob = 60
+    │       ├───"standard": enum {Unspecified, BT709, BT601_625, BT601_625_UNADJUSTED, BT601_525, BT601_525_UNADJUSTED, BT2020, BT2020_CONSTANT_LUMINANCE, BT470M, FILM, DCI-P3, Adobe RGB} = BT709
+    │       ├───"transfer": enum {Unspecified, Linear, sRGB, SMPTE 170M, Gamma 2.2, Gamma 2.6, Gamma 2.8, ST2084, HLG} = sRGB
+    │       ├───"range": enum {Unspecified, Full, Limited, Extended} = Full
+    │       └───"colormap": range [0, UINT32_MAX] = 0
+    ├───Plane 1
+    │   ├───Object ID: 61
+    │   ├───CRTCs: {0, 1}
+    │   ├───Legacy info
+    │   │   ├───FB ID: 0
+    │   │   └───Formats:
+    │   │       ├───ARGB8888 (0x34325241)
+    │   │       ├───ABGR8888 (0x34324241)
+    │   │       ├───RGBA8888 (0x34324152)
+    │   │       ├───BGRA8888 (0x34324142)
+    │   │       ├───XRGB8888 (0x34325258)
+    │   │       ├───XBGR8888 (0x34324258)
+    │   │       ├───RGBX8888 (0x34325852)
+    │   │       ├───BGRX8888 (0x34325842)
+    │   │       ├───RGB565 (0x36314752)
+    │   │       ├───BGR565 (0x36314742)
+    │   │       ├───ARGB2101010 (0x30335241)
+    │   │       ├───ABGR2101010 (0x30334241)
+    │   │       ├───RGBA1010102 (0x30334152)
+    │   │       ├───BGRA1010102 (0x30334142)
+    │   │       ├───NV12 (0x3231564e)
+    │   │       ├───NV21 (0x3132564e)
+    │   │       └───P010 (0x30313050)
+    │   └───Properties
+    │       ├───"type" (immutable): enum {Overlay, Primary, Cursor} = Primary
+    │       ├───"FB_ID" (atomic): object framebuffer = 0
+    │       ├───"IN_FENCE_FD" (atomic): srange [-1, INT32_MAX] = -1
+    │       ├───"CRTC_ID" (atomic): object CRTC = 0
+    │       ├───"CRTC_X" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_Y" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_W" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"CRTC_H" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"SRC_X" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_Y" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_W" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_H" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"IN_FORMATS" (immutable): blob = 62
+    │       │   ├───unknown (0x0400000000000004)
+    │       │   │   └───BGRA8888 (0x34324142)
+    │       │   ├───unknown (0x0008000000000000)
+    │       │   │   ├───ARGB8888 (0x34325241)
+    │       │   │   ├───ABGR8888 (0x34324241)
+    │       │   │   ├───RGBA8888 (0x34324152)
+    │       │   │   ├───BGRA8888 (0x34324142)
+    │       │   │   ├───XRGB8888 (0x34325258)
+    │       │   │   ├───XBGR8888 (0x34324258)
+    │       │   │   ├───RGBX8888 (0x34325852)
+    │       │   │   ├───BGRX8888 (0x34325842)
+    │       │   │   ├───RGB565 (0x36314752)
+    │       │   │   ├───BGR565 (0x36314742)
+    │       │   │   ├───ARGB2101010 (0x30335241)
+    │       │   │   ├───ABGR2101010 (0x30334241)
+    │       │   │   ├───RGBA1010102 (0x30334152)
+    │       │   │   ├───BGRA1010102 (0x30334142)
+    │       │   │   ├───NV12 (0x3231564e)
+    │       │   │   ├───NV21 (0x3132564e)
+    │       │   │   └───P010 (0x30313050)
+    │       │   ├───ARM_AFBC(BLOCK_SIZE = unknown) (0x0800000000000000)
+    │       │   │   ├───ARGB8888 (0x34325241)
+    │       │   │   ├───ABGR8888 (0x34324241)
+    │       │   │   ├───RGBA8888 (0x34324152)
+    │       │   │   ├───BGRA8888 (0x34324142)
+    │       │   │   ├───XRGB8888 (0x34325258)
+    │       │   │   ├───XBGR8888 (0x34324258)
+    │       │   │   ├───RGBX8888 (0x34325852)
+    │       │   │   ├───BGRX8888 (0x34325842)
+    │       │   │   ├───RGB565 (0x36314752)
+    │       │   │   ├───BGR565 (0x36314742)
+    │       │   │   ├───ARGB2101010 (0x30335241)
+    │       │   │   └───ABGR2101010 (0x30334241)
+    │       │   └───unknown (0x0400000000000010)
+    │       │       ├───NV12 (0x3231564e)
+    │       │       ├───NV21 (0x3132564e)
+    │       │       └───P010 (0x30313050)
+    │       ├───"alpha": range [0, UINT16_MAX] = 65535
+    │       ├───"pixel blend mode": enum {None, Pre-multiplied, Coverage} = Pre-multiplied
+    │       ├───"zpos": range [0, 8] = 1
+    │       ├───"rotation": bitmask {rotate-0, rotate-90, rotate-180, rotate-270, reflect-x, reflect-y} = ()
+    │       ├───"split": enum {No Split, Split Left, Split Right, Split Top, Split Bottom} = No Split
+    │       ├───"HDR_FD": srange [-1, 1023] = 0
+    │       ├───"hw restrictions" (immutable): blob = 67
+    │       ├───"standard": enum {Unspecified, BT709, BT601_625, BT601_625_UNADJUSTED, BT601_525, BT601_525_UNADJUSTED, BT2020, BT2020_CONSTANT_LUMINANCE, BT470M, FILM, DCI-P3, Adobe RGB} = Unspecified
+    │       ├───"transfer": enum {Unspecified, Linear, sRGB, SMPTE 170M, Gamma 2.2, Gamma 2.6, Gamma 2.8, ST2084, HLG} = Unspecified
+    │       ├───"range": enum {Unspecified, Full, Limited, Extended} = Unspecified
+    │       └───"colormap": range [0, UINT32_MAX] = 0
+    ├───Plane 2
+    │   ├───Object ID: 68
+    │   ├───CRTCs: {0, 1}
+    │   ├───Legacy info
+    │   │   ├───FB ID: 0
+    │   │   └───Formats:
+    │   │       ├───ARGB8888 (0x34325241)
+    │   │       ├───ABGR8888 (0x34324241)
+    │   │       ├───RGBA8888 (0x34324152)
+    │   │       ├───BGRA8888 (0x34324142)
+    │   │       ├───XRGB8888 (0x34325258)
+    │   │       ├───XBGR8888 (0x34324258)
+    │   │       ├───RGBX8888 (0x34325852)
+    │   │       ├───BGRX8888 (0x34325842)
+    │   │       ├───RGB565 (0x36314752)
+    │   │       ├───BGR565 (0x36314742)
+    │   │       ├───ARGB2101010 (0x30335241)
+    │   │       ├───ABGR2101010 (0x30334241)
+    │   │       ├───RGBA1010102 (0x30334152)
+    │   │       └───BGRA1010102 (0x30334142)
+    │   └───Properties
+    │       ├───"type" (immutable): enum {Overlay, Primary, Cursor} = Overlay
+    │       ├───"FB_ID" (atomic): object framebuffer = 0
+    │       ├───"IN_FENCE_FD" (atomic): srange [-1, INT32_MAX] = -1
+    │       ├───"CRTC_ID" (atomic): object CRTC = 0
+    │       ├───"CRTC_X" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_Y" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_W" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"CRTC_H" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"SRC_X" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_Y" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_W" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_H" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"IN_FORMATS" (immutable): blob = 69
+    │       │   ├───unknown (0x0400000000000004)
+    │       │   │   └───BGRA8888 (0x34324142)
+    │       │   ├───unknown (0x0008000000000000)
+    │       │   │   ├───ARGB8888 (0x34325241)
+    │       │   │   ├───ABGR8888 (0x34324241)
+    │       │   │   ├───RGBA8888 (0x34324152)
+    │       │   │   ├───BGRA8888 (0x34324142)
+    │       │   │   ├───XRGB8888 (0x34325258)
+    │       │   │   ├───XBGR8888 (0x34324258)
+    │       │   │   ├───RGBX8888 (0x34325852)
+    │       │   │   ├───BGRX8888 (0x34325842)
+    │       │   │   ├───RGB565 (0x36314752)
+    │       │   │   ├───BGR565 (0x36314742)
+    │       │   │   ├───ARGB2101010 (0x30335241)
+    │       │   │   ├───ABGR2101010 (0x30334241)
+    │       │   │   ├───RGBA1010102 (0x30334152)
+    │       │   │   └───BGRA1010102 (0x30334142)
+    │       │   └───ARM_AFBC(BLOCK_SIZE = unknown) (0x0800000000000000)
+    │       │       ├───ARGB8888 (0x34325241)
+    │       │       ├───ABGR8888 (0x34324241)
+    │       │       ├───RGBA8888 (0x34324152)
+    │       │       ├───BGRA8888 (0x34324142)
+    │       │       ├───XRGB8888 (0x34325258)
+    │       │       ├───XBGR8888 (0x34324258)
+    │       │       ├───RGBX8888 (0x34325852)
+    │       │       ├───BGRX8888 (0x34325842)
+    │       │       ├───RGB565 (0x36314752)
+    │       │       ├───BGR565 (0x36314742)
+    │       │       ├───ARGB2101010 (0x30335241)
+    │       │       └───ABGR2101010 (0x30334241)
+    │       ├───"alpha": range [0, UINT16_MAX] = 65535
+    │       ├───"pixel blend mode": enum {None, Pre-multiplied, Coverage} = Pre-multiplied
+    │       ├───"zpos": range [0, 8] = 2
+    │       ├───"rotation": bitmask {rotate-0, rotate-180, reflect-x, reflect-y} = ()
+    │       ├───"HDR_FD": srange [-1, 1023] = 0
+    │       ├───"hw restrictions" (immutable): blob = 74
+    │       ├───"standard": enum {Unspecified, BT709, BT601_625, BT601_625_UNADJUSTED, BT601_525, BT601_525_UNADJUSTED, BT2020, BT2020_CONSTANT_LUMINANCE, BT470M, FILM, DCI-P3, Adobe RGB} = Unspecified
+    │       ├───"transfer": enum {Unspecified, Linear, sRGB, SMPTE 170M, Gamma 2.2, Gamma 2.6, Gamma 2.8, ST2084, HLG} = Unspecified
+    │       ├───"range": enum {Unspecified, Full, Limited, Extended} = Unspecified
+    │       └───"colormap": range [0, UINT32_MAX] = 0
+    ├───Plane 3
+    │   ├───Object ID: 75
+    │   ├───CRTCs: {0, 1}
+    │   ├───Legacy info
+    │   │   ├───FB ID: 0
+    │   │   └───Formats:
+    │   │       ├───ARGB8888 (0x34325241)
+    │   │       ├───ABGR8888 (0x34324241)
+    │   │       ├───RGBA8888 (0x34324152)
+    │   │       ├───BGRA8888 (0x34324142)
+    │   │       ├───XRGB8888 (0x34325258)
+    │   │       ├───XBGR8888 (0x34324258)
+    │   │       ├───RGBX8888 (0x34325852)
+    │   │       ├───BGRX8888 (0x34325842)
+    │   │       ├───RGB565 (0x36314752)
+    │   │       ├───BGR565 (0x36314742)
+    │   │       ├───ARGB2101010 (0x30335241)
+    │   │       ├───ABGR2101010 (0x30334241)
+    │   │       ├───RGBA1010102 (0x30334152)
+    │   │       ├───BGRA1010102 (0x30334142)
+    │   │       ├───NV12 (0x3231564e)
+    │   │       ├───NV21 (0x3132564e)
+    │   │       └───P010 (0x30313050)
+    │   └───Properties
+    │       ├───"type" (immutable): enum {Overlay, Primary, Cursor} = Overlay
+    │       ├───"FB_ID" (atomic): object framebuffer = 0
+    │       ├───"IN_FENCE_FD" (atomic): srange [-1, INT32_MAX] = -1
+    │       ├───"CRTC_ID" (atomic): object CRTC = 0
+    │       ├───"CRTC_X" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_Y" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_W" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"CRTC_H" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"SRC_X" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_Y" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_W" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_H" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"IN_FORMATS" (immutable): blob = 76
+    │       │   ├───unknown (0x0400000000000004)
+    │       │   │   └───BGRA8888 (0x34324142)
+    │       │   ├───unknown (0x0008000000000000)
+    │       │   │   ├───ARGB8888 (0x34325241)
+    │       │   │   ├───ABGR8888 (0x34324241)
+    │       │   │   ├───RGBA8888 (0x34324152)
+    │       │   │   ├───BGRA8888 (0x34324142)
+    │       │   │   ├───XRGB8888 (0x34325258)
+    │       │   │   ├───XBGR8888 (0x34324258)
+    │       │   │   ├───RGBX8888 (0x34325852)
+    │       │   │   ├───BGRX8888 (0x34325842)
+    │       │   │   ├───RGB565 (0x36314752)
+    │       │   │   ├───BGR565 (0x36314742)
+    │       │   │   ├───ARGB2101010 (0x30335241)
+    │       │   │   ├───ABGR2101010 (0x30334241)
+    │       │   │   ├───RGBA1010102 (0x30334152)
+    │       │   │   ├───BGRA1010102 (0x30334142)
+    │       │   │   ├───NV12 (0x3231564e)
+    │       │   │   ├───NV21 (0x3132564e)
+    │       │   │   └───P010 (0x30313050)
+    │       │   └───unknown (0x0400000000000010)
+    │       │       ├───NV12 (0x3231564e)
+    │       │       ├───NV21 (0x3132564e)
+    │       │       └───P010 (0x30313050)
+    │       ├───"alpha": range [0, UINT16_MAX] = 65535
+    │       ├───"pixel blend mode": enum {None, Pre-multiplied, Coverage} = Pre-multiplied
+    │       ├───"zpos": range [0, 8] = 3
+    │       ├───"rotation": bitmask {rotate-0, rotate-180, reflect-x, reflect-y} = ()
+    │       ├───"split": enum {No Split, Split Left, Split Right, Split Top, Split Bottom} = No Split
+    │       ├───"HDR_FD": srange [-1, 1023] = 0
+    │       ├───"hw restrictions" (immutable): blob = 81
+    │       ├───"standard": enum {Unspecified, BT709, BT601_625, BT601_625_UNADJUSTED, BT601_525, BT601_525_UNADJUSTED, BT2020, BT2020_CONSTANT_LUMINANCE, BT470M, FILM, DCI-P3, Adobe RGB} = Unspecified
+    │       ├───"transfer": enum {Unspecified, Linear, sRGB, SMPTE 170M, Gamma 2.2, Gamma 2.6, Gamma 2.8, ST2084, HLG} = Unspecified
+    │       ├───"range": enum {Unspecified, Full, Limited, Extended} = Unspecified
+    │       └───"colormap": range [0, UINT32_MAX] = 0
+    ├───Plane 4
+    │   ├───Object ID: 82
+    │   ├───CRTCs: {0, 1}
+    │   ├───Legacy info
+    │   │   ├───FB ID: 0
+    │   │   └───Formats:
+    │   │       ├───ARGB8888 (0x34325241)
+    │   │       ├───ABGR8888 (0x34324241)
+    │   │       ├───RGBA8888 (0x34324152)
+    │   │       ├───BGRA8888 (0x34324142)
+    │   │       ├───XRGB8888 (0x34325258)
+    │   │       ├───XBGR8888 (0x34324258)
+    │   │       ├───RGBX8888 (0x34325852)
+    │   │       ├───BGRX8888 (0x34325842)
+    │   │       ├───RGB565 (0x36314752)
+    │   │       ├───BGR565 (0x36314742)
+    │   │       ├───ARGB2101010 (0x30335241)
+    │   │       ├───ABGR2101010 (0x30334241)
+    │   │       ├───RGBA1010102 (0x30334152)
+    │   │       └───BGRA1010102 (0x30334142)
+    │   └───Properties
+    │       ├───"type" (immutable): enum {Overlay, Primary, Cursor} = Overlay
+    │       ├───"FB_ID" (atomic): object framebuffer = 0
+    │       ├───"IN_FENCE_FD" (atomic): srange [-1, INT32_MAX] = -1
+    │       ├───"CRTC_ID" (atomic): object CRTC = 0
+    │       ├───"CRTC_X" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_Y" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_W" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"CRTC_H" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"SRC_X" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_Y" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_W" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_H" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"IN_FORMATS" (immutable): blob = 83
+    │       │   ├───unknown (0x0400000000000004)
+    │       │   │   └───BGRA8888 (0x34324142)
+    │       │   ├───unknown (0x0008000000000000)
+    │       │   │   ├───ARGB8888 (0x34325241)
+    │       │   │   ├───ABGR8888 (0x34324241)
+    │       │   │   ├───RGBA8888 (0x34324152)
+    │       │   │   ├───BGRA8888 (0x34324142)
+    │       │   │   ├───XRGB8888 (0x34325258)
+    │       │   │   ├───XBGR8888 (0x34324258)
+    │       │   │   ├───RGBX8888 (0x34325852)
+    │       │   │   ├───BGRX8888 (0x34325842)
+    │       │   │   ├───RGB565 (0x36314752)
+    │       │   │   ├───BGR565 (0x36314742)
+    │       │   │   ├───ARGB2101010 (0x30335241)
+    │       │   │   ├───ABGR2101010 (0x30334241)
+    │       │   │   ├───RGBA1010102 (0x30334152)
+    │       │   │   └───BGRA1010102 (0x30334142)
+    │       │   └───ARM_AFBC(BLOCK_SIZE = unknown) (0x0800000000000000)
+    │       │       ├───ARGB8888 (0x34325241)
+    │       │       ├───ABGR8888 (0x34324241)
+    │       │       ├───RGBA8888 (0x34324152)
+    │       │       ├───BGRA8888 (0x34324142)
+    │       │       ├───XRGB8888 (0x34325258)
+    │       │       ├───XBGR8888 (0x34324258)
+    │       │       ├───RGBX8888 (0x34325852)
+    │       │       ├───BGRX8888 (0x34325842)
+    │       │       ├───RGB565 (0x36314752)
+    │       │       ├───BGR565 (0x36314742)
+    │       │       ├───ARGB2101010 (0x30335241)
+    │       │       └───ABGR2101010 (0x30334241)
+    │       ├───"alpha": range [0, UINT16_MAX] = 65535
+    │       ├───"pixel blend mode": enum {None, Pre-multiplied, Coverage} = Pre-multiplied
+    │       ├───"zpos": range [0, 8] = 4
+    │       ├───"rotation": bitmask {rotate-0, rotate-180, reflect-x, reflect-y} = ()
+    │       ├───"HDR_FD": srange [-1, 1023] = 0
+    │       ├───"hw restrictions" (immutable): blob = 88
+    │       ├───"standard": enum {Unspecified, BT709, BT601_625, BT601_625_UNADJUSTED, BT601_525, BT601_525_UNADJUSTED, BT2020, BT2020_CONSTANT_LUMINANCE, BT470M, FILM, DCI-P3, Adobe RGB} = Unspecified
+    │       ├───"transfer": enum {Unspecified, Linear, sRGB, SMPTE 170M, Gamma 2.2, Gamma 2.6, Gamma 2.8, ST2084, HLG} = Unspecified
+    │       ├───"range": enum {Unspecified, Full, Limited, Extended} = Unspecified
+    │       └───"colormap": range [0, UINT32_MAX] = 0
+    ├───Plane 5
+    │   ├───Object ID: 89
+    │   ├───CRTCs: {0, 1}
+    │   ├───Legacy info
+    │   │   ├───FB ID: 0
+    │   │   └───Formats:
+    │   │       ├───ARGB8888 (0x34325241)
+    │   │       ├───ABGR8888 (0x34324241)
+    │   │       ├───RGBA8888 (0x34324152)
+    │   │       ├───BGRA8888 (0x34324142)
+    │   │       ├───XRGB8888 (0x34325258)
+    │   │       ├───XBGR8888 (0x34324258)
+    │   │       ├───RGBX8888 (0x34325852)
+    │   │       ├───BGRX8888 (0x34325842)
+    │   │       ├───RGB565 (0x36314752)
+    │   │       ├───BGR565 (0x36314742)
+    │   │       ├───ARGB2101010 (0x30335241)
+    │   │       ├───ABGR2101010 (0x30334241)
+    │   │       ├───RGBA1010102 (0x30334152)
+    │   │       ├───BGRA1010102 (0x30334142)
+    │   │       ├───NV12 (0x3231564e)
+    │   │       ├───NV21 (0x3132564e)
+    │   │       └───P010 (0x30313050)
+    │   └───Properties
+    │       ├───"type" (immutable): enum {Overlay, Primary, Cursor} = Overlay
+    │       ├───"FB_ID" (atomic): object framebuffer = 0
+    │       ├───"IN_FENCE_FD" (atomic): srange [-1, INT32_MAX] = -1
+    │       ├───"CRTC_ID" (atomic): object CRTC = 0
+    │       ├───"CRTC_X" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_Y" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_W" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"CRTC_H" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"SRC_X" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_Y" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_W" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_H" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"IN_FORMATS" (immutable): blob = 90
+    │       │   ├───unknown (0x0400000000000004)
+    │       │   │   └───BGRA8888 (0x34324142)
+    │       │   └───unknown (0x0008000000000000)
+    │       │       ├───ARGB8888 (0x34325241)
+    │       │       ├───ABGR8888 (0x34324241)
+    │       │       ├───RGBA8888 (0x34324152)
+    │       │       ├───BGRA8888 (0x34324142)
+    │       │       ├───XRGB8888 (0x34325258)
+    │       │       ├───XBGR8888 (0x34324258)
+    │       │       ├───RGBX8888 (0x34325852)
+    │       │       ├───BGRX8888 (0x34325842)
+    │       │       ├───RGB565 (0x36314752)
+    │       │       ├───BGR565 (0x36314742)
+    │       │       ├───ARGB2101010 (0x30335241)
+    │       │       ├───ABGR2101010 (0x30334241)
+    │       │       ├───RGBA1010102 (0x30334152)
+    │       │       ├───BGRA1010102 (0x30334142)
+    │       │       ├───NV12 (0x3231564e)
+    │       │       ├───NV21 (0x3132564e)
+    │       │       └───P010 (0x30313050)
+    │       ├───"alpha": range [0, UINT16_MAX] = 65535
+    │       ├───"pixel blend mode": enum {None, Pre-multiplied, Coverage} = Pre-multiplied
+    │       ├───"zpos": range [0, 8] = 5
+    │       ├───"rotation": bitmask {rotate-0, rotate-180, reflect-x, reflect-y} = ()
+    │       ├───"split": enum {No Split, Split Left, Split Right, Split Top, Split Bottom} = No Split
+    │       ├───"HDR_FD": srange [-1, 1023] = 0
+    │       ├───"hw restrictions" (immutable): blob = 95
+    │       ├───"standard": enum {Unspecified, BT709, BT601_625, BT601_625_UNADJUSTED, BT601_525, BT601_525_UNADJUSTED, BT2020, BT2020_CONSTANT_LUMINANCE, BT470M, FILM, DCI-P3, Adobe RGB} = Unspecified
+    │       ├───"transfer": enum {Unspecified, Linear, sRGB, SMPTE 170M, Gamma 2.2, Gamma 2.6, Gamma 2.8, ST2084, HLG} = Unspecified
+    │       ├───"range": enum {Unspecified, Full, Limited, Extended} = Unspecified
+    │       └───"colormap": range [0, UINT32_MAX] = 0
+    ├───Plane 6
+    │   ├───Object ID: 96
+    │   ├───CRTCs: {0, 1}
+    │   ├───Legacy info
+    │   │   ├───FB ID: 0
+    │   │   └───Formats:
+    │   │       ├───ARGB8888 (0x34325241)
+    │   │       ├───ABGR8888 (0x34324241)
+    │   │       ├───RGBA8888 (0x34324152)
+    │   │       ├───BGRA8888 (0x34324142)
+    │   │       ├───XRGB8888 (0x34325258)
+    │   │       ├───XBGR8888 (0x34324258)
+    │   │       ├───RGBX8888 (0x34325852)
+    │   │       ├───BGRX8888 (0x34325842)
+    │   │       ├───RGB565 (0x36314752)
+    │   │       ├───BGR565 (0x36314742)
+    │   │       ├───ARGB2101010 (0x30335241)
+    │   │       ├───ABGR2101010 (0x30334241)
+    │   │       ├───RGBA1010102 (0x30334152)
+    │   │       └───BGRA1010102 (0x30334142)
+    │   └───Properties
+    │       ├───"type" (immutable): enum {Overlay, Primary, Cursor} = Overlay
+    │       ├───"FB_ID" (atomic): object framebuffer = 0
+    │       ├───"IN_FENCE_FD" (atomic): srange [-1, INT32_MAX] = -1
+    │       ├───"CRTC_ID" (atomic): object CRTC = 0
+    │       ├───"CRTC_X" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_Y" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+    │       ├───"CRTC_W" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"CRTC_H" (atomic): range [0, INT32_MAX] = 0
+    │       ├───"SRC_X" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_Y" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_W" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"SRC_H" (atomic): range [0, UINT32_MAX] = 0
+    │       ├───"IN_FORMATS" (immutable): blob = 97
+    │       │   ├───unknown (0x0400000000000004)
+    │       │   │   └───BGRA8888 (0x34324142)
+    │       │   └───unknown (0x0008000000000000)
+    │       │       ├───ARGB8888 (0x34325241)
+    │       │       ├───ABGR8888 (0x34324241)
+    │       │       ├───RGBA8888 (0x34324152)
+    │       │       ├───BGRA8888 (0x34324142)
+    │       │       ├───XRGB8888 (0x34325258)
+    │       │       ├───XBGR8888 (0x34324258)
+    │       │       ├───RGBX8888 (0x34325852)
+    │       │       ├───BGRX8888 (0x34325842)
+    │       │       ├───RGB565 (0x36314752)
+    │       │       ├───BGR565 (0x36314742)
+    │       │       ├───ARGB2101010 (0x30335241)
+    │       │       ├───ABGR2101010 (0x30334241)
+    │       │       ├───RGBA1010102 (0x30334152)
+    │       │       └───BGRA1010102 (0x30334142)
+    │       ├───"alpha": range [0, UINT16_MAX] = 65535
+    │       ├───"pixel blend mode": enum {None, Pre-multiplied, Coverage} = Pre-multiplied
+    │       ├───"zpos": range [0, 8] = 6
+    │       ├───"rotation": bitmask {rotate-0, rotate-180, reflect-x, reflect-y} = ()
+    │       ├───"HDR_FD": srange [-1, 1023] = 0
+    │       ├───"hw restrictions" (immutable): blob = 102
+    │       ├───"standard": enum {Unspecified, BT709, BT601_625, BT601_625_UNADJUSTED, BT601_525, BT601_525_UNADJUSTED, BT2020, BT2020_CONSTANT_LUMINANCE, BT470M, FILM, DCI-P3, Adobe RGB} = Unspecified
+    │       ├───"transfer": enum {Unspecified, Linear, sRGB, SMPTE 170M, Gamma 2.2, Gamma 2.6, Gamma 2.8, ST2084, HLG} = Unspecified
+    │       ├───"range": enum {Unspecified, Full, Limited, Extended} = Unspecified
+    │       └───"colormap": range [0, UINT32_MAX] = 0
+    └───Plane 7
+        ├───Object ID: 103
+        ├───CRTCs: {0, 1}
+        ├───Legacy info
+        │   ├───FB ID: 0
+        │   └───Formats:
+        │       ├───ARGB8888 (0x34325241)
+        │       ├───ABGR8888 (0x34324241)
+        │       ├───RGBA8888 (0x34324152)
+        │       ├───BGRA8888 (0x34324142)
+        │       ├───XRGB8888 (0x34325258)
+        │       ├───XBGR8888 (0x34324258)
+        │       ├───RGBX8888 (0x34325852)
+        │       ├───BGRX8888 (0x34325842)
+        │       ├───RGB565 (0x36314752)
+        │       ├───BGR565 (0x36314742)
+        │       ├───ARGB2101010 (0x30335241)
+        │       ├───ABGR2101010 (0x30334241)
+        │       ├───RGBA1010102 (0x30334152)
+        │       ├───BGRA1010102 (0x30334142)
+        │       ├───NV12 (0x3231564e)
+        │       ├───NV21 (0x3132564e)
+        │       └───P010 (0x30313050)
+        └───Properties
+            ├───"type" (immutable): enum {Overlay, Primary, Cursor} = Overlay
+            ├───"FB_ID" (atomic): object framebuffer = 0
+            ├───"IN_FENCE_FD" (atomic): srange [-1, INT32_MAX] = -1
+            ├───"CRTC_ID" (atomic): object CRTC = 0
+            ├───"CRTC_X" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+            ├───"CRTC_Y" (atomic): srange [INT32_MIN, INT32_MAX] = 0
+            ├───"CRTC_W" (atomic): range [0, INT32_MAX] = 0
+            ├───"CRTC_H" (atomic): range [0, INT32_MAX] = 0
+            ├───"SRC_X" (atomic): range [0, UINT32_MAX] = 0
+            ├───"SRC_Y" (atomic): range [0, UINT32_MAX] = 0
+            ├───"SRC_W" (atomic): range [0, UINT32_MAX] = 0
+            ├───"SRC_H" (atomic): range [0, UINT32_MAX] = 0
+            ├───"IN_FORMATS" (immutable): blob = 104
+            │   ├───unknown (0x0400000000000004)
+            │   │   └───BGRA8888 (0x34324142)
+            │   ├───unknown (0x0008000000000000)
+            │   │   ├───ARGB8888 (0x34325241)
+            │   │   ├───ABGR8888 (0x34324241)
+            │   │   ├───RGBA8888 (0x34324152)
+            │   │   ├───BGRA8888 (0x34324142)
+            │   │   ├───XRGB8888 (0x34325258)
+            │   │   ├───XBGR8888 (0x34324258)
+            │   │   ├───RGBX8888 (0x34325852)
+            │   │   ├───BGRX8888 (0x34325842)
+            │   │   ├───RGB565 (0x36314752)
+            │   │   ├───BGR565 (0x36314742)
+            │   │   ├───ARGB2101010 (0x30335241)
+            │   │   ├───ABGR2101010 (0x30334241)
+            │   │   ├───RGBA1010102 (0x30334152)
+            │   │   ├───BGRA1010102 (0x30334142)
+            │   │   ├───NV12 (0x3231564e)
+            │   │   ├───NV21 (0x3132564e)
+            │   │   └───P010 (0x30313050)
+            │   ├───ARM_AFBC(BLOCK_SIZE = unknown) (0x0800000000000000)
+            │   │   ├───ARGB8888 (0x34325241)
+            │   │   ├───ABGR8888 (0x34324241)
+            │   │   ├───RGBA8888 (0x34324152)
+            │   │   ├───BGRA8888 (0x34324142)
+            │   │   ├───XRGB8888 (0x34325258)
+            │   │   ├───XBGR8888 (0x34324258)
+            │   │   ├───RGBX8888 (0x34325852)
+            │   │   ├───BGRX8888 (0x34325842)
+            │   │   ├───RGB565 (0x36314752)
+            │   │   ├───BGR565 (0x36314742)
+            │   │   ├───ARGB2101010 (0x30335241)
+            │   │   └───ABGR2101010 (0x30334241)
+            │   └───unknown (0x0400000000000010)
+            │       ├───NV12 (0x3231564e)
+            │       ├───NV21 (0x3132564e)
+            │       └───P010 (0x30313050)
+            ├───"alpha": range [0, UINT16_MAX] = 65535
+            ├───"pixel blend mode": enum {None, Pre-multiplied, Coverage} = Pre-multiplied
+            ├───"zpos": range [0, 8] = 7
+            ├───"rotation": bitmask {rotate-0, rotate-180, reflect-x, reflect-y} = ()
+            ├───"split": enum {No Split, Split Left, Split Right, Split Top, Split Bottom} = No Split
+            ├───"HDR_FD": srange [-1, 1023] = 0
+            ├───"hw restrictions" (immutable): blob = 109
+            ├───"standard": enum {Unspecified, BT709, BT601_625, BT601_625_UNADJUSTED, BT601_525, BT601_525_UNADJUSTED, BT2020, BT2020_CONSTANT_LUMINANCE, BT470M, FILM, DCI-P3, Adobe RGB} = Unspecified
+            ├───"transfer": enum {Unspecified, Linear, sRGB, SMPTE 170M, Gamma 2.2, Gamma 2.6, Gamma 2.8, ST2084, HLG} = Unspecified
+            ├───"range": enum {Unspecified, Full, Limited, Extended} = Unspecified
+            └───"colormap": range [0, UINT32_MAX] = 0

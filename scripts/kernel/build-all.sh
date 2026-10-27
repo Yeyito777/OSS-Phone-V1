@@ -5,18 +5,21 @@
 #
 #   scripts/kernel/build-all.sh [SAMSUNG_ZIP]
 #
-# With SAMSUNG_ZIP (SM-A266M_LA_15_Opensource.zip), builds from Samsung's
-# official tree instead of the pinned mirror. BASE_BOOT_IMG overrides the
+# Builds from Samsung's official SM-A266M_LA_15_Opensource.zip (argument, or
+# $SAMSUNG_ZIP, default $KROOT/dl/), else from the pinned mirror, which
+# produces bit-identical kernels. BASE_BOOT_IMG overrides the
 # BOOT image the kernels are dropped into (default: today's direct-boot image).
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 S="$KERNEL_SCRIPTS"
 
 bash "$S/fetch-toolchain.sh"
-if [[ $# -ge 1 ]]; then
-    bash "$S/fetch-source.sh" samsung "$1"
+zip="${1:-$SAMSUNG_ZIP}"
+if [[ -f "$zip" ]]; then
+    bash "$S/fetch-source.sh" samsung "$zip"
     src="$KROOT/src/samsung"
 else
+    echo "No $SAMSUNG_ZIP_NAME at $zip: using the verified-equivalent mirror" >&2
     bash "$S/fetch-source.sh" mirror
     src="$KROOT/src/mirror"
 fi

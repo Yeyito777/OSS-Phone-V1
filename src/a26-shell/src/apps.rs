@@ -37,6 +37,8 @@ struct ManagedWindow {
 struct Application {
     id: AppId,
     executable: PathBuf,
+    /// Phone and Messages are the System app's binary with `--app NAME`.
+    args: Vec<String>,
     child: Option<Child>,
     pidfd: Option<OwnedFd>,
     lifecycle: AppLifecycle,
@@ -47,9 +49,14 @@ struct Application {
 
 impl Application {
     fn new(id: AppId, executable: PathBuf) -> Self {
+        let args = match id {
+            AppId::Phone | AppId::Messages => vec!["--app".into(), id.cgroup_name().into()],
+            AppId::System | AppId::Browser => Vec::new(),
+        };
         Self {
             id,
             executable,
+            args,
             child: None,
             pidfd: None,
             lifecycle: AppLifecycle::Stopped,
@@ -106,7 +113,12 @@ impl Application {
 }
 
 pub struct AppRegistry {
-    applications: [Application; 2],
+    applications: [Application; AppId::COUNT],
+    /// The Wayland server's environment, and the apps that get it (only
+    /// apps known to speak Wayland: a toolkit that merely can, like
+    /// Chromium's, must not be moved onto it by accident).
+    wayland_env: Vec<(String, String)>,
+    wayland_apps: Vec<AppId>,
     active: Option<AppId>,
     leases: LeaseManager,
 }
@@ -125,12 +137,21 @@ impl AppRegistry {
     fn new(system: PathBuf, browser: PathBuf) -> Self {
         Self {
             applications: [
-                Application::new(AppId::System, system),
+                Application::new(AppId::System, system.clone()),
                 Application::new(AppId::Browser, browser),
+                Application::new(AppId::Phone, system.clone()),
+                Application::new(AppId::Messages, system),
             ],
             active: None,
             leases: LeaseManager::default(),
+            wayland_env: Vec::new(),
+            wayland_apps: Vec::new(),
         }
+    }
+
+    pub fn set_wayland_env(&mut self, env: Vec<(String, String)>, apps: Vec<AppId>) {
+        self.wayland_env = env;
+        self.wayland_apps = apps;
     }
 
     pub fn active(&self) -> Option<AppId> {
@@ -277,7 +298,7 @@ impl AppRegistry {
         // An app with a lease remains thawed while backgrounded. As soon as its
         // final bounded lease expires, the ordinary reconciliation pass puts
         // it back into the freezer even if another app is foreground.
-        for id in [AppId::System, AppId::Browser] {
+        for id in AppId::ALL {
             let needs_freeze = {
                 let application = self.app(id);
                 desired != Some(id)
@@ -315,6 +336,11 @@ impl AppRegistry {
         let Some(active) = desired else {
             return update;
         };
+        let child_env = if self.wayland_apps.contains(&active) {
+            self.wayland_env.clone()
+        } else {
+            Vec::new()
+        };
         let application = self.app_mut(active);
         match application.lifecycle {
             AppLifecycle::Background if application.windows.is_empty() => {
@@ -344,10 +370,12 @@ impl AppRegistry {
             AppLifecycle::Stopped => {
                 let mut command = Command::new(&application.executable);
                 command
+                    .args(&application.args)
                     .env(
                         "DISPLAY",
                         env::var("DISPLAY").unwrap_or_else(|_| ":0".into()),
                     )
+                    .envs(child_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
                     .stdin(Stdio::null());
                 if let Err(error) = application.freezer.configure_spawn(&mut command) {
                     eprintln!(
@@ -475,6 +503,11 @@ impl AppRegistry {
         self.leases.next_deadline(now)
     }
 
+    /// The app is playing media (its media lease is held).
+    pub fn media_active(&self, app: AppId, now: Instant) -> bool {
+        self.leases.holds(app, LeaseKind::Media, now)
+    }
+
     pub fn has_active_leases(&mut self, now: Instant) -> bool {
         self.leases.any_active(now)
     }
@@ -482,7 +515,7 @@ impl AppRegistry {
     /// Apps with a live process, least recently used first (the order of
     /// the app switcher's cards).
     pub fn running_by_recency(&self) -> Vec<AppId> {
-        let mut running: Vec<(AppId, Instant)> = [AppId::System, AppId::Browser]
+        let mut running: Vec<(AppId, Instant)> = AppId::ALL
             .into_iter()
             .filter(|id| self.app(*id).lifecycle != AppLifecycle::Stopped)
             .map(|id| (id, self.app(id).last_used))
@@ -505,7 +538,7 @@ impl AppRegistry {
     pub fn evict_lru_background(&mut self, now: Instant) -> Option<AppId> {
         self.leases.expire(now);
         let mut candidate: Option<(AppId, Instant)> = None;
-        for id in [AppId::System, AppId::Browser] {
+        for id in AppId::ALL {
             let background = self.app(id).lifecycle == AppLifecycle::Background;
             let leased = self.leases.active(id, now);
             let last_used = self.app(id).last_used;

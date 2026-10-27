@@ -160,7 +160,7 @@ Off-device (`recovery-slot-stage2-v6`, sha256 `f61349b3…`). Changes:
   engages only on a promoted BOOT image. Store + module interface + the gated
   BOOT flash path: PROMOTION-PLAN.md §2/§4. Clear hook:
   `scripts/device/moon-boot-confirm.sh`.
-Bench: 14 cases pass, including `contained-reboot`, `contained-poweroff`,
+Bench: 13 cases pass, including `contained-reboot`, `contained-poweroff`,
 `late-reboot` (a real exit-42 failure), `bootcount-skip`, `bootcount-ok`.
 Exact-binary checks: effective mali `f36fd339`, rebootmode `.ko` `7130cf3c`,
 `/init` carries the v6 reboot/power-off/bootcount strings and the

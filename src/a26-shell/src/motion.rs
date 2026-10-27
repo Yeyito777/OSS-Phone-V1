@@ -133,6 +133,83 @@ impl VelocityTracker {
     }
 }
 
+/// A full-screen sheet (the ringing and call screens) that rises from the
+/// bottom edge and leaves downward, or upward when tucked away. It is a
+/// curtain: its content stays put and only the edges move, so a frame
+/// redraws just the strip an edge crossed.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Sheet {
+    shown: Option<Instant>,
+    leaving: Option<(Instant, bool)>,
+}
+
+const SHEET_RISE: f32 = 0.38;
+const SHEET_LEAVE: f32 = 0.30;
+
+impl Sheet {
+    /// Brings the sheet up (from the bottom unless it is already up).
+    pub fn show(&mut self, now: Instant, animate: bool) {
+        if self.shown.is_some() && self.leaving.is_none() {
+            return;
+        }
+        let rise = std::time::Duration::from_secs_f32(SHEET_RISE);
+        self.shown = Some(if animate { now } else { now - rise });
+        self.leaving = None;
+    }
+
+    /// Sends the sheet away (`up` when tucked toward the status bar).
+    pub fn hide(&mut self, now: Instant, up: bool, animate: bool) {
+        if self.shown.take().is_some() && animate {
+            self.leaving = Some((now, up));
+        } else if !animate {
+            self.leaving = None;
+        }
+    }
+
+    /// Up, or still leaving.
+    pub fn visible(&self) -> bool {
+        self.shown.is_some() || self.leaving.is_some()
+    }
+
+    /// The rows of a `height`-tall screen the sheet covers at `now`.
+    pub fn bounds(&self, now: Instant, height: f32) -> (f32, f32) {
+        if let Some((at, up)) = self.leaving {
+            let p =
+                crate::gfx::ease_out(now.saturating_duration_since(at).as_secs_f32() / SHEET_LEAVE);
+            return if up {
+                (0.0, (height * (1.0 - p)).round())
+            } else {
+                ((height * p).round(), height)
+            };
+        }
+        match self.shown {
+            Some(at) => {
+                let p = crate::gfx::ease_out(
+                    now.saturating_duration_since(at).as_secs_f32() / SHEET_RISE,
+                );
+                ((height * (1.0 - p)).round(), height)
+            }
+            None => (height, height),
+        }
+    }
+
+    pub fn animating(&self, now: Instant) -> bool {
+        let elapsed = |at: Instant| now.saturating_duration_since(at).as_secs_f32();
+        self.leaving.is_some() || self.shown.is_some_and(|at| elapsed(at) < SHEET_RISE)
+    }
+
+    /// Ends a finished departure; true when it just did.
+    pub fn tick(&mut self, now: Instant) -> bool {
+        if let Some((at, _)) = self.leaving
+            && now.saturating_duration_since(at).as_secs_f32() >= SHEET_LEAVE
+        {
+            self.leaving = None;
+            return true;
+        }
+        false
+    }
+}
+
 /// iOS-like rubber banding: past `limit`, motion is increasingly resisted.
 pub fn rubber_band(offset: f32, limit: f32) -> f32 {
     if offset.abs() <= limit {
@@ -187,6 +264,27 @@ mod tests {
         assert!((vy + 2000.0).abs() < 50.0, "vy {vy}");
         // Stale samples do not count.
         assert_eq!(tracker.velocity(start + Duration::from_secs(1)), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_sheet_rises_and_leaves_as_a_curtain() {
+        let start = Instant::now();
+        let mut sheet = Sheet::default();
+        assert_eq!(sheet.bounds(start, 100.0), (100.0, 100.0));
+        sheet.show(start, true);
+        assert_eq!(sheet.bounds(start, 100.0), (100.0, 100.0));
+        let up = start + Duration::from_millis(400);
+        assert_eq!(sheet.bounds(up, 100.0), (0.0, 100.0));
+        assert!(!sheet.animating(up));
+        sheet.hide(up, true, true);
+        assert!(sheet.visible());
+        let mid = up + Duration::from_millis(100);
+        let (top, bottom) = sheet.bounds(mid, 100.0);
+        assert_eq!(top, 0.0);
+        assert!(bottom > 0.0 && bottom < 100.0);
+        assert!(!sheet.tick(mid));
+        assert!(sheet.tick(up + Duration::from_millis(310)));
+        assert!(!sheet.visible());
     }
 
     #[test]

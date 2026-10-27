@@ -8,12 +8,20 @@
 !/src/
 !/scripts/
 !/notes/
+!/docs/
 
 /src/*
 !/src/a26-shell/
 !/src/a26-audio-bridge/
 !/src/moon-audiod/
+!/src/moon-telephonyd/
+!/src/moon-gpu/
+!/src/moon-wl-demo/
+/src/moon-wl-demo/target/
+!/src/oss-rebootmode-clear/
+!/src/venus/
 /src/a26-shell/target/
+/src/moon-telephonyd/target/
 
 /scripts/*
 !/scripts/a26-shell/
@@ -21,6 +29,9 @@
 !/scripts/direct-boot/
 !/scripts/kernel/
 !/scripts/native-init/
+!/scripts/gpu/
+!/scripts/venus/
+!/scripts/wayland/
 /scripts/device/*
 !/scripts/device/90-moon-autostart.sh
 !/scripts/device/moon-boot-supervisor.sh
@@ -31,7 +42,10 @@
 !/scripts/device/moon-audio-start.sh
 !/scripts/device/moon-audio-stop.sh
 !/scripts/device/moon-audio-keeper.sh
+!/scripts/device/moon-gpu-session.sh
 !/scripts/device/moon-suspend-cycle.sh
+!/scripts/device/moon-telephony-start.sh
+!/scripts/device/moon-telephony-stop.sh
 !/scripts/device/a26-enter-chroot.sh
 !/scripts/device/a26-xorg-takeover.sh
 !/scripts/device/a26-xorg-safety-watchdog.sh
@@ -45,6 +59,9 @@
 !/notes/direct-boot/
 !/notes/stage2/
 !/notes/ui-polish/
+!/notes/telephony/
+!/notes/gpu/
+!/notes/wayland/
 /notes/a26-shell/*
 !/notes/a26-shell/README.md
 !/notes/a26-shell/APPLE-KEYBOARD-LAYOUT.md

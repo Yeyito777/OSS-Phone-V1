@@ -1,0 +1,178 @@
+== begin Mon Oct 26 03:52:42 EDT 2026 (up 31.78)
+== kill -9 1506 /system/bin/sh /data/local/tmp/a26-xorg-takeover.sh moon-316f8f6d-1  (up 31.94)
+== kill -9 1627 /system/bin/sh /data/local/a26-linux/a26-enter-chroot.sh /usr/local/sbin/a26-xorg-persistent-session  (up 31.98)
+== kill -9 1683 /bin/sh /usr/local/sbin/a26-xorg-persistent-session  (up 32.02)
+== TERM Xorg 1689 (up 32.08)
+== card0 released (up 32.41)
+== moon-gpu-poc --seconds 6 --brightness 200 --csv /data/local/tmp/gpu/switcher-dvfs.csv (up 32.43)
+kms: crtc 120 (index 0, active) connector 123 plane 54 mode 1080x2340@120
+gpu: EGL 1.4 Android
+gpu: GL OpenGL ES 3.2 v1.r32p1-01bet2-mbs2v39_0.24a5b8b8abb488a61e5e48232a460c3e | Mali-G68 | no dma_buf ext; fences native, priority high
+poc: 3 1080x2340 dmabufs from system-uncached, pitch 4352
+poc: content drawn and uploaded in 97.4 ms
+poc: first frame on screen (commit 6.3 ms)
+[kms] switcher 1080x2340@120, 723 flips in 6.01 s
+flip interval: n=723 mean=8.296 p50=8.296 p95=8.299 p99=8.308 max=8.334 ms
+cpu submit: n=723 mean=0.541 p50=0.499 p95=0.853 p99=1.058 max=1.746 ms
+gpu frame (submit start to fence signal): n=723 mean=4.675 p50=4.161 p95=5.969 p99=6.244 max=6.837 ms
+vblank to gpu done: n=723 mean=4.799 p50=4.319 p95=6.128 p99=6.419 max=6.937 ms
+missed vblanks: 0 (intervals > 1.5 periods: 0), EBUSY retries 0
+fragments per frame: 7.24 Mpx (output 2.53 Mpx)
+== exit 0 (up 38.77)
+== moon-gpu-poc --seconds 6 --brightness 200 --gpu-min 507000 --csv /data/local/tmp/gpu/switcher-507.csv (up 38.79)
+kms: crtc 120 (index 0, active) connector 123 plane 54 mode 1080x2340@120
+gpu: EGL 1.4 Android
+gpu: GL OpenGL ES 3.2 v1.r32p1-01bet2-mbs2v39_0.24a5b8b8abb488a61e5e48232a460c3e | Mali-G68 | no dma_buf ext; fences native, priority high
+poc: 3 1080x2340 dmabufs from system-uncached, pitch 4352
+poc: content drawn and uploaded in 93.0 ms
+poc: gpu min clock 507000 kHz (was 104000
+)
+poc: first frame on screen (commit 6.0 ms)
+[kms] switcher 1080x2340@120, 723 flips in 6.01 s
+flip interval: n=723 mean=8.296 p50=8.296 p95=8.392 p99=8.407 max=8.727 ms
+cpu submit: n=723 mean=0.724 p50=0.663 p95=1.206 p99=1.583 max=3.753 ms
+gpu frame (submit start to fence signal): n=723 mean=3.364 p50=3.340 p95=4.137 p99=4.612 max=4.969 ms
+vblank to gpu done: n=723 mean=3.573 p50=3.598 p95=4.378 p99=4.911 max=5.222 ms
+missed vblanks: 0 (intervals > 1.5 periods: 0), EBUSY retries 0
+fragments per frame: 7.25 Mpx (output 2.53 Mpx)
+== exit 0 (up 45.16)
+== moon-gpu-poc --seconds 6 --brightness 200 --gpu-min 702000 --csv /data/local/tmp/gpu/switcher-702.csv (up 45.19)
+kms: crtc 120 (index 0, active) connector 123 plane 54 mode 1080x2340@120
+gpu: EGL 1.4 Android
+gpu: GL OpenGL ES 3.2 v1.r32p1-01bet2-mbs2v39_0.24a5b8b8abb488a61e5e48232a460c3e | Mali-G68 | no dma_buf ext; fences native, priority high
+poc: 3 1080x2340 dmabufs from system-uncached, pitch 4352
+poc: content drawn and uploaded in 106.9 ms
+poc: gpu min clock 702000 kHz (was 104000
+)
+poc: first frame on screen (commit 5.6 ms)
+[kms] switcher 1080x2340@120, 723 flips in 6.01 s
+flip interval: n=723 mean=8.296 p50=8.296 p95=8.307 p99=8.416 max=8.627 ms
+cpu submit: n=723 mean=0.822 p50=0.708 p95=1.361 p99=1.578 max=3.126 ms
+gpu frame (submit start to fence signal): n=723 mean=3.159 p50=3.176 p95=3.522 p99=3.779 max=4.661 ms
+vblank to gpu done: n=723 mean=3.380 p50=3.362 p95=3.821 p99=4.106 max=4.989 ms
+missed vblanks: 0 (intervals > 1.5 periods: 0), EBUSY retries 0
+fragments per frame: 7.25 Mpx (output 2.53 Mpx)
+== exit 0 (up 51.56)
+== moon-gpu-poc --seconds 6 --scene zoom --brightness 200 --gpu-min 507000 --csv /data/local/tmp/gpu/zoom-507.csv (up 51.59)
+kms: crtc 120 (index 0, active) connector 123 plane 54 mode 1080x2340@120
+gpu: EGL 1.4 Android
+gpu: GL OpenGL ES 3.2 v1.r32p1-01bet2-mbs2v39_0.24a5b8b8abb488a61e5e48232a460c3e | Mali-G68 | no dma_buf ext; fences native, priority high
+poc: 3 1080x2340 dmabufs from system-uncached, pitch 4352
+poc: content drawn and uploaded in 105.0 ms
+poc: gpu min clock 507000 kHz (was 104000
+)
+poc: first frame on screen (commit 5.7 ms)
+[kms] zoom 1080x2340@120, 723 flips in 6.01 s
+flip interval: n=723 mean=8.296 p50=8.296 p95=8.307 p99=8.405 max=9.080 ms
+cpu submit: n=723 mean=0.824 p50=0.682 p95=1.499 p99=1.907 max=2.897 ms
+gpu frame (submit start to fence signal): n=723 mean=3.500 p50=3.530 p95=3.981 p99=4.304 max=4.525 ms
+vblank to gpu done: n=723 mean=3.717 p50=3.725 p95=4.258 p99=4.592 max=4.920 ms
+missed vblanks: 0 (intervals > 1.5 periods: 0), EBUSY retries 0
+fragments per frame: 3.64 Mpx (output 2.53 Mpx)
+== exit 0 (up 57.98)
+== moon-gpu-poc --seconds 6 --scene noshadow --brightness 200 --csv /data/local/tmp/gpu/noshadow-dvfs.csv (up 58.01)
+kms: crtc 120 (index 0, active) connector 123 plane 54 mode 1080x2340@120
+gpu: EGL 1.4 Android
+gpu: GL OpenGL ES 3.2 v1.r32p1-01bet2-mbs2v39_0.24a5b8b8abb488a61e5e48232a460c3e | Mali-G68 | no dma_buf ext; fences native, priority high
+poc: 3 1080x2340 dmabufs from system-uncached, pitch 4352
+poc: content drawn and uploaded in 103.3 ms
+poc: first frame on screen (commit 6.4 ms)
+[kms] noshadow 1080x2340@120, 703 flips in 6.01 s
+flip interval: n=703 mean=8.532 p50=8.296 p95=8.411 p99=16.599 max=16.844 ms
+cpu submit: n=703 mean=1.378 p50=1.269 p95=2.037 p99=2.696 max=3.642 ms
+gpu frame (submit start to fence signal): n=703 mean=5.678 p50=5.339 p95=7.150 p99=7.483 max=8.256 ms
+vblank to gpu done: n=703 mean=6.051 p50=5.717 p95=7.594 p99=7.993 max=8.784 ms
+missed vblanks: 20 (intervals > 1.5 periods: 20), EBUSY retries 0
+fragments per frame: 4.15 Mpx (output 2.53 Mpx)
+== exit 0 (up 64.42)
+== moon-gpu-poc --seconds 6 --scene noshadow --brightness 200 --gpu-min 403000 --csv /data/local/tmp/gpu/noshadow-403.csv (up 64.45)
+kms: crtc 120 (index 0, active) connector 123 plane 54 mode 1080x2340@120
+gpu: EGL 1.4 Android
+gpu: GL OpenGL ES 3.2 v1.r32p1-01bet2-mbs2v39_0.24a5b8b8abb488a61e5e48232a460c3e | Mali-G68 | no dma_buf ext; fences native, priority high
+poc: 3 1080x2340 dmabufs from system-uncached, pitch 4352
+poc: content drawn and uploaded in 111.2 ms
+poc: gpu min clock 403000 kHz (was 104000
+)
+poc: first frame on screen (commit 5.5 ms)
+[kms] noshadow 1080x2340@120, 722 flips in 6.01 s
+flip interval: n=722 mean=8.307 p50=8.295 p95=8.314 p99=8.384 max=16.185 ms
+cpu submit: n=722 mean=1.345 p50=1.259 p95=2.089 p99=2.996 max=4.906 ms
+gpu frame (submit start to fence signal): n=722 mean=4.299 p50=4.374 p95=4.852 p99=5.306 max=7.097 ms
+vblank to gpu done: n=722 mean=4.667 p50=4.744 p95=5.320 p99=5.935 max=9.583 ms
+missed vblanks: 1 (intervals > 1.5 periods: 1), EBUSY retries 0
+fragments per frame: 4.15 Mpx (output 2.53 Mpx)
+== exit 0 (up 70.88)
+== moon-gpu-poc --seconds 3 --active-cycles 2 --brightness 200 --gpu-min 507000 --csv /data/local/tmp/gpu/cycles-507.csv (up 70.91)
+kms: crtc 120 (index 0, active) connector 123 plane 54 mode 1080x2340@120
+gpu: EGL 1.4 Android
+gpu: GL OpenGL ES 3.2 v1.r32p1-01bet2-mbs2v39_0.24a5b8b8abb488a61e5e48232a460c3e | Mali-G68 | no dma_buf ext; fences native, priority high
+poc: 3 1080x2340 dmabufs from system-uncached, pitch 4352
+poc: content drawn and uploaded in 104.2 ms
+poc: gpu min clock 507000 kHz (was 104000
+)
+poc: first frame on screen (commit 4.7 ms)
+[kms] switcher 1080x2340@120, 361 flips in 3.00 s
+flip interval: n=361 mean=8.296 p50=8.296 p95=8.307 p99=8.338 max=8.514 ms
+cpu submit: n=361 mean=0.873 p50=0.800 p95=1.381 p99=1.802 max=2.385 ms
+gpu frame (submit start to fence signal): n=361 mean=3.924 p50=3.949 p95=4.306 p99=4.627 max=4.885 ms
+vblank to gpu done: n=361 mean=4.138 p50=4.131 p95=4.564 p99=5.022 max=5.641 ms
+missed vblanks: 0 (intervals > 1.5 periods: 0), EBUSY retries 0
+fragments per frame: 7.25 Mpx (output 2.53 Mpx)
+active-cycle 0: off ok in 264.8 ms
+active-cycle 0: on ok in 163.7 ms
+[after on] switcher 1080x2340@120, 240 flips in 2.01 s
+flip interval: n=240 mean=8.296 p50=8.296 p95=8.304 p99=8.321 max=8.478 ms
+cpu submit: n=240 mean=0.882 p50=0.841 p95=1.437 p99=1.724 max=1.923 ms
+gpu frame (submit start to fence signal): n=240 mean=3.930 p50=3.953 p95=4.288 p99=4.634 max=4.903 ms
+vblank to gpu done: n=240 mean=4.141 p50=4.158 p95=4.549 p99=4.900 max=5.185 ms
+missed vblanks: 0 (intervals > 1.5 periods: 0), EBUSY retries 0
+fragments per frame: 7.38 Mpx (output 2.53 Mpx)
+active-cycle 1: off ok in 265.8 ms
+active-cycle 1: on ok in 159.7 ms
+[after on] switcher 1080x2340@120, 240 flips in 2.01 s
+flip interval: n=240 mean=8.295 p50=8.296 p95=8.304 p99=8.328 max=8.395 ms
+cpu submit: n=240 mean=0.913 p50=0.861 p95=1.643 p99=1.838 max=2.047 ms
+gpu frame (submit start to fence signal): n=240 mean=3.953 p50=3.966 p95=4.369 p99=4.746 max=4.999 ms
+vblank to gpu done: n=240 mean=4.166 p50=4.164 p95=4.650 p99=4.918 max=5.269 ms
+missed vblanks: 0 (intervals > 1.5 periods: 0), EBUSY retries 0
+fragments per frame: 7.38 Mpx (output 2.53 Mpx)
+== exit 0 (up 81.16)
+== moon-compositor startup (up 81.20)
+READY=1
+PID=2750
+== exit 0 (up 84.30)
+kms: crtc 120 (index 0, active) connector 123 plane 54 mode 1080x2340@120
+gpu: EGL 1.4 Android
+gpu: GL OpenGL ES 3.2 v1.r32p1-01bet2-mbs2v39_0.24a5b8b8abb488a61e5e48232a460c3e | Mali-G68 | no dma_buf ext; fences native, priority high
+[   81.363] mirror: 1080x2340 stride 4352 as 2D texture
+[   81.371] ready in 124 ms: 1080x2340, socket /data/local/tmp/gpu/compositor.sock
+[   84.254] exiting
+== handoff: poc holds the frame, Xorg starts (up 84.35)
+== xorg status: XORG_READY=1 (up 89.24)
+│   │       ├───"DPMS": enum {On, Standby, Suspend, Off} = On
+│           ├───"DPMS": enum {On, Standby, Suspend, Off} = On
+│   │       ├───"ACTIVE" (atomic): range [0, 1] = 1
+│           ├───"ACTIVE" (atomic): range [0, 1] = 0
+    │       ├───"FB_ID" (atomic): object framebuffer = 131
+    │       ├───"FB_ID" (atomic): object framebuffer = 0
+kms: crtc 120 (index 0, active) connector 123 plane 54 mode 1080x2340@120
+gpu: EGL 1.4 Android
+gpu: GL OpenGL ES 3.2 v1.r32p1-01bet2-mbs2v39_0.24a5b8b8abb488a61e5e48232a460c3e | Mali-G68 | no dma_buf ext; fences native, priority high
+poc: 3 1080x2340 dmabufs from system-uncached, pitch 4352
+poc: content drawn and uploaded in 107.5 ms
+poc: first frame on screen (commit 5.0 ms)
+[kms] switcher 1080x2340@120, 147 flips in 2.01 s
+flip interval: n=147 mean=13.600 p50=16.553 p95=16.862 p99=16.953 max=17.168 ms
+cpu submit: n=147 mean=1.589 p50=1.610 p95=2.752 p99=3.437 max=3.521 ms
+gpu frame (submit start to fence signal): n=147 mean=7.028 p50=7.751 p95=8.510 p99=9.139 max=9.432 ms
+vblank to gpu done: n=147 mean=7.520 p50=8.315 p95=9.143 p99=9.792 max=9.935 ms
+missed vblanks: 94 (intervals > 1.5 periods: 94), EBUSY retries 0
+fragments per frame: 7.15 Mpx (output 2.53 Mpx)
+hold: dropped master (ok), keeping the last frame for 30 s
+== after the holder exited (up 90.52)
+│   │       ├───"ACTIVE" (atomic): range [0, 1] = 1
+│           ├───"ACTIVE" (atomic): range [0, 1] = 0
+    │       ├───"FB_ID" (atomic): object framebuffer = 131
+    │       ├───"FB_ID" (atomic): object framebuffer = 0
+== moon ping: {"ok":true,"result":{"version":"0.1.0","view":"locked","locked":true,"screen_awake":true,"pin_digits":0,"failed_attempts":0,"lockout_remaining_ms":0,"current_app":null,"volume":37,"battery_percent":10 (up 91.39)
+== done (up 91.43)

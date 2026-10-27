@@ -39,9 +39,22 @@ for _ in $($BB seq 1 600); do
 done
 [ -e "$MARKER" ] || { log 'Moon never took the display; not starting audio'; exit 0; }
 
+# /data/adb/moon/volume mirrors Moon's live volume file (also kept on /data),
+# so the value that seeds a missing live file is never stale.
+sync_volume() {
+    live="$(cat "$RUNTIME/volume" 2>/dev/null || true)"
+    case "$live" in ''|*[!0-9]*) return ;; esac
+    [ "$live" -le 100 ] || return
+    [ "$(cat "$PERSIST/volume" 2>/dev/null)" = "$live" ] && return
+    printf '%s\n' "$live" >"$PERSIST/volume.new.$$" &&
+        chmod 0600 "$PERSIST/volume.new.$$" &&
+        mv -f "$PERSIST/volume.new.$$" "$PERSIST/volume"
+}
+
 attempt=0
 delay=2
 while [ -e "$MARKER" ] && [ "$(getprop moon.boot.mode)" != android ]; do
+    sync_volume
     if audiod_running; then
         "$BB" sleep 15
         continue

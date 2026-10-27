@@ -122,8 +122,11 @@ a direct `mem` request with Xorg's CRTC active was captured as a Samsung watchdo
 reset in `pmucal_local_disable`/`blkpwr_dpu`.
 
 The approved user wake source is the PMIC power key; RTC is enabled for Moon
-alarms and the bounded proof command. Until the central alarm service in TODO 11
-exists, the handoff clears any stale Android AlarmManager RTC alarm. Volume and
+alarms and the bounded proof command. The handoff clears any stale Android
+AlarmManager RTC alarm and arms the RTC 60 s before moon-notifyd's next alarm,
+snooze or timer (`/var/lib/moon-notify/next-wake`), so that wake counts as a
+user wake; after the warm reboot moon-notifyd rings it (it rings anything less
+than 15 minutes late; `docs/notifications-protocol.md` §6–§7). Volume and
 USB/USB-PD wake are disabled only for the deep interval and restored exactly
 after resume, while charger/fuel-gauge safety sources remain untouched. Their
 incidental wakeups are classified by PMIC/RTC IRQ deltas and immediately return
@@ -141,6 +144,12 @@ safe but intentionally slow wake boundary; in-place resume remains future work.
 The lock screen is a UI/session lock, not a cryptographic security boundary.
 The unlocked bootloader, Magisk root and authorized ADB can all bypass it by
 design. IPC access is restricted to the root-owned chroot runtime.
+
+Notifications, alarms and timers belong to `moon-notifyd`, a separate daemon
+in the same crate (`src/notify/`, `src/bin/moon-notifyd.rs`, CLI
+`moon-notifyctl`). It owns their state, rings alarms and timers through
+moon-audiod's alert FIFO and the vibrator, and keeps the RTC programmed; Moon
+is its client. The protocol Moon and apps use is `docs/notifications-protocol.md`.
 
 Runtime paths on the phone:
 
@@ -331,6 +340,19 @@ per frame, so Moon moved composition into the server:
 
 All of it remains one-way at runtime; the RENDER formats and Present version
 are queried once before the event loop.
+
+**GPU mode** (opt-in, `GPU_COMPOSITOR=1`; `notes/gpu/DESIGN.md`). When the
+session starts `moon-compositor` (`src/moon-gpu`), Xorg runs headless on the
+dummy driver and Moon gets `MOON_GPU_SOCKET`. The same `Frame` then goes to
+the compositor instead of XRender (`gpu.rs`): layers live in shared
+dma-heap buffers, a dim is a brightness factor instead of rows of darkened
+copies, app snapshots and switcher cards are copies of the "X mirror" (the
+root, copied by Xorg from DAMAGE into a buffer the compositor shares), and
+the compositor's flip events pace frames instead of Present. While an app is
+in front the compositor shows the mirror by itself. Each frame goes to the
+display planes when it fits, else the GPU draws it (else the CPU). If the
+compositor goes away Moon keeps running and reconnects; the session falls
+back to the XRender path in place when it cannot recover.
 
 Measuring on the device:
 
