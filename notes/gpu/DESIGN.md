@@ -265,6 +265,11 @@ Xorg, and nothing in the compositor has to change.
   perfectly still picture, then a clean lock screen after a boot with
   planes on; the profile log confirmed those frames went out on planes.
   `scripts/gpu/install.sh --no-planes` still turns them off.
+  The compositor puts a buffer on a plane only in the layout seen right on
+  the panel: rows a multiple of 64 bytes, pixels at offset 0, framebuffer
+  as wide as its rows. Any other dmabuf (a client's tight 4320-byte rows, a
+  buffer inside a pool) is composed by the GPU, so no client can garble the
+  panel.
   Lock-screen drag to the keypad and back, three rounds each way:
 
   | | frames, pacing | compositor + Moon + Xorg CPU | GPU busy |

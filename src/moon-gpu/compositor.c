@@ -395,12 +395,20 @@ static int adopt_dmabuf(struct comp *c, struct surface *s, int fd, int width,
         s->tex.height = height;
         s->tex.opaque = opaque;
     }
-    /* As wide as its rows, shown `width` wide from the left: on the panel a
-     * DPP walked a framebuffer narrower than its pitch sheared (see
-     * outputs_init). */
-    if (kms_add_fb_offset(&c->k, fd, (uint32_t)stride / 4, (uint32_t)height,
-                          (uint32_t)stride, s->offset, fourcc, &s->fb))
+    /* Display planes only take the layout seen right on the panel: rows a
+     * multiple of 64 bytes, pixels at the start of the buffer, and the
+     * framebuffer declared as wide as its rows, shown `width` wide from the
+     * left (a DPP walked a framebuffer narrower than its pitch sheared; see
+     * outputs_init and notes/gpu/DESIGN.md). Any other buffer is composed
+     * by the GPU, so a client cannot garble the panel. */
+    if (stride % 64 || s->offset) {
+        s->fb = 0;
+        LOG("surface %u: pitch %d, offset %u: GPU composition only (planes need 64-byte rows "
+            "at offset 0)", s->id, stride, s->offset);
+    } else if (kms_add_fb_offset(&c->k, fd, (uint32_t)stride / 4, (uint32_t)height,
+                                 (uint32_t)stride, 0, fourcc, &s->fb)) {
         s->fb = 0; /* drawable, just not on a plane */
+    }
     return 0;
 }
 
