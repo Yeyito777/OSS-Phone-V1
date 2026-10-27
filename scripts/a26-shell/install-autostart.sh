@@ -190,7 +190,7 @@ mv -f /data/local/a26-linux/opt/a26-audio/moon-permissiond.new \
 mv -f /data/local/a26-linux/a26-enter-chroot.sh.new \
     /data/local/a26-linux/a26-enter-chroot.sh
 
-# Power entry point (docs/power.md): device side and Moon's chroot helper.
+# Power entry point (docs/power.md): device side and the chroot helper Moon runs.
 cp /data/local/tmp/moon-power.sh /data/adb/moon/moon-power.sh.new
 chown 0:0 /data/adb/moon/moon-power.sh.new
 chmod 0700 /data/adb/moon/moon-power.sh.new
