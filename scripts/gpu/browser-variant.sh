@@ -42,6 +42,10 @@ ns umount \$L 2>/dev/null || true
 for p in \$(pidof vimbrowser); do kill -TERM \$p; done
 sleep 2
 for p in \$(pidof vimbrowser); do kill -KILL \$p; done
+# A frozen Browser (Moon froze it when the phone locked) dies only once
+# thawed: wait until it is gone, or a new one cannot take its profile.
+for i in 1 2 3 4 5 6 7 8 9 10; do [ -z "\$(pidof vimbrowser)" ] && break; sleep 0.5; done
+[ -z "\$(pidof vimbrowser)" ] || echo "WARNING: Browser processes still alive: \$(pidof vimbrowser)"
 if [ "$MODE" = on ]; then
     awk '{ print }
          /^ *--disable-gpu-sandbox \\\\\$/ { $add_flags }
