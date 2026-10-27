@@ -1013,17 +1013,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             renderer.forget_app(&conn, app);
         }
 
-        let desired_app = AppId::from_view(state.view);
-        let update = apps.reconcile(desired_app);
-        apply_registry_update(
-            &conn,
-            shell_window,
-            width,
-            height,
-            &mut state,
-            &mut apps,
-            update,
-        )?;
+        reconcile_apps(&conn, shell_window, width, height, &mut state, &mut apps)?;
         for app in [AppId::System, AppId::Browser] {
             if renderer.has_snapshot(app) && !apps.running_by_recency().contains(&app) {
                 renderer.forget_app(&conn, app);
@@ -1111,6 +1101,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             next_clock_tick = clock::next_minute_boundary(Instant::now());
         }
         state.tick();
+        if apps.active().is_some() && AppId::from_view(state.view).is_none() {
+            // The tick left the app (a finished power fade locks): hide and
+            // freeze it now, so the screen-off transaction below finds it
+            // gone and the lock frame is drawn without it.
+            reconcile_apps(&conn, shell_window, width, height, &mut state, &mut apps)?;
+            state.replace_managed_windows(apps.active_windows());
+        }
         if let Some(volume) = state.control.pending_volume.take() {
             set_volume(&mut state, audio_volume.as_ref(), volume);
             // Control Centre's slider shows it; no HUD over it.
@@ -1190,10 +1187,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             renderer.compositor.dispatch_gpu(&conn, mirror);
             // Flips just reported settle directly shown Wayland buffers.
             if let Some(server) = wayland.as_mut() {
+                // Still in front after the tick, or the app's buffers leave
+                // the screen with it.
+                let direct = wayland_direct
+                    .0
+                    .filter(|window| mirror && state.managed_windows.first() == Some(window));
                 server.update_direct(
                     &conn,
                     renderer.compositor.gpu_mut(),
-                    wayland_direct.0,
+                    direct,
                     &wayland_direct.1,
                 );
             }
@@ -1252,27 +1254,33 @@ fn main() -> Result<(), Box<dyn Error>> {
         // flush the connection.
         conn.flush()?;
         let mut retry_sleep = false;
+        // A directly shown Wayland app's buffers leave the screen with it.
+        let wayland_shown = wayland.as_ref().is_some_and(|server| server.showing_direct());
         match suspend_coordinator.next_action(state.screen_awake) {
             SuspendAction::None => {}
-            SuspendAction::Sleep if sleep_retries < 8 && releasing_app(&state, &apps) => {
-                // The power fade ended in this pass's tick, after the app
-                // registry ran: the app is released on the next pass, and
-                // the screen-off follows then. (Rejecting here woke the
-                // screen straight back up whenever an app was in front.)
+            SuspendAction::Sleep
+                if sleep_retries < 8 && (releasing_app(&state, &apps) || wayland_shown) =>
+            {
+                // The app in front is released right after the tick that
+                // locks (above), so the screen-off normally goes ahead in the
+                // same pass. Should anything of it remain, wait a pass or a
+                // few rather than reject (which woke the screen straight
+                // back up).
                 retry_sleep = true;
                 sleep_retries += 1;
             }
             SuspendAction::Sleep => {
                 sleep_retries = 0;
-                if !safe_to_power_down(&state, &apps) {
+                if !safe_to_power_down(&state, &apps) || wayland_shown {
                     eprintln!(
-                        "screen-off transaction rejected: unsafe shell state (view {:?}, awake {}, keyboard {}, pointer {}, windows {:?}, active app {:?})",
+                        "screen-off transaction rejected: unsafe shell state (view {:?}, awake {}, keyboard {}, pointer {}, windows {:?}, active app {:?}, wayland direct {})",
                         state.view,
                         state.screen_awake,
                         state.keyboard.is_visible(),
                         state.pointer.is_some(),
                         state.managed_windows,
-                        apps.active()
+                        apps.active(),
+                        wayland_shown
                     );
                     state.screen_on();
                     suspend_coordinator.fail_sleep("unsafe_shell_state");
@@ -1525,7 +1533,7 @@ fn heartbeat_is_recent(path: &Path, maximum_age: Duration) -> bool {
 }
 
 /// Locked and dark, with nothing in the way of the screen-off but the app
-/// that was in front, which the registry releases on the next pass.
+/// that was in front, still being released by the registry.
 fn releasing_app(state: &ShellState, apps: &AppRegistry) -> bool {
     state.view == View::Locked
         && !state.screen_awake
@@ -2244,6 +2252,19 @@ fn resize_app_window(
 
 fn app_content_height(bottom: u16) -> u16 {
     bottom.saturating_sub(status_bar::HEIGHT).max(1)
+}
+
+/// Brings the apps' processes and windows in line with the view.
+fn reconcile_apps(
+    conn: &RustConnection,
+    shell_window: u32,
+    width: u16,
+    height: u16,
+    state: &mut ShellState,
+    apps: &mut AppRegistry,
+) -> Result<(), Box<dyn Error>> {
+    let update = apps.reconcile(AppId::from_view(state.view));
+    apply_registry_update(conn, shell_window, width, height, state, apps, update)
 }
 
 fn apply_registry_update(

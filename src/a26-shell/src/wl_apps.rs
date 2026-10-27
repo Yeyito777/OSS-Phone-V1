@@ -206,6 +206,11 @@ impl WaylandApps {
         self.windows.contains_key(&window)
     }
 
+    /// Whether an app's own buffers are on screen (GPU direct mode).
+    pub fn showing_direct(&self) -> bool {
+        self.direct.is_some()
+    }
+
     /// Runs the clients' requests and turns them into X requests and
     /// actions for the main loop.
     pub fn dispatch<C: Connection>(&mut self, conn: &C) -> Vec<Action> {
