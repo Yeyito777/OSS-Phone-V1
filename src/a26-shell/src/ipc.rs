@@ -51,6 +51,9 @@ pub enum Command {
     SuspendTest(u64),
     /// `settings set KEY VALUE` (docs/settings.md).
     SettingsSet(String, String),
+    /// `transition push|pop`: an app is about to show another page (the
+    /// reply comes once its current page is snapshotted).
+    Transition(bool),
     /// `haptic STYLE`: a tap haptic for an app's control (System's switches).
     Haptic(crate::notify_client::Haptic),
     Quit,
@@ -287,6 +290,11 @@ fn parse_command(line: &str) -> Result<Command, String> {
                 Command::SettingsSet(key.to_owned(), value.to_owned())
             }
             _ => return Err("settings requires set KEY VALUE".into()),
+        },
+        "transition" => match parts.next() {
+            Some("push") => Command::Transition(true),
+            Some("pop") => Command::Transition(false),
+            _ => return Err("transition requires push or pop".into()),
         },
         "haptic" => match parts.next().and_then(crate::notify_client::Haptic::parse) {
             Some(style) => Command::Haptic(style),

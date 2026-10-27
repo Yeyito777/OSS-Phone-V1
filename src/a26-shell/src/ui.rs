@@ -370,6 +370,10 @@ pub struct Renderer {
     call: Layer<u64>,
     call_line: Layer<u64>,
     call_knob: Layer<u8>,
+    /// An app page transition (GPU mode): the outgoing page and the live
+    /// X mirror as a node source.
+    page_snapshot: Option<SurfaceId>,
+    mirror_node: Option<SurfaceId>,
 }
 
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
@@ -535,6 +539,8 @@ impl Renderer {
             icon_layers,
             labels,
             snapshots: [None; AppId::COUNT],
+            page_snapshot: None,
+            mirror_node: None,
             fade_snapshot: None,
         };
         renderer.home_levels =
@@ -561,6 +567,100 @@ impl Renderer {
             }
         };
         self.compositor.capture_root(conn, id)
+    }
+
+    /// Snapshots the page on screen for an app's page transition. GPU mode
+    /// only (the live app moves inside Moon's frame there); false otherwise.
+    pub fn capture_page<C: Connection>(&mut self, conn: &C) -> Result<bool, Box<dyn Error>> {
+        if !self.compositor.gpu() {
+            return Ok(false);
+        }
+        if self.mirror_node.is_none() {
+            self.mirror_node = self.compositor.create_mirror_node();
+        }
+        let id = match self.page_snapshot {
+            Some(id) => id,
+            None => {
+                let id = self.compositor.create_snapshot(conn)?;
+                self.page_snapshot = Some(id);
+                id
+            }
+        };
+        self.compositor.capture_root(conn, id)?;
+        Ok(self.mirror_node.is_some())
+    }
+
+    pub fn page_snapshot_taken(&self) -> bool {
+        self.page_snapshot
+            .is_some_and(|id| self.compositor.snapshot_taken(id))
+    }
+
+    /// The page transition: the status bar stays put (from the live
+    /// mirror); below it, a push slides the new page in from the right over
+    /// the old one, which drifts left and darkens; a pop is the reverse.
+    fn page_nodes(
+        &self,
+        transition: crate::model::PageTransition,
+        t: Instant,
+        nodes: &mut Vec<Node>,
+    ) -> bool {
+        let (Some(old), Some(live)) = (self.page_snapshot, self.mirror_node) else {
+            return false;
+        };
+        let p = transition.progress(t);
+        let top = f32::from(status_bar::HEIGHT);
+        let body = RectF::new(0.0, top, SCREEN_W, SCREEN_H - top);
+        let image = |surface, x: f32| Node::Image {
+            surface,
+            src: body,
+            dst: RectF::new(x.round(), top, SCREEN_W, SCREEN_H - top),
+            alpha: 1.0,
+            radius: 0.0,
+            smooth: false,
+        };
+        let shade = |x: f32, alpha: f32| Node::Fill {
+            dst: RectF::new(x.round(), top, SCREEN_W, SCREEN_H - top),
+            color: BLACK,
+            alpha,
+            radius: 0.0,
+        };
+        nodes.push(Node::Fill {
+            dst: SCREEN,
+            color: BLACK,
+            alpha: 1.0,
+            radius: 0.0,
+        });
+        let strip = RectF::new(0.0, 0.0, SCREEN_W, top);
+        nodes.push(Node::Image {
+            surface: live,
+            src: strip,
+            dst: strip,
+            alpha: 1.0,
+            radius: 0.0,
+            smooth: false,
+        });
+        // (under, its shade, over): the page beneath drifts by a third.
+        let (under, under_x, shade_alpha, over, over_x) = if transition.push {
+            (
+                old,
+                -SCREEN_W * 0.3 * p,
+                0.25 * p,
+                live,
+                SCREEN_W * (1.0 - p),
+            )
+        } else {
+            (
+                live,
+                -SCREEN_W * 0.3 * (1.0 - p),
+                0.25 * (1.0 - p),
+                old,
+                SCREEN_W * p,
+            )
+        };
+        nodes.push(image(under, under_x));
+        nodes.push(shade(under_x, shade_alpha));
+        nodes.push(image(over, over_x));
+        true
     }
 
     /// Snapshots the screen for the power fade.
@@ -1396,6 +1496,12 @@ impl Renderer {
                 base: Some(snapshot),
                 nodes,
             };
+        }
+        if let Some(transition) = state.page_transition
+            && self.page_nodes(transition, t, &mut nodes)
+        {
+            self.alert_nodes(state, t, &mut nodes);
+            return Frame { base: None, nodes };
         }
         // The centre or the ringing screen over an app: the app's snapshot
         // lies beneath them.

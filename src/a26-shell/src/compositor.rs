@@ -722,6 +722,17 @@ impl Compositor {
     }
 
     /// A full-screen surface for an app snapshot (see `capture_root`).
+    /// The live X mirror as a node source (GPU mode only).
+    pub fn create_mirror_node(&mut self) -> Option<SurfaceId> {
+        self.gpu.as_mut().map(GpuBackend::create_mirror_node)
+    }
+
+    /// GPU mode: the snapshot's copy is on its way, ahead of anything Xorg
+    /// draws next.
+    pub fn snapshot_taken(&self, id: SurfaceId) -> bool {
+        self.gpu.as_ref().is_some_and(|gpu| gpu.snapshot_taken(id))
+    }
+
     pub fn create_snapshot<C: Connection>(
         &mut self,
         conn: &C,

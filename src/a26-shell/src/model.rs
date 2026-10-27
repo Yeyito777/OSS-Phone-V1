@@ -178,6 +178,26 @@ pub struct PointerGesture {
     pub forwarding: bool,
 }
 
+/// An app page push or pop (System, Phone, Messages; GPU mode): the
+/// outgoing page, snapshotted, slides away while the live app slides in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PageTransition {
+    pub push: bool,
+    pub started: Instant,
+}
+
+pub const PAGE_TRANSITION: Duration = Duration::from_millis(380);
+
+impl PageTransition {
+    /// Eased progress, 0 to 1.
+    pub fn progress(&self, now: Instant) -> f32 {
+        crate::gfx::ease_out(
+            now.saturating_duration_since(self.started).as_secs_f32()
+                / PAGE_TRANSITION.as_secs_f32(),
+        )
+    }
+}
+
 /// What a tapped notification asked its app to show (`open.target`):
 /// handed over in Moon's state, where the app looks when it comes forward.
 #[derive(Debug, Clone)]
@@ -304,6 +324,7 @@ pub struct ShellState {
     /// Touch events for the app in front, drained by the main loop.
     pub app_pointer: Vec<AppPointer>,
     pub open_target: Option<OpenTarget>,
+    pub page_transition: Option<PageTransition>,
     active_app_focused: bool,
     launch: Option<Launch>,
 }
@@ -402,6 +423,7 @@ impl ShellState {
             previous_app: None,
             app_pointer: Vec::new(),
             open_target: None,
+            page_transition: None,
             active_app_focused: false,
             launch: None,
         }
@@ -1150,6 +1172,18 @@ impl ShellState {
             || self.alerts_animating(now)
             || self.control.animating(now)
             || self.calls_animating(now)
+            || self.page_transition.is_some()
+    }
+
+    /// An app may ask for a page transition now: its own app in front,
+    /// nothing of the shell over it.
+    pub fn page_transition_allowed(&self) -> bool {
+        self.screen_awake
+            && self.view.takes_drags()
+            && self.launch().is_none()
+            && self.gesture.is_none()
+            && self.switcher.is_none()
+            && !self.shell_covers_app()
     }
 
     pub fn tick(&mut self) {
@@ -1157,6 +1191,13 @@ impl ShellState {
         self.alerts_tick(now);
         self.control_tick(now);
         self.calls_tick(now);
+        if let Some(transition) = self.page_transition
+            && (now.saturating_duration_since(transition.started) >= PAGE_TRANSITION
+                || !self.page_transition_allowed())
+        {
+            self.page_transition = None;
+            self.redraw = true;
+        }
         if self.is_lockout_active() && self.view == View::Locked {
             // Repaint the "Try again in N s" countdown.
             self.redraw = true;
@@ -1527,6 +1568,35 @@ mod tests {
         assert_eq!(state.view, View::System);
         assert!(state.app_launching());
         assert!(state.switcher.is_none());
+    }
+
+    #[test]
+    fn page_transitions_run_their_course_and_stop_when_the_shell_takes_over() {
+        let mut state = ShellState::new(false, 50);
+        // Only Moon's own apps, in front, may ask.
+        assert!(!state.page_transition_allowed());
+        state.view = View::Messages;
+        assert!(state.page_transition_allowed());
+        let started = Instant::now();
+        let transition = PageTransition {
+            push: true,
+            started,
+        };
+        assert_eq!(transition.progress(started), 0.0);
+        assert_eq!(transition.progress(started + PAGE_TRANSITION), 1.0);
+        state.page_transition = Some(transition);
+        assert!(state.animating(started));
+        state.tick();
+        assert!(state.page_transition.is_some());
+        state.page_transition = Some(PageTransition {
+            push: false,
+            started: started - PAGE_TRANSITION,
+        });
+        state.tick();
+        assert!(state.page_transition.is_none());
+        // The browser keeps its own pages.
+        state.view = View::Browser;
+        assert!(!state.page_transition_allowed());
     }
 
     #[test]

@@ -603,6 +603,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::process::id(),
     );
 
+    // An app's page transition waiting for its snapshot: the request, push
+    // or pop, and when it came.
+    let mut pending_transition: Option<(std::os::unix::net::UnixStream, bool, Instant)> = None;
     // Passes a screen-off has waited for the app to be released.
     let mut sleep_retries = 0_u32;
     while !state.should_exit {
@@ -873,6 +876,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                         ipc::respond(stream, Ok(&brightness.public()));
                         continue;
                     }
+                    if let Command::Transition(push) = command {
+                        // Answered once the page on screen is snapshotted
+                        // (below), so the app draws its next page only after.
+                        let started =
+                            state.page_transition_allowed() && renderer.capture_page(&conn)?;
+                        if started {
+                            if let Some((previous, _, _)) = pending_transition.take() {
+                                ipc::respond(previous, Ok(&serde_json::json!({"started": false})));
+                            }
+                            pending_transition = Some((stream, push, Instant::now()));
+                        } else {
+                            ipc::respond(stream, Ok(&serde_json::json!({"started": false})));
+                        }
+                        continue;
+                    }
                     if let Command::ProfileBudget(kpx) = command {
                         backdrop::FRAME_BUDGET_KPX.store(kpx, std::sync::atomic::Ordering::Relaxed);
                     }
@@ -1014,7 +1032,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         reconcile_apps(&conn, shell_window, width, height, &mut state, &mut apps)?;
-        for app in [AppId::System, AppId::Browser] {
+        for app in AppId::ALL {
             if renderer.has_snapshot(app) && !apps.running_by_recency().contains(&app) {
                 renderer.forget_app(&conn, app);
             }
@@ -1183,7 +1201,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         if renderer.compositor.gpu() {
             // An app in front: the compositor shows the X mirror by itself.
-            let mirror = state.screen_awake && state.view.is_app() && !state.shell_covers_app();
+            let mirror = state.screen_awake
+                && state.view.is_app()
+                && !state.shell_covers_app()
+                && state.page_transition.is_none()
+                && pending_transition.is_none();
             renderer.compositor.dispatch_gpu(&conn, mirror);
             // Flips just reported settle directly shown Wayland buffers.
             if let Some(server) = wayland.as_mut() {
@@ -1199,14 +1221,34 @@ fn main() -> Result<(), Box<dyn Error>> {
                     &wayland_direct.1,
                 );
             }
+            if let Some((_, push, requested)) = pending_transition.as_ref() {
+                let (push, requested) = (*push, *requested);
+                let taken = renderer.page_snapshot_taken();
+                if taken || requested.elapsed() > Duration::from_millis(120) {
+                    if let Some((stream, _, _)) = pending_transition.take() {
+                        let started = taken && state.page_transition_allowed();
+                        if started {
+                            state.page_transition = Some(model::PageTransition {
+                                push,
+                                started: Instant::now(),
+                            });
+                            state.redraw = true;
+                        }
+                        ipc::respond(stream, Ok(&serde_json::json!({ "started": started })));
+                    }
+                }
+            }
         }
         // Frames: one per vblank while anything moves, otherwise only when
         // something changed. Every frame samples the model at the time it
         // will reach the panel.
         let now = Instant::now();
         let animating = state.animating(now) || renderer.settling();
-        let shell_visible =
-            state.screen_awake && (!state.view.is_app() || state.shell_covers_app());
+        // (A page transition is Moon's frame over the app, in GPU mode.)
+        let shell_visible = state.screen_awake
+            && (!state.view.is_app()
+                || state.shell_covers_app()
+                || state.page_transition.is_some());
         let wants_frame = shell_visible && (state.redraw || animating || state.shell_exposed);
         if wants_frame && now >= frame_idle_until && renderer.compositor.ready(now) {
             if std::mem::take(&mut state.shell_exposed) {
@@ -1392,8 +1434,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         if state.screen_awake {
             deadline = deadline.min(next_clock_tick);
         }
-        let shell_visible =
-            state.screen_awake && (!state.view.is_app() || state.shell_covers_app());
+        // (A page transition is Moon's frame over the app, in GPU mode.)
+        let shell_visible = state.screen_awake
+            && (!state.view.is_app()
+                || state.shell_covers_app()
+                || state.page_transition.is_some());
         if shell_visible && (state.redraw || state.animating(now) || renderer.settling()) {
             // A frame in flight wakes the loop through its Present event;
             // otherwise wake when the next frame may be drawn.
@@ -1432,6 +1477,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         if retry_sleep {
             deadline = now;
+        }
+        if pending_transition.is_some() {
+            // The snapshot's completion comes as an X event; look again soon.
+            deadline = deadline.min(now + Duration::from_millis(2));
         }
         for client_deadline in [notifyd.next_deadline(), telephonyd.next_deadline()]
             .into_iter()
@@ -3138,7 +3187,8 @@ fn apply_command(
         | Command::ProfileSkip(_)
         | Command::ProfileBudget(_)
         | Command::ProfileFrames(_)
-        | Command::SettingsSet(..) => {}
+        | Command::SettingsSet(..)
+        | Command::Transition(_) => {}
         Command::Haptic(style) => state.haptic(style),
         Command::Digit(digit) => state.input_digit(digit, config),
         Command::Backspace => state.backspace_pin(),

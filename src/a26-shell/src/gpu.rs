@@ -491,6 +491,9 @@ enum Surface {
         stride: u32,
         argb: bool,
     },
+    /// The live X mirror as a node's source (`MG_MIRROR_ID`): an app's
+    /// window moving inside one of Moon's frames.
+    Mirror,
 }
 
 /// One surface of a Wayland app shown directly over the X mirror while the
@@ -545,6 +548,9 @@ pub struct GpuBackend {
     captures_waiting: Vec<SurfaceId>,
     /// Show the mirror alone (an app is in front).
     mirror_mode: bool,
+    /// The last frame samples the live mirror (a page transition): Xorg's
+    /// damage must keep reaching it.
+    frame_uses_mirror: bool,
     /// The mirror frame waits for this copy (by number) to complete.
     mirror_frame_after: Option<u64>,
     flushes_issued: u64,
@@ -629,6 +635,7 @@ impl GpuBackend {
             captures_after_flush: Vec::new(),
             captures_waiting: Vec::new(),
             mirror_mode: false,
+            frame_uses_mirror: false,
             mirror_frame_after: None,
             flushes_issued: 0,
             held_frame: None,
@@ -1053,6 +1060,20 @@ impl GpuBackend {
         ))
     }
 
+    /// A handle on the live X mirror for frame nodes.
+    pub fn create_mirror_node(&mut self) -> SurfaceId {
+        self.insert(Surface::Mirror)
+    }
+
+    /// A snapshot's copy has been sent: whatever Xorg draws from now on
+    /// reaches the compositor after it.
+    pub fn snapshot_taken(&self, id: SurfaceId) -> bool {
+        matches!(
+            self.surfaces.get(id.0),
+            Some(Some(Surface::Snapshot { present: true }))
+        ) && !self.pending_capture(id)
+    }
+
     pub fn create_dimmed(&mut self, source: SurfaceId, dim: f32) -> SurfaceId {
         self.insert(Surface::Dimmed { source, dim })
     }
@@ -1060,7 +1081,7 @@ impl GpuBackend {
     pub fn free(&mut self, id: SurfaceId) {
         self.drop_card(id);
         if let Some(surface) = self.surfaces.get_mut(id.0).and_then(Option::take)
-            && !matches!(surface, Surface::Dimmed { .. })
+            && !matches!(surface, Surface::Dimmed { .. } | Surface::Mirror)
         {
             let mut msg = Msg::new(MSG_SURFACE_FREE);
             msg.u32(wire(id));
@@ -1264,7 +1285,7 @@ impl GpuBackend {
         }
         // Copies are needed while the mirror is on screen or about to be,
         // and for snapshots.
-        if (self.mirror_mode || !self.captures_after_flush.is_empty())
+        if (self.mirror_mode || self.frame_uses_mirror || !self.captures_after_flush.is_empty())
             && let Err(error) = self.flush_mirror(conn)
         {
             eprintln!("gpu: mirror copy failed: {error}");
@@ -1570,6 +1591,7 @@ impl GpuBackend {
                 Some((wire, base * (1.0 - dim)))
             }
             Surface::Snapshot { present: false } if !self.pending_capture(id) => None,
+            Surface::Mirror => Some((MIRROR_ID, 1.0)),
             _ => Some((wire(id), 1.0)),
         }
     }
@@ -1593,6 +1615,7 @@ impl GpuBackend {
         let count_at = 20;
         msg.u32(self.serial).u32(flags).u32(base_wire).u32(0);
         let mut count = 0_u32;
+        let mut uses_mirror = false;
         for node in nodes {
             match node {
                 Node::Image {
@@ -1608,6 +1631,7 @@ impl GpuBackend {
                         push_image(&mut msg, wire, src, *dst, *alpha, 1.0, *radius, *smooth);
                         count += 1;
                     } else if let Some((wire, dim)) = self.resolve(*surface) {
+                        uses_mirror |= wire == MIRROR_ID;
                         push_image(&mut msg, wire, *src, *dst, *alpha, dim, *radius, *smooth);
                         count += 1;
                     }
@@ -1654,6 +1678,7 @@ impl GpuBackend {
             }
         }
         msg.0[count_at..count_at + 4].copy_from_slice(&count.to_le_bytes());
+        self.frame_uses_mirror = uses_mirror;
         let packet = msg.finish().to_vec();
         if packet.len() > MAX_PACKET {
             eprintln!("gpu: frame too large ({} bytes); dropped", packet.len());
