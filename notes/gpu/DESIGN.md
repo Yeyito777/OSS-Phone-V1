@@ -257,15 +257,26 @@ Xorg, and nothing in the compositor has to change.
   framebuffer width or the pitch walks 4352 either way: the user saw that
   clean on two boots (main 2ba5a76), and the lock-screen drag still paces
   at 120 Hz (8.30 ms intervals, no missed vblanks after the first seconds).
-- **Display planes are off on the phone (2026-10-26).** With the lock
-  screen's notification list (a 1080x1280 ARGB layer at y=860, pitch 4352)
-  on a plane, the planes fetched it 27520 bytes late (above). Until the
-  plane rules are understood on the panel itself, `GPU_PLANES=0` in the
-  config (`scripts/gpu/install.sh --no-planes`, `--planes` clears it)
-  starts the compositor with `--no-planes`. Debugging: `SIGHUP` toggles
-  planes, `SIGWINCH` writes what the planes path would show (or, planes
-  off, the panel's frame through a spare DPP) to `wb.ppm` beside the
-  socket, `SIGURG` runs the probes.
+- **Display planes are back on (2026-10-27).** They were off on the phone
+  (`GPU_PLANES=0`) after the notification list came out wrong on a plane
+  (above). With framebuffers declared as wide as their rows, the user
+  watched `scripts/gpu/plane-ab.sh` (the lock screen with a notification
+  card, switching between planes and GPU composition every 1.5 s) and saw a
+  perfectly still picture, then a clean lock screen after a boot with
+  planes on; the profile log confirmed those frames went out on planes.
+  `scripts/gpu/install.sh --no-planes` still turns them off.
+  Lock-screen drag to the keypad and back, three rounds each way:
+
+  | | frames, pacing | compositor + Moon + Xorg CPU | GPU busy |
+  |---|---|---|---|
+  | planes on | 300 flips, all on planes; 8.30 ms intervals, 0 missed vblanks; submit-to-scanout p95 8.9-9.4 ms | 9.5 % of a core | 0 % |
+  | planes off | 302 flips, all GPU; 8.30 ms, 0 missed; p95 8.9-9.2 ms, max up to 17.7 ms | 13.8 % of a core | 11.6 % |
+
+  (The phone was on its charger, full, so battery current says nothing;
+  CPU time and GPU busy are the power proxies.) Debugging: `SIGHUP`
+  toggles planes (at once since this change), `SIGWINCH` writes what the
+  planes path would show (or, planes off, the panel's frame through a
+  spare DPP) to `wb.ppm` beside the socket, `SIGURG` runs the probes.
 - **Kernel hazards.** Every commit sets `HDR_FD=-1` on every plane it
   touches and a modeset `DQE_FD=-1` (see the panic below). The mode is never
   changed and the CRTC never disabled other than through `ACTIVE`.
