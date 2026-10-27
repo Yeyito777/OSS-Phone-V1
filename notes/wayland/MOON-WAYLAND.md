@@ -159,7 +159,47 @@ Only apps listed in `MOON_WAYLAND_APPS` (default: `system`) get
 `WAYLAND_DISPLAY`. Chromium picks Wayland by itself when it sees the
 variable, so the browser stays on X11 until it has been tested.
 
-Not verified yet: the phone (`scripts/wayland/moon-phone.sh`).
+### Verified on the phone (2026-10-26, build 03c49e9, GPU tier, compositor ec0a4fb, planes off)
+
+One 28-minute session with no reboot, using `scripts/wayland/moon-phone.sh`. Touches
+were injected at evdev level on `sec_touchscreen` (sendevent), so they took
+the same path as a finger: Xorg, XI2, the proxy window, wl_touch.
+
+- Wayland off (`stop`): the v4 handshake succeeds, GPU frames run at 120 Hz,
+  and the session is unchanged.
+- Demo (`start demo debug`):
+  - It maps fullscreen at scale 3 (a 360x739 logical toplevel) and direct
+    mode engages.
+  - Touch arrives at the right logical coordinates.
+  - Tapping a field enables text-input-v3: Moon's keyboard opens with
+    purpose text and the app is resized to 360x466. Taps on Moon's keys are
+    committed to the field (`"h"`, then `"hi"`).
+  - Direct mode turns off while a key callout shows and comes back on after.
+  - On lock the app is configured suspended (state 9) and loses focus. On
+    unlock and resume it is activated again.
+- System app as a Wayland client (`start system`): it renders correctly
+  (System page with the Activity and About cards).
+- `restore` put back the exact Moon and System binaries (by sha256).
+
+Found on the phone:
+- The animating demo runs at 60.3 fps in direct mode (16.59 ms mean
+  interval), not 120. The cause is not measured yet. The likely costs are:
+  - the full-screen CPU redraw at 1080x2217 each frame
+  - moon-compositor importing a fresh foreign buffer each frame
+  Either can push a frame past 8.3 ms, so the frame callback misses every
+  other vblank. Next: time the demo's draw and the compositor's per-frame
+  upload.
+- When Auto-Lock fires with a Wayland app in the foreground, the first
+  screen-off transaction is rejected with "unsafe shell state", and a later
+  retry succeeds. `safe_to_power_down` still sees the app's window as
+  managed or active at that moment. Not yet checked with an X11 app.
+- Not specific to Wayland (main has it too): keys typed on Moon's keyboard
+  don't reset Auto-Lock. `begin_raw_keyboard_contact` never calls
+  `note_input`, so the screen locks 30 s after the last non-keyboard touch,
+  even mid-typing.
+
+Not run: `evdev` touch, screen off/on via the power key, and the switcher
+card.
 
 ## Milestone 2, first part: direct display in GPU mode (built)
 
