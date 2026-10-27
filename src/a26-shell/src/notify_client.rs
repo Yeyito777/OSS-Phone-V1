@@ -38,6 +38,9 @@ pub struct Notification {
     /// not a banner.
     #[serde(default)]
     pub ringing: bool,
+    /// When the daemon withdraws it (Unix seconds).
+    #[serde(default)]
+    pub expires_at: Option<i64>,
 }
 
 fn normal() -> String {

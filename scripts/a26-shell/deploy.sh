@@ -39,6 +39,8 @@ for font in "$IMAGE"/share/fonts/*; do
         echo "font updated: $name"
     fi
 done
+adb -s "$SERIAL" push "$IMAGE/share/VERSION" /data/local/tmp/moon-VERSION >/dev/null
+adb -s "$SERIAL" shell "/data/local/tmp/su -c 'cp /data/local/tmp/moon-VERSION /data/local/a26-linux/opt/a26-shell/share/VERSION && chmod 0644 /data/local/a26-linux/opt/a26-shell/share/VERSION && rm /data/local/tmp/moon-VERSION'"
 echo "Deployed Moon binaries to $SERIAL."
 
 if [[ "${1:-}" == --reboot ]]; then

@@ -11,6 +11,8 @@ with their own commands: see `display-brightness.md`.
 | --- | --- |
 | `settings set wallpaper ID` | shows a built-in wallpaper (below) on the lock and home screens |
 | `settings set auto_lock_s N` | Auto-Lock after `N` seconds untouched: `15`, `30` (default), `60`, `120`, `300`, or `0` (never) |
+| `settings set timezone ZONE` | the local time zone, an IANA id from `src/a26-shell/src/tz.rs` (88 zones with their POSIX rules from tzdata 2026b; the chroot has no zoneinfo). Applied at once to Moon and to apps started afterwards; running apps follow `state.time` (`zone`, `tz` rule, `clock_24h`). Unset: config.json's `timezone` |
+| `settings set clock_24h on\|off` | the 24-hour clock (unset: config.json's `clock_24h`) |
 | `settings set haptics on\|off` | tap haptics (keyboard keys, Control Centre toggles and slider ends, switches; **off** by default: the A26's coin motor is too faint for crisp taps). The wrong-passcode buzz plays either way |
 | `settings set haptic_STYLE_ms N` | the pulse length for `selection`, `light`, `medium` or `error` taps: 5–400 ms, or `0` for moon-notifyd's default (100, 120, 150, 300 ms) |
 | `haptic STYLE [MS]` | an app asks for a tap haptic (with `MS`: that length once, for tuning) (`selection`, `light`, `medium`, `error`); Moon plays it through moon-notifyd's `haptic` when `haptics` is on and the screen is on |
@@ -58,3 +60,18 @@ backlight alone (`display-brightness.md`). Auto-Lock waits while a finger is
 down, while an alarm or timer rings, and while the app in front plays media
 (its media lease is held). A notification that woke the screen still turns
 it off after 10 s untouched (`notifications-ui.md`).
+
+## Power
+
+| Command | Effect |
+| --- | --- |
+| `power` | the power key's short press (sleep / wake) |
+| `power menu [restart]` | the power menu, as when the key is held for 0.9 s: *slide to power off* (or *slide to restart* after tapping Restart), Restart / Power Off, Cancel |
+| `system poweroff\|reboot` | power off or restart now: Moon shows *Shutting down…* / *Restarting…*, then runs the supervisor's `/opt/a26-shell/bin/moon-power poweroff\|reboot` (docs/power.md), which starts the ordered shutdown and returns |
+
+The battery policy is the supervisor's: its `moon` notifications tagged
+`battery-low` show as usual, and `battery-critical` turns into a full-screen
+countdown to its `expires_at` (no banner) until the phone powers off or a
+charger withdraws it. Plugging a charger in lights the lock screen with a
+charging card for 2.6 s; `Full` on a charger counts as charging (the bolt
+stays).

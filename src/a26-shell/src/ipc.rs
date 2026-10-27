@@ -43,6 +43,10 @@ pub enum Command {
     /// `brightness` (read), `brightness set N`, `brightness auto on|off`.
     Brightness(Option<crate::display::DisplayRequest>),
     Power,
+    /// `power menu [restart]`: the power menu, as if the key were held.
+    PowerMenu(crate::power::PowerAction),
+    /// `system poweroff|reboot`: power off or restart now, cleanly.
+    System(crate::power::PowerAction),
     ScreenOff,
     ScreenOn,
     /// `light-probe X Y SIZE` / `light-probe off`: a debug frame, black with
@@ -218,7 +222,19 @@ fn parse_command(line: &str) -> Result<Command, String> {
             ),
             _ => return Err("profile requires on or off".into()),
         },
-        "power" => Command::Power,
+        "power" => match (parts.next(), parts.next()) {
+            (None, _) => Command::Power,
+            (Some("menu"), None) => Command::PowerMenu(crate::power::PowerAction::PowerOff),
+            (Some("menu"), Some("restart")) => {
+                Command::PowerMenu(crate::power::PowerAction::Restart)
+            }
+            _ => return Err("power takes nothing, or menu [restart]".into()),
+        },
+        "system" => match parts.next() {
+            Some("poweroff") => Command::System(crate::power::PowerAction::PowerOff),
+            Some("reboot") => Command::System(crate::power::PowerAction::Restart),
+            _ => return Err("system requires poweroff or reboot".into()),
+        },
         "quit" => Command::Quit,
         "digit" => {
             let digit = parts
