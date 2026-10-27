@@ -53,7 +53,8 @@ sync_volume() {
 
 attempt=0
 delay=2
-while [ -e "$MARKER" ] && [ "$(getprop moon.boot.mode)" != android ]; do
+while [ -e "$MARKER" ] && [ "$(getprop moon.boot.mode)" != android ] &&
+    [ "$(getprop moon.boot.mode)" != shutdown ]; do
     sync_volume
     if audiod_running; then
         "$BB" sleep 15

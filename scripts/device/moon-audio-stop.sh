@@ -54,7 +54,9 @@ if pid_runs "$BASE/moon-permissiond" "$pid"; then
     # AudioFlinger keeps the first "audio" service it found for good; restart
     # audioserver (not a crash: init stop/start) so it binds to the
     # framework's real AudioService instead of the stand-in's dead binder.
-    if [ "$(getprop init.svc.zygote)" != running ]; then
+    # Not when the phone is shutting down (moon-power.sh).
+    if [ "$(getprop init.svc.zygote)" != running ] &&
+       [ "$(getprop moon.boot.mode)" != shutdown ]; then
         /system/bin/stop audioserver 2>/dev/null || true
         /system/bin/start audioserver 2>/dev/null || true
     fi

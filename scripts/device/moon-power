@@ -1,0 +1,16 @@
+#!/bin/sh
+# Moon's power entry point, inside the chroot (docs/power.md):
+#   moon-power poweroff|reboot
+# Starts the device-side sequence (/data/adb/moon/moon-power.sh) detached,
+# outside the chroot, and returns at once; that sequence stops Moon too.
+case "${1:-}" in
+    poweroff|reboot) ;;
+    *) echo "usage: moon-power poweroff|reboot" >&2; exit 2 ;;
+esac
+[ -r /proc/1/root/data/adb/moon/moon-power.sh ] || {
+    echo "moon-power: device helper missing" >&2
+    exit 1
+}
+setsid chroot /proc/1/root /system/bin/sh /data/adb/moon/moon-power.sh "$1" \
+    </dev/null >/dev/null 2>&1 &
+exit 0

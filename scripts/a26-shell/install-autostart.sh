@@ -24,7 +24,9 @@ for script in \
     "$PROJECT_ROOT/scripts/device/a26-xorg-takeover.sh" \
     "$PROJECT_ROOT/scripts/device/a26-xorg-safety-watchdog.sh" \
     "$PROJECT_ROOT/scripts/device/a26-android-graphics-restore.sh" \
-    "$PROJECT_ROOT/scripts/device/a26-xorg-persistent-session.sh"
+    "$PROJECT_ROOT/scripts/device/a26-xorg-persistent-session.sh" \
+    "$PROJECT_ROOT/scripts/device/moon-power.sh" \
+    "$PROJECT_ROOT/scripts/device/moon-power"
 do
     sh -n "$script"
 done
@@ -66,6 +68,10 @@ adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/a26-android-graphics-restore
     /data/local/tmp/a26-android-graphics-restore.sh.new >/dev/null
 adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/a26-xorg-persistent-session.sh" \
     /data/local/tmp/a26-xorg-persistent-session.sh >/dev/null
+adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-power.sh" \
+    /data/local/tmp/moon-power.sh >/dev/null
+adb -s "$SERIAL" push "$PROJECT_ROOT/scripts/device/moon-power" \
+    /data/local/tmp/moon-power >/dev/null
 
 adb -s "$SERIAL" shell '/data/local/tmp/su -c '\''
 set -eu
@@ -184,10 +190,24 @@ mv -f /data/local/a26-linux/opt/a26-audio/moon-permissiond.new \
 mv -f /data/local/a26-linux/a26-enter-chroot.sh.new \
     /data/local/a26-linux/a26-enter-chroot.sh
 
+# Power entry point (docs/power.md): device side and Moon's chroot helper.
+cp /data/local/tmp/moon-power.sh /data/adb/moon/moon-power.sh.new
+chown 0:0 /data/adb/moon/moon-power.sh.new
+chmod 0700 /data/adb/moon/moon-power.sh.new
+mv -f /data/adb/moon/moon-power.sh.new /data/adb/moon/moon-power.sh
+mkdir -p /data/local/a26-linux/opt/a26-shell/bin
+cp /data/local/tmp/moon-power /data/local/a26-linux/opt/a26-shell/bin/moon-power.new
+chown 0:0 /data/local/a26-linux/opt/a26-shell/bin/moon-power.new
+chmod 0755 /data/local/a26-linux/opt/a26-shell/bin/moon-power.new
+mv -f /data/local/a26-linux/opt/a26-shell/bin/moon-power.new \
+    /data/local/a26-linux/opt/a26-shell/bin/moon-power
+
 if [ ! -f /data/adb/moon/config ]; then
     cat >/data/adb/moon/config <<EOF
-MIN_START_BATTERY=20
-LOW_BATTERY_FALLBACK=8
+MIN_START_BATTERY=5
+BATTERY_WARN=20
+BATTERY_LOW=10
+BATTERY_CRITICAL=3
 MAX_START_FAILURES=3
 OVERRIDE_WINDOW_SECONDS=8
 DIRECT_BOOT=1
@@ -198,6 +218,12 @@ EOF
     chown 0:0 /data/adb/moon/config
     chmod 0600 /data/adb/moon/config
 fi
+
+# docs/power.md: Moon no longer falls back to Android on low battery, and
+# starts from 5 % (above the 3 % critical power-off). Migrate the old
+# defaults; values someone chose on purpose stay.
+sed -i -e "/^LOW_BATTERY_FALLBACK=/d" -e "s/^MIN_START_BATTERY=20\$/MIN_START_BATTERY=5/" \
+    /data/adb/moon/config
 
 # Moon powers the panel down through DPMS on screen-off; an Xorg config that
 # disables DPMS would hide the extension and leave the panel refreshing.

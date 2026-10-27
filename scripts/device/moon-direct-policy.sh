@@ -71,7 +71,7 @@ max_failures="$(config_uint MAX_START_FAILURES 3)"
     decide android "failure limit reached ($failures/$max_failures)"
 
 capacity="$(read_uint /sys/class/power_supply/battery/capacity 100)"
-if [ "$capacity" -lt "$(config_uint MIN_START_BATTERY 20)" ] &&
+if [ "$capacity" -lt "$(config_uint MIN_START_BATTERY 5)" ] &&
    [ "$(read_uint /sys/class/power_supply/usb/online 0)" != 1 ] &&
    [ "$(read_uint /sys/class/power_supply/ac/online 0)" != 1 ]; then
     decide android "battery is $capacity% without external power"

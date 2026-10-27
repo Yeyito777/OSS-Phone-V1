@@ -36,8 +36,8 @@ in_chroot() {
 }
 
 moon_owns_phone() {
-    [ -n "$(pidof Xorg 2>/dev/null || true)" ] && [ "$(getprop moon.boot.mode)" != android ] &&
-        [ ! -e "$PERSIST/disabled" ]
+    case "$(getprop moon.boot.mode)" in android|shutdown) return 1 ;; esac
+    [ -n "$(pidof Xorg 2>/dev/null || true)" ] && [ ! -e "$PERSIST/disabled" ]
 }
 
 boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"

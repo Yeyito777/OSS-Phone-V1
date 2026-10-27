@@ -105,8 +105,11 @@ setprop moon.supervisor.attempted 1
 echo "$boot_id" >"$PERSIST/last-attempt-boot-id"
 chmod 0600 "$PERSIST/last-attempt-boot-id"
 
-MIN_START_BATTERY="$(config_uint MIN_START_BATTERY 20)"
-LOW_BATTERY_FALLBACK="$(config_uint LOW_BATTERY_FALLBACK 8)"
+MIN_START_BATTERY="$(config_uint MIN_START_BATTERY 5)"
+BATTERY_WARN="$(config_uint BATTERY_WARN 20)"
+BATTERY_LOW="$(config_uint BATTERY_LOW 10)"
+BATTERY_CRITICAL="$(config_uint BATTERY_CRITICAL 3)"
+CRITICAL_GRACE="$(config_uint CRITICAL_GRACE 15)"
 MAX_START_FAILURES="$(config_uint MAX_START_FAILURES 3)"
 OVERRIDE_WINDOW_SECONDS="$(config_uint OVERRIDE_WINDOW_SECONDS 8)"
 
@@ -424,6 +427,69 @@ start_moon() {
     mv -f "$RUNTIME/moon-session.pid.new" "$RUNTIME/moon-session.pid"
 }
 
+# Low battery (docs/power.md): warnings through moon-notifyd, a clean
+# power-off at BATTERY_CRITICAL unless a charger arrives within the grace.
+battery_warned=100
+# Test hook: $RUNTIME/battery-test holding "CAPACITY CHARGER" (charger 0 or 1)
+# replaces the readings, to exercise the policy without draining the phone.
+battery_test() {
+    set -- $(cat "$RUNTIME/battery-test" 2>/dev/null) "$1"
+    [ $# -eq 3 ] || return 0
+    case "$3" in 1) echo "$1" ;; 2) echo "$2" ;; esac
+}
+charger_online() {
+    test_value="$(battery_test 2)"
+    [ -z "$test_value" ] || { [ "$test_value" = 1 ]; return; }
+    [ "$(read_uint /sys/class/power_supply/usb/online 0)" = 1 ] ||
+        [ "$(read_uint /sys/class/power_supply/ac/online 0)" = 1 ] ||
+        [ "$(read_uint /sys/class/power_supply/wireless/online 0)" = 1 ]
+}
+notify() {
+    "$BB" timeout -s KILL 5 "$BB" chroot "$ROOT" /usr/bin/env -i HOME=/root \
+        PATH=/usr/local/bin:/usr/bin:/bin /opt/a26-shell/bin/moon-notifyctl "$@" \
+        >/dev/null 2>&1
+}
+battery_policy() {
+    capacity="$(battery_test 1)"
+    [ -n "$capacity" ] || capacity="$(read_uint /sys/class/power_supply/battery/capacity 100)"
+    if charger_online; then
+        if [ "$battery_warned" -le "$BATTERY_WARN" ]; then
+            notify notify.withdraw app=moon tag=battery-low
+            battery_warned=100
+        fi
+        return 0
+    fi
+    if [ "$capacity" -le "$BATTERY_CRITICAL" ]; then
+        deadline=$(($(date +%s) + CRITICAL_GRACE))
+        log "battery at $capacity% without a charger; powering off at $deadline unless one arrives"
+        notify notify.post app=moon tag=battery-critical urgency=high \
+            "title=Shutting down" "body=Battery critically low" expires_at=$deadline
+        waited=0
+        while [ "$waited" -lt "$CRITICAL_GRACE" ]; do
+            sleep 1
+            waited=$((waited + 1))
+            if charger_online; then
+                log 'charger connected; power-off cancelled'
+                notify notify.withdraw app=moon tag=battery-critical
+                return 0
+            fi
+        done
+        /system/bin/sh "$PERSIST/moon-power.sh" poweroff
+        return 0
+    fi
+    if [ "$capacity" -le "$BATTERY_LOW" ] && [ "$battery_warned" -gt "$BATTERY_LOW" ]; then
+        notify notify.post app=moon tag=battery-low urgency=high \
+            "title=Battery very low" "body=$capacity% remaining"
+        battery_warned=$BATTERY_LOW
+        log "battery $capacity%: very-low warning"
+    elif [ "$capacity" -le "$BATTERY_WARN" ] && [ "$battery_warned" -gt "$BATTERY_WARN" ]; then
+        notify notify.post app=moon tag=battery-low urgency=normal \
+            "title=Battery low" "body=$capacity% remaining"
+        battery_warned=$BATTERY_WARN
+        log "battery $capacity%: low warning"
+    fi
+}
+
 moon_control() {
     # A live PID is insufficient: a synchronous X11 wait can leave the process
     # sleeping forever while its UI and control socket are both unresponsive.
@@ -583,7 +649,13 @@ while :; do
     for _ in 1 2 3 4 5 6; do
         sleep 5
         [ -e "$XORG_STATE/gpu-fallback" ] && break
+        [ "$(getprop moon.boot.mode)" != shutdown ] || break
     done
+    # moon-power.sh is shutting the phone down: stand aside.
+    if [ "$(getprop moon.boot.mode)" = shutdown ]; then
+        log 'power-off/reboot in progress; supervisor standing down'
+        break
+    fi
     # The GPU compositor gave up (moon-gpu-session.sh): the takeover restarts
     # Xorg on the panel; once it is up, start Moon again on that path.
     if [ -e "$XORG_STATE/gpu-fallback" ]; then
@@ -634,12 +706,7 @@ while :; do
         /system/bin/sh /data/local/tmp/a26-android-graphics-restore.sh
         break
     fi
-    capacity="$(read_uint /sys/class/power_supply/battery/capacity 100)"
-    if [ "$capacity" -le "$LOW_BATTERY_FALLBACK" ]; then
-        log "battery reached $capacity%; restoring Android charging mode"
-        /system/bin/sh /data/local/tmp/a26-android-graphics-restore.sh
-        break
-    fi
+    battery_policy
     if moon_control 5 ping >/dev/null 2>&1; then
         shell_unhealthy=0
     else
