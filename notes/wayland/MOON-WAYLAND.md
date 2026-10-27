@@ -496,6 +496,46 @@ are memfds, so rootless would add the upload per frame that the mirror
 avoids. M4b therefore starts with an Xwayland that allocates its shm
 pixmaps from the dma heap.
 
+### On the phone (2026-10-26/27, xwayland-m4 ab83361, then 67d3a40)
+
+**M4a, Moon on Xwayland** (`moon-xwayland-test.sh`, GPU session, planes on):
+- **Startup:** Xwayland 24.1.14 (Alpine's, without glamor) reported `:0`
+  after 187 ms. moon-compositor stayed up; Moon read `sec_touchscreen`
+  itself.
+- **Touch:** Moon unlocked. Injected evdev touches scrolled the Browser, an
+  X11 app on Xwayland.
+- **Keyboard:** tapping the address bar made the Browser ask for Moon's
+  keyboard (purpose url), and Moon's keys typed into it through XTEST.
+- **Screen-off:** went through cleanly with the Browser in front (CRTC off
+  through moon-compositor).
+- **Overnight:** the session then ran about 9 hours with 7 screen
+  transitions, no rejection and no error, until a reboot restored the
+  normal session.
+- **Not yet done:** real fingers (the user was away).
+
+**dmabuf pools, full-screen demo** (normal session, same Moon):
+
+| | memfd pool | dma-heap buffers |
+|---|---|---|
+| Frame rate | 60.3 fps (2 vblanks a frame) | **96 fps** (1.3 vblanks a frame) |
+| Upload (damage -> UPLOADED) | 2.86 ms | **0.17 ms** |
+| Compositor render | 3.2 ms | **0.00 ms** (on a plane) |
+| Sent -> flip | 12.9 ms | 4.2 ms |
+| Client paint / frame done -> commit | 2.0 / 2.5 ms | 3.8 / 4.6 ms |
+| Moon (commit -> sent, cache flush) | 0.06 ms | 0.8 ms |
+
+The display path is no longer the limit. What is left for 120 Hz:
+- **Painting is slower:** the demo paints about twice as slowly into
+  dma-heap memory as into a memfd. The heap's CPU mapping may be
+  write-combined or uncached. To check: `system` vs `system-uncached`,
+  and the mapping's attributes.
+- **The cache flush:** Moon's `DMA_BUF_IOCTL_SYNC` costs 0.8 ms; it could
+  be bounded to the damage.
+
+Also seen: twice, right after Moon restarted, an animating direct-mode
+client got no frames until a screen off/on cycle. That is unexplained, to
+investigate.
+
 **M4b (next): rootless Xwayland, Moon as its X window manager.**
 - Each X window (the Browser, and Moon's own windows at first) has its own
   wl_surface (`xwayland_shell_v1`). Moon shows it directly, as M2 does for
