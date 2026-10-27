@@ -50,10 +50,10 @@ use crate::present::Damage;
 /// v2, only when the compositor closes the link after the hello: a
 /// compositor older than v3 drops a client whose version differs from its
 /// own. Timeouts and connect errors are plain failures, retried at the top.
-const PROTO_VERSION: u32 = 3;
+const PROTO_VERSION: u32 = 4;
 const PROTO_MIN_VERSION: u32 = 2;
-/// The newest version Moon can speak; MOON_GPU_PROTO may offer it (v4 is
-/// not deployed everywhere yet, so it is not the default).
+/// The newest version Moon can speak; MOON_GPU_PROTO offers an older one
+/// (to test the v2/v3 paths).
 const PROTO_MAX_KNOWN: u32 = 4;
 
 fn offered_version() -> u32 {

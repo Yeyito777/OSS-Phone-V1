@@ -16,6 +16,8 @@
 !/src/moon-audiod/
 !/src/moon-telephonyd/
 !/src/moon-gpu/
+!/src/moon-wl-demo/
+/src/moon-wl-demo/target/
 !/src/oss-rebootmode-clear/
 !/src/venus/
 /src/a26-shell/target/
