@@ -1388,6 +1388,8 @@ fn auto_lock_timeout(state: &ShellState) -> Option<Duration> {
         && state.screen_awake
         && state.fade.is_none()
         && state.pointer.is_none()
+        // A finger resting on a keyboard key (its own touch path).
+        && state.keyboard.latest_pressed().is_none()
         && state.alerts.ringing().is_none()
         && state.calls.ringing().is_none())
     .then(|| Duration::from_secs(u64::from(seconds)))
@@ -2079,6 +2081,10 @@ fn pointer_move(
     x: i16,
     y: i16,
 ) {
+    if state.pointer.is_some() {
+        // A long drag (a slider, a scrolling list) is input all along.
+        state.note_input();
+    }
     if state.call_touch_active() || state.control_touch_active() || state.alerts_touch_active() {
         if state.call_touch_active() {
             state.call_pointer_move(f32::from(x), f32::from(y));
@@ -2228,6 +2234,10 @@ fn begin_raw_keyboard_contact(
     {
         return None;
     }
+    if state.screen_awake {
+        // Typing keeps the screen on (Auto-Lock counts from the last key).
+        state.note_input();
+    }
     let (pointer, action) = new_pointer_gesture(state, keyboard_geometry, x, y, repeat_timing);
     if !pointer.keyboard_owned {
         return None;
@@ -2257,6 +2267,7 @@ fn update_raw_keyboard_contact(
     else {
         return;
     };
+    state.note_input();
     let (next_x, next_y) = {
         let pointer = &raw_touch.keyboard_contacts[position].1;
         (x.unwrap_or(pointer.last_x), y.unwrap_or(pointer.last_y))
@@ -2298,6 +2309,7 @@ fn end_raw_keyboard_contact(
     else {
         return;
     };
+    state.note_input();
     let (_, pointer) = raw_touch.keyboard_contacts.remove(position);
     if pointer.keyboard_pressed
         && let Some(index) = pointer.keyboard_key_index
@@ -2339,6 +2351,10 @@ fn repeat_keyboard_if_due(
         if let Some(repeat) = due_repeat(pointer, now, repeat_timing.interval) {
             repeats.push(repeat);
         }
+    }
+    if !repeats.is_empty() {
+        // A held key typing is input too.
+        state.note_input();
     }
     for (index, repeat_count, uppercase) in repeats {
         let Some(action) = keyboard_geometry
@@ -2479,6 +2495,9 @@ fn pointer_end(
     config: &Config,
     key_injector: &XtestInjector,
 ) {
+    if state.pointer.is_some() {
+        state.note_input();
+    }
     // Still on the keypad key or app icon it pressed (a slide past the slop
     // clears it), so the release counts however long the finger rested.
     let pressed = state.pressed.take();
@@ -2725,6 +2744,9 @@ fn apply_command(
     audio_volume: Option<&AudioVolume>,
     key_repeat_timing: KeyRepeatTiming,
 ) {
+    if command.is_user_input() && state.screen_awake {
+        state.note_input();
+    }
     match command {
         Command::Ping
         | Command::State
@@ -2930,6 +2952,47 @@ mod touch_tests {
             ),
             2
         );
+    }
+
+    #[test]
+    fn every_touch_path_counts_for_auto_lock() {
+        let geometry = KeyboardGeometry::new(1080, 2340);
+        let repeat = KeyRepeatTiming {
+            delay: Duration::from_millis(200),
+            interval: Duration::from_nanos(1_000_000_000 / 45),
+        };
+        let mut state = ShellState::new(false, 50);
+        state.keyboard.show(keyboard::KeyboardPurpose::Text);
+        let mut raw_touch = RawTouchTracker::default();
+        let stale = |state: &mut ShellState| {
+            state.last_input = Instant::now() - Duration::from_secs(25);
+            state.idle_dimmed = true;
+        };
+        let fresh = |state: &ShellState| {
+            state.last_input.elapsed() < Duration::from_secs(1) && !state.idle_dimmed
+        };
+
+        // A key on Moon's keyboard (its own multitouch path).
+        stale(&mut state);
+        begin_raw_keyboard_contact(&mut state, &mut raw_touch, 3, &geometry, 754, 1752, repeat);
+        assert!(fresh(&state), "a key press");
+        stale(&mut state);
+        update_raw_keyboard_contact(&mut state, &mut raw_touch, 3, &geometry, Some(760), None);
+        assert!(fresh(&state), "a finger sliding on the keyboard");
+
+        // A long drag: a slider, a list scrolling in an app.
+        state.keyboard.hide();
+        pointer_begin(&mut state, &geometry, 540, 900, repeat);
+        stale(&mut state);
+        pointer_move(&mut state, &geometry, 2340, 540, 1300);
+        assert!(fresh(&state), "a drag in progress");
+
+        // Commands standing in for touches and keys count; app requests do not.
+        assert!(Command::Tap(1, 1).is_user_input());
+        assert!(Command::Digit(1).is_user_input());
+        assert!(Command::VolumeUp.is_user_input());
+        assert!(!Command::KeyboardShow(keyboard::KeyboardPurpose::Text).is_user_input());
+        assert!(!Command::SettingsSet("wallpaper".into(), "black".into()).is_user_input());
     }
 
     #[test]

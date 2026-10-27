@@ -54,6 +54,30 @@ pub enum Command {
     Quit,
 }
 
+impl Command {
+    /// Commands that stand in for the user's own touches and keys (tests,
+    /// `ctl`): like real input they count for Auto-Lock. Requests apps make
+    /// on the user's behalf (keyboard, brightness, settings) do not.
+    pub fn is_user_input(&self) -> bool {
+        matches!(
+            self,
+            Command::Digit(_)
+                | Command::Backspace
+                | Command::Submit
+                | Command::Tap(..)
+                | Command::PointerBegin(..)
+                | Command::PointerMove(..)
+                | Command::PointerEnd(..)
+                | Command::Home
+                | Command::Switcher
+                | Command::SwipeUp
+                | Command::VolumeUp
+                | Command::VolumeDown
+                | Command::Power
+        )
+    }
+}
+
 pub struct IpcServer {
     listener: UnixListener,
     path: PathBuf,
