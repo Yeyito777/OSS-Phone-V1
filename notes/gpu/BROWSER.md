@@ -1,5 +1,13 @@
 # GPU acceleration for the Browser (vimbrowser on the A26)
 
+> **Parked (2026-10-27, the user's decision): no further Browser, Venus or
+> Chromium work.** State at parking: software rendering unchanged in the
+> shipped launcher; Venus renders on the Mali from the Browser's root
+> (first frame passed, below) but Chromium does not take it yet (it probes
+> Venus and stays on SwiftShader, cause unknown). Everything needed to
+> resume is in `scripts/venus/`, `src/venus/` and `scripts/gpu/browser-*`;
+> nothing of it is installed on the phone.
+
 Research and proposal, 2026-10-26, with first measurements on the phone
 (below). Estimates are labelled as such.
 
