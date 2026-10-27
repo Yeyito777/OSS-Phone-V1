@@ -206,7 +206,8 @@ impl Dispatch<XdgSurface, SurfaceKey> for WlState {
                 assign_role(state, key, Placement::Toplevel(id));
                 if xwayland {
                     state.xwayland_root = Some(key);
-                    if let Some(root) = state.surface_by_key(key).map(|data| data.resource.clone()) {
+                    if let Some(root) = state.surface_by_key(key).map(|data| data.resource.clone())
+                    {
                         super::seat::xwayland_enter(state, &root);
                     }
                 } else {

@@ -382,7 +382,6 @@ impl WaylandServer {
             .filter(|key| self.state.surface_by_key(*key).is_some())
     }
 
-
     pub fn flush(&mut self) {
         if let Err(error) = self.display.flush_clients() {
             // A client that stopped reading is disconnected by the backend.

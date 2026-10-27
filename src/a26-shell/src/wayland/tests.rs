@@ -279,9 +279,15 @@ impl Harness {
         let dir = std::env::temp_dir().join(format!("moon-wl-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let mut server =
-            WaylandServer::bind(&dir, "wayland-0", (1080, 2340), (1080, 2216), 120_000, scale)
-                .unwrap();
+        let mut server = WaylandServer::bind(
+            &dir,
+            "wayland-0",
+            (1080, 2340),
+            (1080, 2216),
+            120_000,
+            scale,
+        )
+        .unwrap();
         let stream = if xwayland {
             let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
             server.insert_xwayland(ours).unwrap();

@@ -443,7 +443,11 @@ impl GlobalDispatch<WlOutput, ()> for WlState {
             state.refresh_mhz,
         );
         if output.version() >= 2 {
-            output.scale(if super::is_xwayland(client) { 1 } else { state.scale });
+            output.scale(if super::is_xwayland(client) {
+                1
+            } else {
+                state.scale
+            });
         }
         if output.version() >= 4 {
             output.name("DSI-1".into());

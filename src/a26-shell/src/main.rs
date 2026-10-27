@@ -480,7 +480,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(dir) => {
             let dir = PathBuf::from(dir);
             let server = match early_wayland.take() {
-                Some(server) => wl_apps::WaylandApps::with_server(&conn, root, width, height, server),
+                Some(server) => {
+                    wl_apps::WaylandApps::with_server(&conn, root, width, height, server)
+                }
                 None => std::fs::create_dir_all(&dir)
                     .map_err(Box::<dyn Error>::from)
                     .and_then(|()| wl_apps::WaylandApps::new(&conn, root, width, height, &dir)),

@@ -151,7 +151,13 @@ impl Touchscreen {
             minimum: 0,
             maximum,
         };
-        Ok(Self::with_axes(file, path.to_owned(), (axis(max.0), axis(max.1)), width, height))
+        Ok(Self::with_axes(
+            file,
+            path.to_owned(),
+            (axis(max.0), axis(max.1)),
+            width,
+            height,
+        ))
     }
 
     fn from_file(file: File, path: PathBuf, width: u16, height: u16) -> io::Result<Self> {
