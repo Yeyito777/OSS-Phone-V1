@@ -16,7 +16,7 @@ Revision 4 (2026-10-26): `haptic` (§4), a short vibrator pulse for a tap.
 `ping` returns `revision: 4`; an older daemon answers `unknown_command`, so
 a client checks `revision` ≥ 4 before sending it.
 
-Revision 5 (2026-10-27): `haptic` takes an optional `ms` (5–100), the pulse
+Revision 5 (2026-10-27): `haptic` takes an optional `ms` (5–400), the pulse
 length overriding the style's default (Moon's tuned lengths). `ping`
 returns `revision: 5`; a revision-4 daemon refuses `ms` with
 `invalid_argument`, so a client sends it only to revision ≥ 5.
@@ -210,7 +210,7 @@ they reflect what the user did.
 | `notify.dismiss_all` | optional `app` | all (of that app) removed, reason `dismissed` |
 | `notify.activate` | `notification` | removed with reason `activated`; a `notification_activated` event (with `app`, `tag`, `open`) goes to every subscriber, so the posting app can react; Moon itself performs `open` |
 | `notify.mark_seen` | `ids` (array) or `all: true` | sets `seen`; `notifications_seen` event |
-| `haptic` (r4) | `style`: `selection`, `light`, `medium`, `error`; optional `ms` (5–100, r5) | `{}`; one short pulse: `ms`, else 12, 16, 24 or 40 ms (Moon sends its tuned lengths), see below |
+| `haptic` (r4) | `style`: `selection`, `light`, `medium`, `error`; optional `ms` (5–400, r5) | `{}`; one short pulse: `ms`, else 100, 120, 150 or 300 ms (long: the A26's coin DC motor is faint and slow to spin up), see below |
 | `alarm.list` | — | `{"alarms":[…]}` sorted by `next_fire_at` |
 | `alarm.create` | `hour` 0–23, `minute` 0–59, optional `days`, `label` (≤ 40), `enabled` (true), `sound`, `vibrate` (true), `snooze_minutes` | the alarm |
 | `alarm.update` | `alarm` + any alarm field above | the alarm (recomputed `next_fire_at`; clears a pending snooze) |
@@ -297,7 +297,7 @@ by `notification.ringing`. The Phone app should post calls with
 `app: "phone"`, a `tag` per call, `urgency: "high"` and an `open` target.
 
 Notification sound: `normal` and `high` play a short two-tone chime (and a
-200 ms vibration if `vibrate` is on) unless `silent`, `notification_sounds` is
+300 ms vibration if `vibrate` is on) unless `silent`, `notification_sounds` is
 off, or do-not-disturb is on. At most one notification sound per 2 s.
 
 ## 6. Missed events and reboots

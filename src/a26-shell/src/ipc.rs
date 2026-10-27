@@ -308,8 +308,8 @@ fn parse_command(line: &str) -> Result<Command, String> {
                     Some(ms) => Some(
                         ms.parse::<u32>()
                             .ok()
-                            .filter(|ms| (5..=100).contains(ms))
-                            .ok_or("haptic length is 5..100 ms")?,
+                            .filter(|ms| (5..=400).contains(ms))
+                            .ok_or("haptic length is 5..400 ms")?,
                     ),
                 },
             ),

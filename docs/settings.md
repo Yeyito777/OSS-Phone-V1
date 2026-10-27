@@ -11,15 +11,15 @@ with their own commands: see `display-brightness.md`.
 | --- | --- |
 | `settings set wallpaper ID` | shows a built-in wallpaper (below) on the lock and home screens |
 | `settings set auto_lock_s N` | Auto-Lock after `N` seconds untouched: `15`, `30` (default), `60`, `120`, `300`, or `0` (never) |
-| `settings set haptics on\|off` | tap haptics (keyboard keys, Control Centre toggles and slider ends, switches; on by default) |
-| `settings set haptic_STYLE_ms N` | the pulse length for `selection`, `light`, `medium` or `error` taps: 5–100 ms, or `0` for moon-notifyd's default |
+| `settings set haptics on\|off` | tap haptics (keyboard keys, Control Centre toggles and slider ends, switches; **off** by default: the A26's coin motor is too faint for crisp taps). The wrong-passcode buzz plays either way |
+| `settings set haptic_STYLE_ms N` | the pulse length for `selection`, `light`, `medium` or `error` taps: 5–400 ms, or `0` for moon-notifyd's default (100, 120, 150, 300 ms) |
 | `haptic STYLE [MS]` | an app asks for a tap haptic (with `MS`: that length once, for tuning) (`selection`, `light`, `medium`, `error`); Moon plays it through moon-notifyd's `haptic` when `haptics` is on and the screen is on |
 
 An unknown key or value is refused (`ok: false`); nothing changes. Every
 reply and `state` carry the current settings:
 
 ```json
-"settings": {"version": 1, "wallpaper": "moon", "auto_lock_s": 30, "haptics": true, "haptic_ms": [0, 0, 0, 0]}
+"settings": {"version": 1, "wallpaper": "moon", "auto_lock_s": 30, "haptics": false, "haptic_ms": [0, 0, 0, 0]}
 ```
 
 ## File

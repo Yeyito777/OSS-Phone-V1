@@ -1008,6 +1008,25 @@ impl Compositor {
                 return Ok(false);
             }
             let sent = gpu.compose(frame.base, &frame.nodes);
+            if self.debug_frames {
+                // `profile frames on`: what each frame shows, by its base
+                // and first nodes (enough to tell home from an app).
+                let first: Vec<String> = frame
+                    .nodes
+                    .iter()
+                    .take(3)
+                    .map(|node| match node {
+                        Node::Image { surface, .. } => format!("img {}", surface.0),
+                        Node::Fill { alpha, .. } => format!("fill {alpha:.2}"),
+                        Node::Rows { .. } => "rows".into(),
+                    })
+                    .collect();
+                eprintln!(
+                    "gpu frame base {:?} nodes {} first {first:?}",
+                    frame.base.map(|b| b.0),
+                    frame.nodes.len()
+                );
+            }
             self.last = Some(frame);
             return Ok(sent);
         }

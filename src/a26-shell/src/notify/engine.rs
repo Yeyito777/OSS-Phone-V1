@@ -45,12 +45,13 @@ pub enum Effect {
     Haptic(u32),
 }
 
-/// Haptic pulse lengths (ms). Conservative until tuned by hand on the
-/// phone: shorter pulses may not be felt on its motor.
-pub const HAPTIC_SELECTION_MS: u32 = 12;
-pub const HAPTIC_LIGHT_MS: u32 = 16;
-pub const HAPTIC_MEDIUM_MS: u32 = 24;
-pub const HAPTIC_ERROR_MS: u32 = 40;
+/// Haptic pulse lengths (ms). The A26's coin DC motor (2.8 V, fixed) needs
+/// tens of milliseconds just to spin up and is faint: on the phone, 8-60 ms
+/// taps went unfelt and even 1.5 s was "pretty faint", so these are long.
+pub const HAPTIC_SELECTION_MS: u32 = 100;
+pub const HAPTIC_LIGHT_MS: u32 = 120;
+pub const HAPTIC_MEDIUM_MS: u32 = 150;
+pub const HAPTIC_ERROR_MS: u32 = 300;
 
 #[derive(Debug)]
 pub struct Failure {
@@ -370,8 +371,8 @@ impl Engine {
                 };
                 let ms = match a.ms {
                     None => ms,
-                    Some(ms @ 5..=100) => ms,
-                    Some(_) => return Err(fail("invalid_argument", "ms is 5..100")),
+                    Some(ms @ 5..=400) => ms,
+                    Some(_) => return Err(fail("invalid_argument", "ms is 5..400")),
                 };
                 // Stateless: never while anything rings (whatever its
                 // vibrate setting), and the daemon drops it if the
@@ -728,7 +729,8 @@ impl Engine {
                 self.effects.push(Effect::Chime);
             }
             if settings.vibrate {
-                self.effects.push(Effect::Buzz(200));
+                // At least 300 ms: shorter is hard to feel on the A26's motor.
+                self.effects.push(Effect::Buzz(300));
             }
         }
         let wake = n.ringing || (n.urgency == Urgency::High && !settings.do_not_disturb);
@@ -1113,7 +1115,7 @@ struct AppFilter {
 #[serde(deny_unknown_fields)]
 struct Haptic {
     style: String,
-    /// The pulse length in ms (5-100), overriding the style's default:
+    /// The pulse length in ms (5-400), overriding the style's default:
     /// Moon's tuned lengths (revision 5).
     ms: Option<u32>,
 }
@@ -1227,7 +1229,7 @@ mod tests {
             assert_eq!(names(&ev), ["notification_posted"]);
             assert_eq!(ev[0]["notification"]["title"], "Wi-Fi");
             assert_eq!(ev[0]["wake"], false);
-            assert_eq!(e.take_effects(), [Effect::Chime, Effect::Buzz(200)]);
+            assert_eq!(e.take_effects(), [Effect::Chime, Effect::Buzz(300)]);
             let id = r["id"].as_str().unwrap().to_owned();
             // Same tag replaces in place, keeps the id; chime rate limited.
             let (r2, _) = run(
@@ -1534,7 +1536,7 @@ mod tests {
                 "invalid_argument"
             );
             assert_eq!(
-                error(&mut e, "haptic", json!({"style": "light", "ms": 200}), T0),
+                error(&mut e, "haptic", json!({"style": "light", "ms": 500}), T0),
                 "invalid_argument"
             );
             assert_eq!(

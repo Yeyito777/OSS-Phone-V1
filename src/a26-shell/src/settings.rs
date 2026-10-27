@@ -39,7 +39,9 @@ impl Default for Settings {
             version: 1,
             wallpaper: "moon".into(),
             auto_lock_s: 30,
-            haptics: true,
+            // Off by default: the A26's motor is too faint for crisp taps
+            // (the wrong-passcode buzz plays regardless).
+            haptics: false,
             haptic_ms: [0; 4],
         }
     }
@@ -71,7 +73,7 @@ impl Settings {
             self.auto_lock_s = defaults.auto_lock_s;
         }
         for ms in &mut self.haptic_ms {
-            if *ms != 0 && !(5..=100).contains(ms) {
+            if *ms != 0 && !(5..=400).contains(ms) {
                 *ms = 0;
             }
         }
@@ -123,8 +125,8 @@ impl Settings {
                 self.haptic_ms[index] = value
                     .parse::<u32>()
                     .ok()
-                    .filter(|ms| *ms == 0 || (5..=100).contains(ms))
-                    .ok_or("a haptic length is 5..100 ms, or 0 for the default")?;
+                    .filter(|ms| *ms == 0 || (5..=400).contains(ms))
+                    .ok_or("a haptic length is 5..400 ms, or 0 for the default")?;
             }
             _ => return Err("unknown setting"),
         }
@@ -147,8 +149,9 @@ mod tests {
         assert!(settings.set("wallpaper", "nope").is_err());
         assert!(settings.set("auto_lock_s", "45").is_err());
         assert!(settings.set("auto_lock_s", "0").is_ok());
-        assert!(settings.set("haptics", "off").is_ok());
-        assert!(!settings.haptics);
+        assert!(!settings.haptics, "off by default");
+        assert!(settings.set("haptics", "on").is_ok());
+        assert!(settings.haptics);
         assert!(settings.set("haptics", "maybe").is_err());
         assert!(settings.set("haptic_light_ms", "18").is_ok());
         assert_eq!(settings.haptic_ms, [0, 18, 0, 0]);

@@ -552,8 +552,10 @@ impl ShellState {
     }
 
     /// A haptic of a given length (`ctl haptic STYLE MS`, for tuning).
+    /// The wrong-passcode buzz plays even with tap haptics off.
     pub fn haptic_ms(&mut self, style: crate::notify_client::Haptic, ms: Option<u32>) {
-        if self.settings.haptics && self.screen_awake {
+        let wanted = self.settings.haptics || style == crate::notify_client::Haptic::Error;
+        if wanted && self.screen_awake {
             self.alerts
                 .outbox
                 .push(crate::alerts::Outgoing::Haptic(style, ms));
