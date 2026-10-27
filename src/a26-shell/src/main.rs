@@ -550,6 +550,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::process::id(),
     );
 
+    // Passes a screen-off has waited for the app to be released.
+    let mut sleep_retries = 0_u32;
     while !state.should_exit {
         while let Some(event) = conn.poll_for_event()? {
             if renderer.compositor.handle_event(&event) {
@@ -1033,11 +1035,29 @@ fn main() -> Result<(), Box<dyn Error>> {
         // traffic in this state, so they cannot rely on a shell repaint to
         // flush the connection.
         conn.flush()?;
+        let mut retry_sleep = false;
         match suspend_coordinator.next_action(state.screen_awake) {
             SuspendAction::None => {}
+            SuspendAction::Sleep if sleep_retries < 8 && releasing_app(&state, &apps) => {
+                // The power fade ended in this pass's tick, after the app
+                // registry ran: the app is released on the next pass, and
+                // the screen-off follows then. (Rejecting here woke the
+                // screen straight back up whenever an app was in front.)
+                retry_sleep = true;
+                sleep_retries += 1;
+            }
             SuspendAction::Sleep => {
+                sleep_retries = 0;
                 if !safe_to_power_down(&state, &apps) {
-                    eprintln!("screen-off transaction rejected: unsafe shell state");
+                    eprintln!(
+                        "screen-off transaction rejected: unsafe shell state (view {:?}, awake {}, keyboard {}, pointer {}, windows {:?}, active app {:?})",
+                        state.view,
+                        state.screen_awake,
+                        state.keyboard.is_visible(),
+                        state.pointer.is_some(),
+                        state.managed_windows,
+                        apps.active()
+                    );
                     state.screen_on();
                     suspend_coordinator.fail_sleep("unsafe_shell_state");
                     raise_shell(&conn, shell_window)?;
@@ -1184,6 +1204,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Some(at) = auto_lock_deadline(&state) {
             deadline = deadline.min(at.max(now));
         }
+        if retry_sleep {
+            deadline = now;
+        }
         for client_deadline in [notifyd.next_deadline(), telephonyd.next_deadline()]
             .into_iter()
             .flatten()
@@ -1274,6 +1297,16 @@ fn heartbeat_is_recent(path: &Path, maximum_age: Duration) -> bool {
         // writes.
         Err(_) => true,
     }
+}
+
+/// Locked and dark, with nothing in the way of the screen-off but the app
+/// that was in front, which the registry releases on the next pass.
+fn releasing_app(state: &ShellState, apps: &AppRegistry) -> bool {
+    state.view == View::Locked
+        && !state.screen_awake
+        && !state.keyboard.is_visible()
+        && state.pointer.is_none()
+        && (!state.managed_windows.is_empty() || apps.active().is_some())
 }
 
 fn safe_to_power_down(state: &ShellState, apps: &AppRegistry) -> bool {
