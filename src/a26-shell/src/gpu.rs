@@ -572,6 +572,12 @@ pub struct GpuBackend {
     failed: Vec<SurfaceId>,
     /// The vblank time and counter of the newest flip reported.
     presented_at: (u64, u32),
+    /// That frame's render time in the compositor (ns).
+    presented_render_ns: u64,
+    /// CLOCK_MONOTONIC (ns) of the last client damage sent and of the
+    /// compositor's last UPLOADED reply: the upload's cost, roughly.
+    damage_sent_ns: u64,
+    uploaded_ns: u64,
 }
 
 impl GpuBackend {
@@ -642,6 +648,9 @@ impl GpuBackend {
             presented_serial: 0,
             failed: Vec::new(),
             presented_at: (0, 0),
+            presented_render_ns: 0,
+            damage_sent_ns: 0,
+            uploaded_ns: 0,
         };
         // The compositor starts before Moon; allow it a moment if not.
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -1243,7 +1252,8 @@ impl GpuBackend {
                         self.failed.push(id);
                     }
                 }
-                MSG_UPLOADED | MSG_POWERED | MSG_WELCOME | MSG_SURFACE_IDLE => {}
+                MSG_UPLOADED => self.uploaded_ns = monotonic_ns(),
+                MSG_POWERED | MSG_WELCOME | MSG_SURFACE_IDLE => {}
                 other => eprintln!("gpu: unexpected message {other}"),
             }
         }
@@ -1302,6 +1312,7 @@ impl GpuBackend {
         if serial > self.presented_serial || self.presented_serial - serial > u32::MAX / 2 {
             self.presented_serial = serial;
             self.presented_at = (le_u64(msg, 16), le_u32(msg, 12));
+            self.presented_render_ns = le_u64(msg, 24);
         }
         let sequence = le_u32(msg, 12);
         let time_ns = le_u64(msg, 16);
@@ -1490,6 +1501,7 @@ impl GpuBackend {
     /// The client drew `rects` (buffer pixels) into the surface's buffer.
     pub fn client_damage(&mut self, id: SurfaceId, rects: &[Damage]) {
         if !rects.is_empty() {
+            self.damage_sent_ns = monotonic_ns();
             self.send_damage(MSG_SURFACE_DAMAGE, wire(id), rects);
         }
     }
@@ -1519,6 +1531,17 @@ impl GpuBackend {
     /// CLOCK_MONOTONIC time (ns) and vblank counter of that flip.
     pub fn presented_at(&self) -> (u64, u32) {
         self.presented_at
+    }
+
+    /// The newest presented frame's render time in the compositor (ns).
+    pub fn presented_render_ns(&self) -> u64 {
+        self.presented_render_ns
+    }
+
+    /// When client damage was last sent and when the compositor last
+    /// reported an upload done (CLOCK_MONOTONIC ns).
+    pub fn upload_times(&self) -> (u64, u64) {
+        (self.damage_sent_ns, self.uploaded_ns)
     }
 
     /// Whether the compositor guards client memory that may shrink (v4):
@@ -1795,6 +1818,16 @@ fn diff_into(
     }
     closed.append(&mut open);
     closed
+}
+
+fn monotonic_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: ts is a valid timespec for clock_gettime to fill.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
 }
 
 #[cfg(test)]

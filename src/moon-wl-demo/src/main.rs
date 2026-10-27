@@ -29,6 +29,8 @@ enum Field {
     Url,
 }
 
+/// Box mode: the moving box's size in buffer pixels.
+const BOX_SIZE: usize = 240;
 const FIELDS: [(Field, &str); 3] = [
     (Field::Text, "Text"),
     (Field::Password, "Password"),
@@ -39,6 +41,9 @@ struct Buffer {
     buffer: wl_buffer::WlBuffer,
     offset: usize,
     busy: bool,
+    /// The content generation painted into it (box mode repaints only the
+    /// band while this is current).
+    generation: u64,
 }
 
 struct App {
@@ -74,6 +79,12 @@ struct App {
     last_frame_ms: Option<u32>,
     intervals: Vec<u32>,
     stats_at: Instant,
+    /// MOON_DEMO_DRAW=box: the animation is a box moving in one band, and
+    /// only that band is repainted and damaged (a cheap client, to measure
+    /// the display path rather than the drawing).
+    box_draw: bool,
+    generation: u64,
+    paint_ms: Vec<f32>,
 }
 
 mod memmap {
@@ -160,6 +171,9 @@ fn main() {
         last_frame_ms: None,
         intervals: Vec::new(),
         stats_at: Instant::now(),
+        box_draw: std::env::var("MOON_DEMO_DRAW").is_ok_and(|draw| draw == "box"),
+        generation: 0,
+        paint_ms: Vec::new(),
     };
     queue.roundtrip(&mut app).expect("registry roundtrip");
     let (Some(compositor), Some(wm)) = (app.compositor.clone(), app.wm.clone()) else {
@@ -254,6 +268,7 @@ impl App {
                 buffer,
                 offset: index * slot,
                 busy: false,
+                generation: u64::MAX,
             });
         }
         self.memory = Some(memmap::Map::new(fd, slot * 2).expect("map the pool"));
@@ -271,16 +286,33 @@ impl App {
         };
         let (width, height) = (self.width as usize, self.height as usize);
         let offset = self.buffers[index].offset;
-        let mut canvas = std::mem::take(&mut self.memory).expect("mapped");
-        {
-            let pixels = canvas.pixels(offset, width * height);
-            self.paint(pixels, width, height);
+        if self.dirty {
+            self.generation += 1;
         }
+        let full = !self.box_draw
+            || !self.animate
+            || !self.dots.is_empty()
+            || self.buffers[index].generation != self.generation;
+        let started = Instant::now();
+        let mut canvas = std::mem::take(&mut self.memory).expect("mapped");
+        let band = {
+            let pixels = canvas.pixels(offset, width * height);
+            if full {
+                self.paint(pixels, width, height);
+                (0, 0, self.width, self.height)
+            } else {
+                self.paint_band(pixels, width, height)
+            }
+        };
         self.memory = Some(canvas);
+        if self.animate {
+            self.paint_ms.push(started.elapsed().as_secs_f32() * 1000.0);
+        }
+        self.buffers[index].generation = self.generation;
         let surface = self.surface.as_ref().expect("surface");
         surface.set_buffer_scale(self.scale);
         surface.attach(Some(&self.buffers[index].buffer), 0, 0);
-        surface.damage_buffer(0, 0, self.width, self.height);
+        surface.damage_buffer(band.0, band.1, band.2, band.3);
         surface.frame(qh, ());
         surface.commit();
         self.buffers[index].busy = true;
@@ -288,20 +320,30 @@ impl App {
         self.dirty = false;
     }
 
+    /// Box mode: the band is repainted with the box at its new place.
+    /// Returns the band (x, y, width, height).
+    fn paint_band(&self, pixels: &mut [u32], width: usize, height: usize) -> (i32, i32, i32, i32) {
+        let (y0, size) = (height * 3 / 5, BOX_SIZE.min(height / 4));
+        for y in y0..(y0 + size).min(height) {
+            pixels[y * width..(y + 1) * width].fill(background(y, height, 0.0));
+        }
+        let travel = width.saturating_sub(size).max(1);
+        let step = (self.phase / 0.08).round() as usize * 9 % (2 * travel);
+        let x = if step < travel { step } else { 2 * travel - step };
+        fill(pixels, width, height, (x as i32, y0 as i32, size as i32, size as i32), 0xff0a84ff);
+        (0, y0 as i32, width as i32, size as i32)
+    }
+
     fn paint(&mut self, pixels: &mut [u32], width: usize, height: usize) {
         let phase = self.phase;
         for y in 0..height {
             let t = y as f32 / height as f32;
-            let wave = if self.animate {
+            let wave = if self.animate && !self.box_draw {
                 ((t * 6.0 + phase).sin() * 0.5 + 0.5) * 60.0
             } else {
                 0.0
             };
-            let r = (20.0 + 40.0 * t + wave) as u32;
-            let g = (24.0 + 30.0 * (1.0 - t)) as u32;
-            let b = (60.0 + 90.0 * t) as u32;
-            let color = 0xff00_0000 | (r.min(255) << 16) | (g.min(255) << 8) | b.min(255);
-            pixels[y * width..(y + 1) * width].fill(color);
+            pixels[y * width..(y + 1) * width].fill(background(y, height, wave));
         }
         for (index, (field, label)) in FIELDS.iter().enumerate() {
             let rect = self.field_rect(index);
@@ -339,6 +381,9 @@ impl App {
         }
         for (_, x, y) in self.touches.clone() {
             disc(pixels, width, height, x as f32, y as f32, 40.0, 0xffffffff);
+        }
+        if self.box_draw && self.animate {
+            self.paint_band(pixels, width, height);
         }
     }
 
@@ -413,6 +458,15 @@ impl App {
         let field = self.focused_field?;
         FIELDS.iter().position(|(candidate, _)| *candidate == field)
     }
+}
+
+/// The background gradient's color on row `y`, brightened by `wave`.
+fn background(y: usize, height: usize, wave: f32) -> u32 {
+    let t = y as f32 / height as f32;
+    let r = (20.0 + 40.0 * t + wave) as u32;
+    let g = (24.0 + 30.0 * (1.0 - t)) as u32;
+    let b = (60.0 + 90.0 * t) as u32;
+    0xff00_0000 | (r.min(255) << 16) | (g.min(255) << 8) | b.min(255)
 }
 
 fn fill(pixels: &mut [u32], width: usize, height: usize, rect: (i32, i32, i32, i32), color: u32) {
@@ -533,13 +587,18 @@ impl Dispatch<wl_callback::WlCallback, ()> for App {
                 app.last_frame_ms = Some(callback_data);
                 if app.stats_at.elapsed().as_secs() >= 2 && !app.intervals.is_empty() {
                     let mean = app.intervals.iter().sum::<u32>() as f32 / app.intervals.len() as f32;
+                    let paints = app.paint_ms.len().max(1) as f32;
                     eprintln!(
-                        "demo: {} frames, mean interval {:.2} ms ({:.1} fps)",
+                        "demo: {} frames, mean interval {:.2} ms ({:.1} fps), paint mean {:.2} ms max {:.2} ms{}",
                         app.intervals.len(),
                         mean,
-                        1000.0 / mean.max(0.001)
+                        1000.0 / mean.max(0.001),
+                        app.paint_ms.iter().sum::<f32>() / paints,
+                        app.paint_ms.iter().copied().fold(0.0, f32::max),
+                        if app.box_draw { " (box)" } else { "" }
                     );
                     app.intervals.clear();
+                    app.paint_ms.clear();
                     app.stats_at = Instant::now();
                 }
             }

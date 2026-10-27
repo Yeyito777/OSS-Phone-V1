@@ -35,6 +35,15 @@ class Surface:
         self.uploads = 0
         self.radius = 0.0  # baked corners (copies)
         self.opaque = fmt != 2
+        self.texture = None  # --textures: a private copy, updated by damage only
+
+    def keep_texture(self):
+        self.texture = self.live().copy()
+
+    def upload(self, x0, y0, x1, y1):
+        x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, self.w), min(y1, self.h)
+        if self.texture is not None and x1 > x0 and y1 > y0:
+            self.texture[y0:y1, x0:x1] = self.live()[y0:y1, x0:x1]
 
     def rgb(self):
         if self.pixels is not None:
@@ -42,6 +51,9 @@ class Surface:
         return self.bgra()[:, :, [2, 1, 0]]
 
     def bgra(self):
+        return self.texture if self.texture is not None else self.live()
+
+    def live(self):
         a = np.frombuffer(self.mem, dtype=np.uint8, count=self.stride * self.h)
         return a.reshape(self.h, self.stride)[:, : self.w * 4].reshape(self.h, self.w, 4)
 
@@ -124,12 +136,25 @@ class Mock:
                 return
             mem = memoryview(mem)[offset:]
             self.surfaces[sid] = Surface(w, h, stride, fmt, mem)
+            if self.args.textures:
+                self.surfaces[sid].keep_texture()
             if self.version >= 4 and flags & 4:
                 self.report_idle.add(sid)
             self.say(f"surface {sid} {w}x{h} fmt {fmt}")
         elif kind == 3:  # SURFACE_DAMAGE
             sid, serial, count, _ = struct.unpack_from("<IIII", body)
             self.stats["uploads"] += 1
+            surface = self.surfaces.get(sid)
+            if surface is not None:
+                for i in range(count):
+                    surface.upload(*struct.unpack_from("<4i", body, 16 + 16 * i))
+            if self.args.upload_ms_per_mpx > 0:
+                # A texture upload blocks like glTexSubImage2D: by area.
+                area = 0
+                for i in range(count):
+                    x0, y0, x1, y1 = struct.unpack_from("<4i", body, 16 + 16 * i)
+                    area += max(x1 - x0, 0) * max(y1 - y0, 0)
+                time.sleep(area / 1e6 * self.args.upload_ms_per_mpx / 1000)
             self.send(66, struct.pack("<II", sid, serial))
         elif kind == 4:  # SURFACE_COPY
             sid, source = struct.unpack_from("<II", body)
@@ -241,8 +266,9 @@ class Mock:
             # v4: surfaces the previous frame named and this one does not are
             # idle once it flips (reported when the flip is, below).
             self.frame, self.pending = self.pending, None
-            # The next vblank on a 120 Hz grid.
-            self.flip_due = (int(now / PERIOD) + 1) * PERIOD
+            # The next vblank on a 120 Hz grid once the frame is rendered.
+            ready = now + self.args.render_ms / 1000
+            self.flip_due = (int(ready / PERIOD) + 1) * PERIOD
 
     def render(self):
         out = np.zeros((H, W, 3), dtype=np.float32)
@@ -347,4 +373,11 @@ if __name__ == "__main__":
     parser.add_argument("--log")
     parser.add_argument("--max-version", type=int, default=4,
                         help="drop clients that say hello with a newer version (2: an old compositor)")
+    parser.add_argument("--textures", action="store_true",
+                        help="show client surfaces from copies updated only by their damage, "
+                             "as moon-compositor's textures are")
+    parser.add_argument("--render-ms", type=float, default=0,
+                        help="a frame flips at the first vblank this long after it arrives")
+    parser.add_argument("--upload-ms-per-mpx", type=float, default=0,
+                        help="client damage blocks this long per megapixel (texture upload)")
     Mock(parser.parse_args()).run()

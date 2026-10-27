@@ -109,11 +109,18 @@ pub struct WaylandApps {
     actions: Vec<Action>,
     /// MOON_WAYLAND_DEBUG=1 logs every protocol event but commits.
     debug: bool,
+    /// MOON_PROFILE (or debug): where each direct frame's time goes.
+    timing: Option<DirectTiming>,
     /// GPU mode: the toplevel whose buffers go straight to moon-compositor
     /// (milestone 2), and its proxy's X content is stale meanwhile.
     direct: Option<SurfaceKey>,
     /// A compositor surface per client buffer shown directly.
     client_surfaces: HashMap<ObjectId, (WlBuffer, SurfaceId)>,
+    /// Per such buffer: the Wayland surface it belongs to and what its
+    /// compositor copy lacks. A commit's damage is relative to the
+    /// surface's last buffer, so with several buffers each copy falls
+    /// behind by every commit since it was last shown.
+    behind: HashMap<ObjectId, (SurfaceKey, Vec<wayland::Rect>)>,
     /// Buffers sent in a direct frame, waiting for that frame's flip.
     presenting: Vec<(u32, SurfaceKey, WlBuffer, Arc<ShmBuffer>)>,
     /// Direct commits whose buffer is not yet in the proxy.
@@ -175,8 +182,12 @@ impl WaylandApps {
             parents: HashMap::new(),
             actions: Vec::new(),
             debug: std::env::var_os("MOON_WAYLAND_DEBUG").is_some(),
+            timing: (std::env::var_os("MOON_WAYLAND_DEBUG").is_some()
+                || std::env::var_os("MOON_PROFILE").is_some())
+            .then(DirectTiming::default),
             direct: None,
             client_surfaces: HashMap::new(),
+            behind: HashMap::new(),
             presenting: Vec::new(),
             stale: Vec::new(),
             direct_commits: Vec::new(),
@@ -478,6 +489,11 @@ impl WaylandApps {
         damage: &[wayland::Rect],
         geometry: Option<wayland::Rect>,
     ) -> Result<(), Box<dyn Error>> {
+        for (owner, rects) in self.behind.values_mut() {
+            if *owner == surface {
+                add_damage(rects, damage);
+            }
+        }
         let Some((window, is_child, has_content, old_crop)) =
             self.proxies.get(&surface).map(|proxy| {
                 (
@@ -530,6 +546,9 @@ impl WaylandApps {
         if self.direct.is_some() && self.direct == self.root_of(surface) {
             // Shown directly by moon-compositor (update_direct sends it);
             // the X window keeps its place and size for input.
+            if let Some(timing) = self.timing.as_mut() {
+                timing.commit_rx.get_or_insert_with(now_ns);
+            }
             self.direct_commits
                 .push((surface, resource, buffer, damage.to_vec()));
             self.note_content(surface, window);
@@ -661,6 +680,7 @@ impl WaylandApps {
                 .collect();
             for id in buffers {
                 self.client_surfaces.remove(&id);
+                self.behind.remove(&id);
                 self.unshareable.insert(id);
             }
             self.direct_dirty = true;
@@ -673,6 +693,9 @@ impl WaylandApps {
         });
         let presented = gpu.presented_serial();
         let (flip_ns, flip_sequence) = gpu.presented_at();
+        if let Some(timing) = self.timing.as_mut() {
+            timing.presented(presented, flip_ns, flip_sequence, gpu);
+        }
         self.flip = Some((flip_ns, u64::from(flip_sequence)));
         let mut index = 0;
         while index < self.presenting.len() {
@@ -681,8 +704,15 @@ impl WaylandApps {
                 self.make_current(key, buffer, shm);
                 // The proxy is behind until direct mode ends.
                 self.mark_stale(key);
-                if let Some(proxy) = self.proxies.get_mut(&key) {
-                    proxy.frame_pending = true;
+                // The flip paces the app: its next frame starts now, not at
+                // the next tick of the X path's grid (up to a frame later,
+                // too late for the next vblank).
+                if self.server.wants_frame(key) {
+                    if let Some(timing) = self.timing.as_mut() {
+                        timing.frame_done();
+                    }
+                    self.server.frame_done(key, (flip_ns / 1_000_000) as u32);
+                    self.server.flush();
                 }
             } else {
                 index += 1;
@@ -745,6 +775,11 @@ impl WaylandApps {
             let nodes = self.direct_nodes(root);
             match gpu.set_direct(nodes) {
                 Some(serial) => {
+                    if let Some(timing) = self.timing.as_mut()
+                        && let Some(rx) = timing.commit_rx.take()
+                    {
+                        timing.sent.push((serial, rx, now_ns(), gpu.upload_times().0));
+                    }
                     for (key, buffer, shm) in sent {
                         self.presenting.push((serial, key, buffer, shm));
                     }
@@ -774,6 +809,7 @@ impl WaylandApps {
             if let Some((_, surface)) = self.client_surfaces.remove(&id) {
                 gpu.free(surface);
             }
+            self.behind.remove(&id);
         }
     }
 
@@ -818,6 +854,17 @@ impl WaylandApps {
         {
             return false;
         }
+        // What the compositor's copy of this buffer lacks: everything
+        // committed since it was last shown, this commit included.
+        let behind = match self.behind.get_mut(&buffer.id()) {
+            Some((_, behind)) => std::mem::take(behind),
+            None => rects.to_vec(),
+        };
+        let rects = if rects.iter().any(|rect| rect.width >= shm.width && rect.height >= shm.height) {
+            rects.to_vec()
+        } else {
+            behind
+        };
         let surface = match self.client_surfaces.get(&buffer.id()) {
             Some((_, surface)) => *surface,
             None => match gpu.create_client_surface(
@@ -831,6 +878,7 @@ impl WaylandApps {
                 Ok(surface) => {
                     self.client_surfaces
                         .insert(buffer.id(), (buffer.clone(), surface));
+                    self.behind.insert(buffer.id(), (key, Vec::new()));
                     surface
                 }
                 Err(error) => {
@@ -1214,6 +1262,9 @@ impl WaylandApps {
             return Some(self.next_frame);
         }
         let time = wayland::now_ms();
+        if let Some(timing) = self.timing.as_mut() {
+            timing.frame_done();
+        }
         for key in ready {
             if let Some(proxy) = self.proxies.get_mut(&key) {
                 proxy.frame_pending = false;
@@ -1315,4 +1366,129 @@ fn owner_from_pid(pid: u32) -> Option<AppId> {
             .into_iter()
             .find(|app| app.cgroup_name() == name)
     })
+}
+
+/// Adds `new` to a damage list; past a handful of rectangles it becomes
+/// their bounding box (one upload instead of many small ones).
+fn add_damage(rects: &mut Vec<wayland::Rect>, new: &[wayland::Rect]) {
+    rects.extend_from_slice(new);
+    if rects.len() > 8 {
+        let x0 = rects.iter().map(|r| r.x).min().unwrap_or(0);
+        let y0 = rects.iter().map(|r| r.y).min().unwrap_or(0);
+        let x1 = rects.iter().map(|r| r.x + r.width).max().unwrap_or(0);
+        let y1 = rects.iter().map(|r| r.y + r.height).max().unwrap_or(0);
+        rects.clear();
+        rects.push(wayland::Rect::new(x0, y0, x1 - x0, y1 - y0));
+    }
+}
+
+/// MOON_PROFILE: one direct frame's path, from the frame callback that
+/// asked for it to the flip that showed it, summarized every 2 s:
+/// frame done -> commit (the client draws), commit -> frame sent (Moon),
+/// damage -> UPLOADED (the compositor's texture upload), frame sent ->
+/// flip (upload, render, the wait for vblank), and flip -> next frame
+/// done (Moon's wakeup and frame callback pacing).
+#[derive(Default)]
+struct DirectTiming {
+    /// The first direct commit since the last frame sent.
+    commit_rx: Option<u64>,
+    /// Frames sent: serial, commit received, frame sent, damage sent.
+    sent: Vec<(u32, u64, u64, u64)>,
+    /// The last frame callback and the last flip seen.
+    done_ns: u64,
+    flip: (u64, u32),
+    /// Per presented frame: [client, moon, upload, scanout, render, pacing,
+    /// vblanks].
+    samples: Vec<[f64; 7]>,
+    /// The pacing (flip -> frame done) of the frame now being drawn.
+    pacing_ms: f64,
+    report_at: Option<Instant>,
+}
+
+impl DirectTiming {
+    fn frame_done(&mut self) {
+        self.done_ns = now_ns();
+        if self.flip.0 > 0 && self.done_ns > self.flip.0 {
+            self.pacing_ms = (self.done_ns - self.flip.0) as f64 / 1e6;
+        }
+    }
+
+    fn presented(&mut self, serial: u32, flip_ns: u64, sequence: u32, gpu: &GpuBackend) {
+        let Some(index) = self
+            .sent
+            .iter()
+            .rposition(|(sent, ..)| serial.wrapping_sub(*sent) < u32::MAX / 2)
+        else {
+            return;
+        };
+        // Older entries were superseded before they reached the panel.
+        let (_, rx, sent_ns, damage_ns) = self.sent[index];
+        self.sent.drain(..=index);
+        let ms = |from: u64, to: u64| to.saturating_sub(from) as f64 / 1e6;
+        let (_, uploaded_ns) = gpu.upload_times();
+        let upload = if damage_ns > 0 && uploaded_ns > damage_ns {
+            ms(damage_ns, uploaded_ns)
+        } else {
+            0.0
+        };
+        let vblanks = if self.flip.1 > 0 {
+            sequence.wrapping_sub(self.flip.1) as f64
+        } else {
+            0.0
+        };
+        let client = if self.done_ns > 0 && rx > self.done_ns {
+            ms(self.done_ns, rx)
+        } else {
+            0.0
+        };
+        self.samples.push([
+            client,
+            ms(rx, sent_ns),
+            upload,
+            ms(sent_ns, flip_ns),
+            gpu.presented_render_ns() as f64 / 1e6,
+            self.pacing_ms,
+            vblanks,
+        ]);
+        self.flip = (flip_ns, sequence);
+        let now = Instant::now();
+        let report_at = *self.report_at.get_or_insert(now + Duration::from_secs(2));
+        if now >= report_at && !self.samples.is_empty() {
+            let n = self.samples.len() as f64;
+            let stat = |i: usize| {
+                let mean = self.samples.iter().map(|s| s[i]).sum::<f64>() / n;
+                let max = self.samples.iter().map(|s| s[i]).fold(0.0, f64::max);
+                format!("{mean:.2}/{max:.2}")
+            };
+            eprintln!(
+                "wayland: direct timing {} frames, ms mean/max: frame-done->commit {} commit->sent {} \
+                 damage->uploaded {} sent->flip {} (render {}) flip->frame-done {} vblanks/frame {}",
+                self.samples.len(),
+                stat(0),
+                stat(1),
+                stat(2),
+                stat(3),
+                stat(4),
+                stat(5),
+                stat(6),
+            );
+            self.samples.clear();
+            self.report_at = Some(now + Duration::from_secs(2));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn damage_collapses_to_its_bounds_past_a_handful() {
+        let mut rects = Vec::new();
+        add_damage(&mut rects, &[wayland::Rect::new(10, 10, 5, 5)]);
+        assert_eq!(rects.len(), 1);
+        let many: Vec<_> = (0..8).map(|i| wayland::Rect::new(i * 20, 100, 4, 4)).collect();
+        add_damage(&mut rects, &many);
+        assert_eq!(rects, vec![wayland::Rect::new(0, 10, 144, 94)]);
+    }
 }
