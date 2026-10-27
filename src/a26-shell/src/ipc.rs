@@ -54,6 +54,8 @@ pub enum Command {
     /// `transition push|pop`: an app is about to show another page (the
     /// reply comes once its current page is snapshotted).
     Transition(bool),
+    /// `transition ready`: the new page is fully drawn; the slide starts.
+    TransitionReady,
     /// `haptic STYLE`: a tap haptic for an app's control (System's switches).
     /// (`haptic STYLE MS` plays that length once, for tuning.)
     Haptic(crate::notify_client::Haptic, Option<u32>),
@@ -295,6 +297,7 @@ fn parse_command(line: &str) -> Result<Command, String> {
         "transition" => match parts.next() {
             Some("push") => Command::Transition(true),
             Some("pop") => Command::Transition(false),
+            Some("ready") => Command::TransitionReady,
             _ => return Err("transition requires push or pop".into()),
         },
         "haptic" => match parts.next().and_then(crate::notify_client::Haptic::parse) {

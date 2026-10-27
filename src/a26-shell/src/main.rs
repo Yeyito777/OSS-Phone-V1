@@ -1228,10 +1228,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if let Some((stream, _, _)) = pending_transition.take() {
                         let started = taken && state.page_transition_allowed();
                         if started {
-                            state.page_transition = Some(model::PageTransition {
-                                push,
-                                started: Instant::now(),
-                            });
+                            state.page_transition =
+                                Some(model::PageTransition::new(push, Instant::now()));
                             state.redraw = true;
                         }
                         ipc::respond(stream, Ok(&serde_json::json!({ "started": started })));
@@ -3189,6 +3187,11 @@ fn apply_command(
         | Command::ProfileFrames(_)
         | Command::SettingsSet(..)
         | Command::Transition(_) => {}
+        Command::TransitionReady => {
+            if let Some(transition) = state.page_transition.as_mut() {
+                transition.ready(Instant::now());
+            }
+        }
         Command::Haptic(style, None) => state.haptic(style),
         Command::Haptic(style, ms) => state.haptic_ms(style, ms),
         Command::Digit(digit) => state.input_digit(digit, config),

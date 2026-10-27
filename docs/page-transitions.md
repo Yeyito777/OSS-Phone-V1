@@ -8,8 +8,9 @@ GPU mode, without redrawing their window every frame:
 2. Moon snapshots the screen (a GPU copy of the X mirror) and answers
    `{"started": true}` once that copy is on its way to the compositor, so
    whatever the app draws next lands after it. The app then draws the new
-   page as usual.
-3. For 380 ms (ease-out) Moon composes the frame itself instead of showing
+   page as usual, and when it is on screen sends `transition ready`.
+3. Until then Moon holds the snapshot still (at most 150 ms), so the slide
+   never shows a half-drawn page. Then, for 380 ms (ease-out) Moon composes the frame itself instead of showing
    the mirror alone: the status bar stays put, taken from the live mirror;
    below it a push slides the live app (the new page) in from the right
    over the snapshot, which drifts left by a third and darkens; a pop slides

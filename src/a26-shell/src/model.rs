@@ -183,14 +183,39 @@ pub struct PointerGesture {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PageTransition {
     pub push: bool,
+    /// When the slide began, or (while `waiting`) when it was asked for.
     pub started: Instant,
+    /// The old page holds still until the app says its new page is fully
+    /// drawn (`transition ready`), so the slide never shows it half drawn.
+    pub waiting: bool,
 }
 
 pub const PAGE_TRANSITION: Duration = Duration::from_millis(380);
+/// The slide starts anyway if the app never says it is ready.
+pub const PAGE_READY_WAIT: Duration = Duration::from_millis(150);
 
 impl PageTransition {
+    pub fn new(push: bool, now: Instant) -> Self {
+        Self {
+            push,
+            started: now,
+            waiting: true,
+        }
+    }
+
+    /// The new page is drawn: slide.
+    pub fn ready(&mut self, now: Instant) {
+        if self.waiting {
+            self.waiting = false;
+            self.started = now;
+        }
+    }
+
     /// Eased progress, 0 to 1.
     pub fn progress(&self, now: Instant) -> f32 {
+        if self.waiting {
+            return 0.0;
+        }
         crate::gfx::ease_out(
             now.saturating_duration_since(self.started).as_secs_f32()
                 / PAGE_TRANSITION.as_secs_f32(),
@@ -1197,8 +1222,15 @@ impl ShellState {
         self.alerts_tick(now);
         self.control_tick(now);
         self.calls_tick(now);
+        if let Some(transition) = self.page_transition.as_mut()
+            && transition.waiting
+            && now.saturating_duration_since(transition.started) >= PAGE_READY_WAIT
+        {
+            transition.ready(now);
+        }
         if let Some(transition) = self.page_transition
-            && (now.saturating_duration_since(transition.started) >= PAGE_TRANSITION
+            && ((!transition.waiting
+                && now.saturating_duration_since(transition.started) >= PAGE_TRANSITION)
                 || !self.page_transition_allowed())
         {
             self.page_transition = None;
@@ -1584,20 +1616,21 @@ mod tests {
         state.view = View::Messages;
         assert!(state.page_transition_allowed());
         let started = Instant::now();
-        let transition = PageTransition {
-            push: true,
-            started,
-        };
+        let mut transition = PageTransition::new(true, started);
+        // Held still until the app's new page is drawn.
+        assert_eq!(transition.progress(started + PAGE_TRANSITION), 0.0);
+        transition.ready(started);
         assert_eq!(transition.progress(started), 0.0);
         assert_eq!(transition.progress(started + PAGE_TRANSITION), 1.0);
         state.page_transition = Some(transition);
         assert!(state.animating(started));
         state.tick();
         assert!(state.page_transition.is_some());
-        state.page_transition = Some(PageTransition {
-            push: false,
-            started: started - PAGE_TRANSITION,
-        });
+        // Never ready: it slides anyway after a moment, then ends.
+        state.page_transition = Some(PageTransition::new(false, started - PAGE_READY_WAIT));
+        state.tick();
+        assert!(!state.page_transition.unwrap().waiting);
+        state.page_transition.as_mut().unwrap().started -= PAGE_TRANSITION;
         state.tick();
         assert!(state.page_transition.is_none());
         // The browser keeps its own pages.
