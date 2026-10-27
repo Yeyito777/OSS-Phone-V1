@@ -183,6 +183,13 @@ struct comp {
     uint64_t last_flip_ns;
     uint32_t last_seq;
     uint64_t path_counts[4];
+    /* Vblank to MG_PRESENTED sent, and the fence query within it (profile). */
+    uint64_t present_ns, present_max_ns, fence_ns, presents;
+    /* Per-frame costs for the profile summary: GPU/CPU render (submit to
+     * drawing done), damage uploads (wall time, pixels), pixels shaded. */
+    uint64_t render_sum_ns, render_max_ns, renders;
+    uint64_t upload_sum_ns, upload_max_ns, uploads, upload_px;
+    uint64_t shaded_px, draws;
     const char *flight_miss;
     uint32_t client_version;
     unsigned busy_planes; /* plane indexes the panel's last commit used */
@@ -764,6 +771,7 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
         if (blen < sizeof *m + (size_t)m->count * sizeof(struct mg_rect))
             break;
         const struct mg_rect *rects = (const void *)(m + 1);
+        uint64_t u0 = now_ns();
         struct surface *s = find_surface(c, m->id);
         if (s && s->shadow && refresh_shadow(s, rects, m->count)) {
             LOG("surface %u: its memory shrank; dropped", m->id);
@@ -777,6 +785,18 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
             upload_rects(s, rects, m->count);
         if (s && c->cur_valid && frame_uses(&c->cur, m->id))
             c->dirty = 1;
+        if (s && s->memfd) {
+            uint64_t dt = now_ns() - u0;
+            c->upload_sum_ns += dt;
+            if (dt > c->upload_max_ns)
+                c->upload_max_ns = dt;
+            c->uploads++;
+            for (uint32_t i = 0; i < m->count; i++) {
+                int w = rects[i].x1 - rects[i].x0, h = rects[i].y1 - rects[i].y0;
+                if (w > 0 && h > 0)
+                    c->upload_px += (uint64_t)w * (uint64_t)h;
+            }
+        }
         struct mg_uploaded u = {.id = m->id, .serial = m->serial};
         send_msg(c, MG_UPLOADED, &u, sizeof u, -1);
         break;
@@ -1017,7 +1037,8 @@ static int draw(struct comp *c, int buf) {
         const struct texture *base =
             (f->flags & MG_FRAME_HAS_BASE) ? lookup_tex(c, f->base) : NULL;
         glBindFramebuffer(GL_FRAMEBUFFER, c->out[buf].gpu.fbo);
-        render_frame(&c->r, base, f->nodes, f->count, lookup_tex, c);
+        c->shaded_px += render_frame(&c->r, base, f->nodes, f->count, lookup_tex, c);
+        c->draws++;
         return gpu_fence(&c->g);
     }
     const struct cpu_image *base =
@@ -1120,7 +1141,9 @@ static void maybe_submit(struct comp *c) {
 }
 
 static void flip_done(struct comp *c, const struct kms_flip *ev) {
+    uint64_t q0 = now_ns();
     uint64_t done = c->flight_fence >= 0 ? gpu_fence_time(c->flight_fence) : 0;
+    uint64_t q1 = now_ns();
     struct mg_presented p = {
         .serial = c->flight_serial,
         .sequence = ev->sequence,
@@ -1146,6 +1169,20 @@ static void flip_done(struct comp *c, const struct kms_flip *ev) {
     shown_is_cur(c);
     if (p.serial)
         send_msg(c, MG_PRESENTED, &p, sizeof p, -1);
+    if (p.path != MG_PATH_PLANES && p.render_ns) {
+        c->render_sum_ns += p.render_ns;
+        if (p.render_ns > c->render_max_ns)
+            c->render_max_ns = p.render_ns;
+        c->renders++;
+    }
+    uint64_t sent = now_ns();
+    if (sent > ev->time_ns && sent - ev->time_ns < 100000000ull) {
+        c->present_ns += sent - ev->time_ns;
+        if (sent - ev->time_ns > c->present_max_ns)
+            c->present_max_ns = sent - ev->time_ns;
+        c->fence_ns += q1 - q0;
+        c->presents++;
+    }
     send_idle(c);
 }
 
@@ -1751,6 +1788,13 @@ int main(int argc, char **argv) {
             toggle_profile = 0;
             c.profile = !c.profile;
             LOG("profile %s", c.profile ? "on" : "off");
+            /* The summaries cover the profiled time only. */
+            last_report = now_ns();
+            c.present_ns = c.present_max_ns = c.fence_ns = c.presents = 0;
+            c.render_sum_ns = c.render_max_ns = c.renders = 0;
+            c.upload_sum_ns = c.upload_max_ns = c.uploads = c.upload_px = 0;
+            c.shaded_px = c.draws = 0;
+            memset(c.path_counts, 0, sizeof c.path_counts);
         }
         if (shot) {
             shot = 0;
@@ -1766,10 +1810,24 @@ int main(int argc, char **argv) {
             set_floor(&c, 0);
         if (c.profile && now_ns() - last_report > 10000000000ull) {
             last_report = now_ns();
-            LOG("flips by path: planes %llu, gpu %llu, cpu %llu",
+            LOG("flips by path: planes %llu, gpu %llu, cpu %llu; vblank to MG_PRESENTED "
+                "mean %.3f ms, max %.3f ms (fence query %.3f ms)",
                 (unsigned long long)c.path_counts[MG_PATH_PLANES],
                 (unsigned long long)c.path_counts[MG_PATH_GPU],
-                (unsigned long long)c.path_counts[MG_PATH_CPU]);
+                (unsigned long long)c.path_counts[MG_PATH_CPU],
+                c.presents ? c.present_ns / 1e6 / c.presents : 0.0, c.present_max_ns / 1e6,
+                c.presents ? c.fence_ns / 1e6 / c.presents : 0.0);
+            c.present_ns = c.present_max_ns = c.fence_ns = c.presents = 0;
+            LOG("per frame: render %.2f ms mean, %.2f max (%llu frames); shaded %.2f MP; "
+                "uploads %.2f ms mean, %.2f max, %.2f MP each (%llu)",
+                c.renders ? c.render_sum_ns / 1e6 / c.renders : 0.0, c.render_max_ns / 1e6,
+                (unsigned long long)c.renders,
+                c.draws ? c.shaded_px / 1e6 / c.draws : 0.0,
+                c.uploads ? c.upload_sum_ns / 1e6 / c.uploads : 0.0, c.upload_max_ns / 1e6,
+                c.uploads ? c.upload_px / 1e6 / c.uploads : 0.0, (unsigned long long)c.uploads);
+            c.render_sum_ns = c.render_max_ns = c.renders = 0;
+            c.upload_sum_ns = c.upload_max_ns = c.uploads = c.upload_px = 0;
+            c.shaded_px = c.draws = 0;
         }
     }
     alarm(0);
