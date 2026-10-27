@@ -2,7 +2,7 @@
 # Experiment only (milestone 1 on the phone): run Moon with its Wayland
 # server on, without touching /data/adb/moon or the boot path.
 #
-#   su -c 'sh /data/local/tmp/a26-wayland/moon-wayland-test.sh start [demo|system] [evdev] [debug] [box] [dmabuf] [sync-write|sync-none]'
+#   su -c 'sh /data/local/tmp/a26-wayland/moon-wayland-test.sh start [demo|system] [evdev] [debug] [box] [dmabuf] [sync-rw|sync-none]'
 #   su -c 'sh /data/local/tmp/a26-wayland/moon-wayland-test.sh stop'
 #
 # start: stops the running Moon session and starts the installed Moon again
@@ -12,7 +12,7 @@
 # has Moon read the touchscreen itself, `debug` logs protocol events and
 # direct-frame timing, `box` makes the demo's animation a cheap damaged
 # band, `dmabuf` gives the demo dma-heap buffers (shown in place, no
-# upload), `sync-write`/`sync-none` change Moon's cache flush for them
+# upload), `sync-rw`/`sync-none` change Moon's cache flush for them
 # (measurement only). The supervisor's liveness probe keeps
 # working (same control socket) and its pidfile names the new session, so
 # a failure still takes the normal recovery and fallback paths.
@@ -71,7 +71,7 @@ case "${1:-}" in
                 debug) extra="$extra MOON_WAYLAND_DEBUG=1" ;;
                 box) extra="$extra MOON_DEMO_DRAW=box" ;;
                 dmabuf) extra="$extra MOON_DEMO_DMABUF=1" ;;
-                sync-write) extra="$extra MOON_DMABUF_SYNC=write" ;;
+                sync-rw) extra="$extra MOON_DMABUF_SYNC=rw" ;;
                 sync-none) extra="$extra MOON_DMABUF_SYNC=none" ;;
                 *) echo "unknown option $option" >&2; exit 2 ;;
             esac
@@ -83,5 +83,5 @@ case "${1:-}" in
         stop_session
         start_session '' 2>&1 | tee -a "$LOG"
         ;;
-    *) echo "usage: $0 start [demo|system] [evdev] [debug] [box] [dmabuf] [sync-write|sync-none] | stop" >&2; exit 2 ;;
+    *) echo "usage: $0 start [demo|system] [evdev] [debug] [box] [dmabuf] [sync-rw|sync-none] | stop" >&2; exit 2 ;;
 esac

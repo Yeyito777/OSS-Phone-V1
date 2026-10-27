@@ -550,6 +550,30 @@ client got no frames until a screen off/on cycle.
 - `start demo debug dmabuf sync-write` (clean only, no invalidate) and
   `sync-none` compare Moon's flush variants end to end.
 
+**Measured on the phone** (main 4dfbcab + xwayland-m4):
+- **The heap is cached.** heapbench: the `system` heap paints and reads
+  like a memfd (paint 0.70 vs 0.72 ms, read 1.87 vs 1.97 ms for 9.6 MB).
+  `system-uncached` is slower (paint 1.07, read 5.6 ms). The mapping is
+  not the cause of the slower paint.
+- **There is no partial sync** (every request number returns ENOTTY), so
+  a flush always covers the whole buffer. Without an importer a sync
+  costs nothing; with the compositor holding the buffer it is real.
+- **Demo, end to end:**
+
+  | | Moon's flush | fps |
+  |---|---|---|
+  | READ\|WRITE (old default) | 0.71 ms | 99 |
+  | WRITE only | 0.49 ms | 98 |
+  | none | 0.07 ms | 103 |
+
+  The demo's paint stays at 3.5 ms in every variant, against 2.07 ms on
+  the memfd path. So the flush is not what slows the paint either.
+- **Default now:** WRITE only. It is the clean the device needs after
+  CPU writes. `sync-rw` and `sync-none` stay for measurement.
+- **Still open:** why the demo paints slower in dma-heap buffers while the
+  display scans the other one out. Suspects are memory-bandwidth
+  contention with the plane scanout, or CPU frequency.
+
 ### Merge gate: `scripts/wayland/m4-boot-test.sh` (about 15 minutes)
 
 xwayland-m4 changes boot scripts, so it merges only after three real boots

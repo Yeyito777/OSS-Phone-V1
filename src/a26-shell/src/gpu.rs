@@ -1870,14 +1870,15 @@ fn diff_into(
 
 /// Cleans the CPU caches of a dmabuf the CPU wrote, for the GPU and the
 /// display (DMA_BUF_IOCTL_SYNC works on the buffer, whoever wrote it).
-/// MOON_DMABUF_SYNC=write (clean only; READ also invalidates) or none
-/// selects a cheaper variant for measurement (scripts/wayland: heapbench).
+/// A clean is all the device needs after CPU writes (WRITE: 0.49 ms for a
+/// full-screen buffer on the phone; READ|WRITE also invalidates: 0.71 ms).
+/// MOON_DMABUF_SYNC=rw or none select the others, for measurement.
 fn flush_for_device(fd: RawFd) {
     static ACCESS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     let access = *ACCESS.get_or_init(|| match std::env::var("MOON_DMABUF_SYNC").as_deref() {
         Ok("none") => 0,
-        Ok("write") => DMA_BUF_SYNC_WRITE,
-        _ => DMA_BUF_SYNC_READ | DMA_BUF_SYNC_WRITE,
+        Ok("rw") => DMA_BUF_SYNC_READ | DMA_BUF_SYNC_WRITE,
+        _ => DMA_BUF_SYNC_WRITE,
     });
     if access == 0 {
         return;
