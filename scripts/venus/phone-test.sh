@@ -12,6 +12,9 @@
 #       VTEST_SOCKET_NAME=/tmp/.venus-test.sock LD_LIBRARY_PATH=/tmp/venus/lib)
 #   scripts/venus/phone-test.sh --stop     stop the server, remove the files
 # BUNDLE_DIR (default build/venus) comes from scripts/venus/build.sh.
+# VKR_DMA_HEAP picks the heap for host-visible memory: the cached "system"
+# heap hangs fence waits (the client reads stale fence feedback through its
+# CPU cache), so the uncached one is the default.
 set -euo pipefail
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$PROJECT_ROOT/scripts/a26-shell/common.sh"
@@ -40,7 +43,7 @@ R=$ROOTFS
 SOCK=\$R/tmp/.venus-test.sock
 chmod 0755 \$A/* /data/local/tmp/venus/debian/vkfirst
 cp -r /data/local/tmp/venus/debian \$R/tmp/venus
-LD_LIBRARY_PATH=\$A RENDER_SERVER_EXEC_PATH=\$A/virgl_render_server \
+VKR_DMA_HEAP=${VKR_DMA_HEAP:-/dev/dma_heap/system-uncached} LD_LIBRARY_PATH=\$A RENDER_SERVER_EXEC_PATH=\$A/virgl_render_server \
     nohup \$A/virgl_test_server --venus --no-virgl --socket-path \$SOCK \
     >/data/local/tmp/venus/server.log 2>&1 </dev/null &
 for i in 1 2 3 4 5 6 7 8 9 10; do [ -S \$SOCK ] && break; sleep 0.2; done

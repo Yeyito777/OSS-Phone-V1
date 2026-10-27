@@ -27,6 +27,9 @@ git -C "$WORK/virglrenderer" checkout -q -f "$VIRGL_REV"
 # neither it nor libepoxy.
 sed -i 's/^if with_vrend and not with_host_windows$/if not with_host_windows/' \
     "$WORK/virglrenderer/meson.build"
+# Host-visible memory from a dma-heap: Android has neither gbm nor udmabuf,
+# and the Mali does not export host-visible memory itself.
+git -C "$WORK/virglrenderer" apply "$PROJECT_ROOT/src/venus/virglrenderer-android-dma-heap.patch"
 if [[ ! -d "$WORK/mesa" ]]; then
     git clone -q --depth 1 -b "$MESA_BRANCH" https://gitlab.freedesktop.org/mesa/mesa.git "$WORK/mesa"
 fi

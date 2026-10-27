@@ -1,0 +1,68 @@
+diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
+index 7d57c7ce..ec1e04c1 100644
+--- a/src/venus/vkr_device_memory.c
++++ b/src/venus/vkr_device_memory.c
+@@ -244,6 +244,50 @@ vkr_gbm_get_fd_info_from_allocation_info(UNUSED struct vkr_physical_device *phys
+ 
+ #endif /* ENABLE_GBM_ALLOCATION */
+ 
++
++#ifdef __ANDROID__
++#include <linux/dma-heap.h>
++#include <sys/ioctl.h>
++
++/* Android without gbm or udmabuf (moon-gpu): host-visible memory is a
++ * dma-heap buffer the driver imports, as with gbm or udmabuf. */
++static VkResult
++vkr_dma_heap_get_fd_info_from_allocation_info(const VkMemoryAllocateInfo *alloc_info,
++                                              int *out_fd,
++                                              VkImportMemoryFdInfoKHR *out_fd_info)
++{
++   const char *heap_path = getenv("VKR_DMA_HEAP");
++   int heap = open(heap_path ? heap_path : "/dev/dma_heap/system-uncached", O_RDONLY | O_CLOEXEC);
++   if (heap < 0) {
++      vkr_log("dma_heap: %s", strerror(errno));
++      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++   }
++   struct dma_heap_allocation_data data = {
++      .len = align64(alloc_info->allocationSize, getpagesize()),
++      .fd_flags = O_RDWR | O_CLOEXEC,
++   };
++   int ret = ioctl(heap, DMA_HEAP_IOCTL_ALLOC, &data);
++   close(heap);
++   if (ret < 0) {
++      vkr_log("dma_heap alloc of %llu bytes: %s", (unsigned long long)data.len, strerror(errno));
++      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
++   }
++   int import_fd = os_dupfd_cloexec((int)data.fd);
++   if (import_fd < 0) {
++      close((int)data.fd);
++      return VK_ERROR_OUT_OF_HOST_MEMORY;
++   }
++   *out_fd = (int)data.fd;
++   *out_fd_info = (VkImportMemoryFdInfoKHR){
++      .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR,
++      .pNext = alloc_info->pNext,
++      .fd = import_fd,
++      .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
++   };
++   return VK_SUCCESS;
++}
++#endif
++
+ static void
+ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+                               struct vn_command_vkAllocateMemory *args)
+@@ -388,6 +432,12 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+             args->ret = vkr_udmabuf_get_fd_info_from_allocation_info(
+                physical_dev, alloc_info, &udmabuf_fd, &local_import_info);
+          } else {
++#ifdef __ANDROID__
++            if (!physical_dev->gbm_device)
++               args->ret = vkr_dma_heap_get_fd_info_from_allocation_info(
++                  alloc_info, &udmabuf_fd, &local_import_info);
++            else
++#endif
+             args->ret = vkr_gbm_get_fd_info_from_allocation_info(
+                physical_dev, alloc_info, &gbm_bo, &local_import_info);
+          }

@@ -228,6 +228,27 @@ host-visible memory (`virgl_renderer_resource_export_blob` -22), as
 lavapipe cannot export it; the Mali can (`VK_EXT_external_memory_dma_buf`),
 so the phone is the real test.
 
+### On the phone (2026-10-27)
+
+- **First frame: passed.** From the Browser's Debian root, Mesa's Venus
+  driver reports "Virtio-GPU Venus (Mali-G68)", Vulkan 1.1.177, and
+  `vkfirst` clears, copies back and checks a 1080x2340 image on the Mali,
+  20 rounds, mean 2.55 ms (worst 13.4 ms, the first). It took one
+  virglrenderer change (`src/venus/virglrenderer-android-dma-heap.patch`,
+  applied by `build.sh`): the Mali does not offer to export host-visible
+  memory, and Android has neither gbm nor udmabuf, so the server allocates
+  it from a dma-heap and imports it. The heap must be `system-uncached`:
+  with the cached `system` heap the device came up but fence waits hung
+  (the client reads Venus's fence feedback through a CPU-cached mapping).
+- **Chromium on Venus: not yet.** With `--use-angle=vulkan` (ANGLE on
+  Vulkan) or `--use-vulkan=native --enable-features=Vulkan` (Skia on
+  Vulkan), the GPU process connects to the server (a Venus context is
+  created and closed) and then Chromium stays on SwiftShader (`opengl` and
+  `vulkan` `disabled_off`; the first relaunches the GPU process as
+  `--use-angle=swiftshader-webgl`). Nothing is logged at the default level;
+  the next step is ANGLE's and Chromium's Vulkan logs off-device (whale's
+  arm64 container, lavapipe behind Venus) to see which check refuses it.
+
 ## Recommendation
 
 1. **Measure the baseline** on the phone (below), then **A** in the same
