@@ -119,6 +119,22 @@ struct surface {
     /* A client's memory that may shrink (v4 MG_SURFACE_FOREIGN, unsealed):
      * read only into this copy, under the SIGBUS guard; cpu.px points here. */
     uint8_t *shadow;
+    /* GPU tier, memfd surfaces: two linear dmabufs that damage is copied
+     * into and the GPU samples in place, instead of glTexSubImage into a
+     * texture the driver lays out itself (MOON_GPU_UPLOAD=texsub keeps
+     * that). The front one is `tex`; the other catches up when it becomes
+     * the front. */
+    struct staged {
+        int fd;
+        uint8_t *map;
+        size_t len;
+        int pitch;
+        EGLImageKHR image;
+        struct texture tex;
+        int fence;            /* the last draw that sampled it, or -1 */
+        struct mg_rect stale; /* the damage it has not had */
+    } stage[2];
+    int staged, front, front_sampled;
     int report_idle; /* v4 MG_SURFACE_REPORT_IDLE */
     int in_use;      /* named by a frame since its last MG_SURFACE_IDLE */
     struct texture tex;
@@ -229,7 +245,28 @@ static const struct cpu_image *lookup_cpu(void *ctx, uint32_t id) {
     return s && s->cpu.px ? &s->cpu : NULL;
 }
 
+/* A memfd surface's staging buffers (s->tex is the front one's). */
+static void release_stage(struct comp *c, struct surface *s) {
+    for (int i = 0; s->staged && i < 2; i++) {
+        struct staged *b = &s->stage[i];
+        if (b->tex.id)
+            glDeleteTextures(1, &b->tex.id);
+        if (b->image)
+            c->g.destroy_image(c->g.dpy, b->image);
+        if (b->map)
+            munmap(b->map, b->len);
+        if (b->fd >= 0)
+            close(b->fd);
+        if (b->fence >= 0)
+            close(b->fence);
+    }
+    if (s->staged)
+        memset(&s->tex, 0, sizeof s->tex);
+    s->staged = 0;
+}
+
 static void release(struct comp *c, struct surface *s) {
+    release_stage(c, s);
     if (s->fbo)
         glDeleteFramebuffers(1, &s->fbo);
     if (s->tex.id)
@@ -306,6 +343,117 @@ static void upload_rects(struct surface *s, const struct mg_rect *rects,
                         s->cpu.px + (size_t)y0 * s->stride + (size_t)x0 * 4);
     }
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+}
+
+static int use_texsub; /* MOON_GPU_UPLOAD=texsub */
+
+static void grow(struct mg_rect *a, const struct mg_rect *b) {
+    if (b->x1 <= b->x0 || b->y1 <= b->y0)
+        return;
+    if (a->x1 <= a->x0 || a->y1 <= a->y0) {
+        *a = *b;
+        return;
+    }
+    if (b->x0 < a->x0) a->x0 = b->x0;
+    if (b->y0 < a->y0) a->y0 = b->y0;
+    if (b->x1 > a->x1) a->x1 = b->x1;
+    if (b->y1 > a->y1) a->y1 = b->y1;
+}
+
+/* Copies rectangles of the surface's pixels into staging buffer `b`. */
+static void stage_copy(const struct surface *s, struct staged *b,
+                       const struct mg_rect *rects, uint32_t count) {
+    for (uint32_t i = 0; i < count; i++) {
+        int x0 = rects[i].x0 < 0 ? 0 : rects[i].x0;
+        int y0 = rects[i].y0 < 0 ? 0 : rects[i].y0;
+        int x1 = rects[i].x1 > s->width ? s->width : rects[i].x1;
+        int y1 = rects[i].y1 > s->height ? s->height : rects[i].y1;
+        for (int y = y0; y < y1 && x0 < x1; y++)
+            memcpy(b->map + (size_t)y * b->pitch + (size_t)x0 * 4,
+                   s->cpu.px + (size_t)y * s->stride + (size_t)x0 * 4, (size_t)(x1 - x0) * 4);
+    }
+}
+
+/* Sets up the staging buffers of a memfd surface; on failure the surface
+ * keeps a plain texture. */
+static int stage_init(struct comp *c, struct surface *s) {
+    memset(s->stage, 0, sizeof s->stage);
+    s->stage[0].fd = s->stage[1].fd = -1;
+    s->stage[0].fence = s->stage[1].fence = -1;
+    s->staged = 1;
+    uint32_t fourcc = s->opaque ? DRM_FORMAT_XRGB8888 : DRM_FORMAT_ARGB8888;
+    for (int i = 0; i < 2; i++) {
+        struct staged *b = &s->stage[i];
+        b->pitch = (s->width * 4 + 63) & ~63;
+        b->len = (size_t)b->pitch * s->height;
+        /* Uncached: the CPU only writes it (write-combined), the GPU reads. */
+        b->fd = gpu_dmabuf_alloc("system-uncached", b->len);
+        if (b->fd < 0)
+            return -1;
+        b->map = mmap(NULL, b->len, PROT_READ | PROT_WRITE, MAP_SHARED, b->fd, 0);
+        if (b->map == MAP_FAILED) {
+            b->map = NULL;
+            return -1;
+        }
+        b->tex = (struct texture){.width = s->width, .height = s->height,
+                                  .opaque = s->opaque};
+        b->tex.target = gpu_import_texture(&c->g, b->fd, (uint32_t)s->width,
+                                           (uint32_t)s->height, (uint32_t)b->pitch,
+                                           fourcc, &b->image, &b->tex.id);
+        if (!b->tex.target)
+            return -1;
+    }
+    struct mg_rect all = {0, 0, s->width, s->height};
+    stage_copy(s, &s->stage[0], &all, 1);
+    s->stage[1].stale = all;
+    s->front = 0;
+    s->front_sampled = 0;
+    s->tex = s->stage[0].tex;
+    return 0;
+}
+
+/* Damage into the staging buffers: into the front one if no draw has
+ * sampled it yet, else into the other, which then becomes the front (after
+ * the last draw that sampled it, almost always long done). */
+static void stage_damage(struct surface *s, const struct mg_rect *rects, uint32_t count) {
+    struct mg_rect box = {0, 0, 0, 0};
+    for (uint32_t i = 0; i < count; i++)
+        grow(&box, &rects[i]);
+    if (!s->front_sampled) {
+        stage_copy(s, &s->stage[s->front], rects, count);
+        grow(&s->stage[!s->front].stale, &box);
+        return;
+    }
+    struct staged *back = &s->stage[!s->front];
+    if (back->fence >= 0) {
+        struct pollfd p = {.fd = back->fence, .events = POLLIN};
+        poll(&p, 1, 100);
+        close(back->fence);
+        back->fence = -1;
+    }
+    if (back->stale.x1 > back->stale.x0)
+        stage_copy(s, back, &back->stale, 1);
+    back->stale = (struct mg_rect){0, 0, 0, 0};
+    stage_copy(s, back, rects, count);
+    grow(&s->stage[s->front].stale, &box);
+    s->front = !s->front;
+    s->front_sampled = 0;
+    s->tex = back->tex;
+}
+
+/* After a draw of the current frame: its staged surfaces' front buffers are
+ * in use until `fence` signals (-1: the draw is already finished). */
+static void stage_sampled(struct comp *c, int fence) {
+    for (size_t i = 0; i < c->nsurf; i++) {
+        struct surface *s = &c->surf[i];
+        if (!s->staged || !frame_uses(&c->cur, s->id))
+            continue;
+        s->front_sampled = 1;
+        struct staged *b = &s->stage[s->front];
+        if (b->fence >= 0)
+            close(b->fence);
+        b->fence = fence >= 0 ? dup(fence) : -1;
+    }
 }
 
 /* The SIGBUS guard: a client may truncate its memfd while it is read. */
@@ -754,7 +902,11 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
         }
         s->cpu = (struct cpu_image){s->shadow ? s->shadow : s->map, s->width,
                                     s->height, s->stride, opaque};
-        if (c->tier == TIER_GPU) {
+        if (c->tier == TIER_GPU && !use_texsub && stage_init(c, s)) {
+            LOG("surface %u: no staging buffers; uploading into a texture", m->id);
+            release_stage(c, s);
+        }
+        if (c->tier == TIER_GPU && !s->staged) {
             s->tex = (struct texture){.target = GL_TEXTURE_2D, .width = s->width,
                                       .height = s->height, .swizzle = 1,
                                       .opaque = opaque};
@@ -781,7 +933,9 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
             s = NULL;
             surface_failed(c, m->id, MG_FAIL_FAULT);
         }
-        if (s && s->memfd && c->tier == TIER_GPU)
+        if (s && s->staged)
+            stage_damage(s, rects, m->count);
+        else if (s && s->memfd && c->tier == TIER_GPU)
             upload_rects(s, rects, m->count);
         if (s && c->cur_valid && frame_uses(&c->cur, m->id))
             c->dirty = 1;
@@ -1097,6 +1251,7 @@ static void submit(struct comp *c, uint32_t serial) {
         path = c->tier == TIER_GPU ? MG_PATH_GPU : MG_PATH_CPU;
         int buf = c->next_buf;
         fence = draw(c, buf);
+        stage_sampled(c, fence);
         struct kms_layer l = {.fb = c->out[buf].fb, .sw = (float)c->width,
                               .sh = (float)c->height, .dw = c->width,
                               .dh = c->height, .alpha = 0xffff,
@@ -1232,6 +1387,7 @@ static void power(struct comp *c, int on) {
                 poll(&p, 1, 100);
                 close(fence);
             }
+            stage_sampled(c, -1);
         } else if (c->tier == TIER_GPU) {
             glBindFramebuffer(GL_FRAMEBUFFER, c->out[buf].gpu.fbo);
             glClearColor(0, 0, 0, 1);
@@ -1278,6 +1434,7 @@ static void write_shot(struct comp *c, const char *path) {
         poll(&p, 1, 500);
         close(fence);
     }
+    stage_sampled(c, -1);
     size_t len = (size_t)c->pitch * c->height;
     uint8_t *m = c->out[buf].map;
     int mapped = 0;
@@ -1623,6 +1780,7 @@ int main(int argc, char **argv) {
     signal(SIGHUP, on_signal);
     signal(SIGWINCH, on_signal);
     signal(SIGURG, on_signal);
+    use_texsub = getenv("MOON_GPU_UPLOAD") && !strcmp(getenv("MOON_GPU_UPLOAD"), "texsub");
     struct sigaction bus = {.sa_sigaction = on_sigbus, .sa_flags = SA_SIGINFO};
     sigaction(SIGBUS, &bus, NULL);
 

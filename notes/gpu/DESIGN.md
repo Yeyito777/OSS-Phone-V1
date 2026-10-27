@@ -442,6 +442,36 @@ hello.
 An older client works with a newer compositor unchanged; a newer client
 needs a compositor that speaks its version, so deploy the compositor first.
 
+## Wayland direct mode: the compositor's share (2026-10-27)
+
+The Wayland agent measured a full-screen direct frame at ~9.7 ms against
+8.33 (notes/wayland/MOON-WAYLAND.md): flip to frame callback 1.0, client
+draw 2.6, upload 2.85 for 2.4 MP, compositor render 3.2. Built for it, not
+yet measured on the phone:
+
+- **Occlusion culling** (`render.c`): each node is drawn only where no later
+  opaque node (opaque texture or fill, alpha 1, square corners) covers it,
+  as up to 16 scissored pieces. The X mirror under a full-screen app shrinks
+  to the status strip: 2.58 MP shaded instead of 4.97. Every frame starts
+  with a clear, so the tiler never reads the old frame back.
+  `src/moon-gpu/test/render-test.c` checks culled and unculled frames are
+  pixel-identical (Mesa, off-device). `MOON_GPU_NO_CULLING=1` disables it.
+- **Staged uploads** (`compositor.c`): a memfd surface's damage is copied
+  (plain `memcpy`, rows only) into one of two linear `system-uncached`
+  dmabufs that the GPU samples in place, instead of `glTexSubImage2D` into a
+  texture laid out by the driver (a conversion, and a wait when the texture
+  is still in use by the frame in flight: the likely ~1 ms fixed cost). The
+  front buffer takes damage until a draw samples it; then the other one,
+  brought up to date with what it missed, becomes the front, after the last
+  draw that sampled it (its fence). `MOON_GPU_UPLOAD=texsub` keeps the old
+  path for comparison.
+- **Flip to frame callback:** profile mode now logs, every 10 s, the time
+  from each flip's vblank to the `MG_PRESENTED` sent for it and the fence
+  query inside it, which separates the compositor's share from the
+  kernel's event delivery and Moon's. The fence query is one
+  `SYNC_IOC_FILE_INFO` ioctl on a signalled fence; it is not expected to
+  block.
+
 ## What is built (branch `gpu-compositor`)
 
 | Piece | Where |
