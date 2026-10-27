@@ -92,3 +92,20 @@ therefore follows docs/auto-brightness-compensation.md (v1):
   rotated).
 - **Not yet:** screen-content terms (`Y_roi`, `Y_screen`), the dark spot
   over the sensor, and the faster `raw_data` path (spec §4, §6).
+
+Measured on the phone (2026-10-27, dark room, lock screen):
+
+- The hub reports light only on change; its periodic line repeats the last
+  value, which is therefore current at the time it is logged.
+- First reading 0.16 s after the sensor is switched on (inside the wake
+  hold); dark-panel readings 0 lx.
+- Leak: 35 lx at backlight 209 and 130 lx at 665, i.e. γ ≈ 1.1 here (the
+  spec's 10 lx at 130 / 110 lx at 665 gave ≈ 1.5). With γ fixed at 1.5, `k`
+  converges per backlight range (110 → 171 over four wakes at 209; 136 after
+  a wake at 665). The γ re-fit (spec §3.5) is the next step.
+- No runaway: from manual 100 (130 lx measured, all leak), auto chose level
+  6; the dark-room rule held lit readings.
+- Sensor position (`scripts/a26-shell/light-sweep.sh`, white squares on
+  black at full backlight): centre ≈ (668, 146) px; the 30 px squares at
+  x 630–690, y 120–180 give 94–387 lx and their neighbours < 16 lx. That is
+  just below the 124 px status bar.

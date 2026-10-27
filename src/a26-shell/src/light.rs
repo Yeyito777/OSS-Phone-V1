@@ -34,8 +34,10 @@ const PERIOD_NS: i64 = 200_000_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LightReading {
     pub lux: u32,
-    /// When the hub measured it (CLOCK_BOOTTIME ns): the event's timestamp
-    /// for the periodic line, the log record's time for the first events.
+    /// When the value was current (CLOCK_BOOTTIME ns): the log record's time.
+    /// The hub reports light only on change, so the periodic line's value
+    /// (the last event, whatever its own timestamp) is still the reading at
+    /// the time the line is logged.
     pub at_ns: u64,
     /// One of the events logged right after the sensor was switched on.
     pub first: bool,
@@ -173,11 +175,10 @@ fn parse_record(record: &str) -> Option<LightReading> {
         });
     }
     let rest = message.split("[SHUB] light_sensor(5) : ").nth(1)?;
-    let (lux, rest) = rest.split_once('(')?;
-    let at_ns = rest.split(')').next()?.trim().parse().ok()?;
+    let (lux, _) = rest.split_once('(')?;
     Some(LightReading {
         lux: lux.trim().parse().ok()?,
-        at_ns,
+        at_ns: record_us * 1000,
         first: false,
     })
 }
@@ -246,7 +247,7 @@ mod tests {
             ),
             Some(LightReading {
                 lux: 19,
-                at_ns: 1_121_814_710_029,
+                at_ns: 1_132_009_327_000,
                 first: false
             })
         );

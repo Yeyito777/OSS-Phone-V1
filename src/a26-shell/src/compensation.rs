@@ -23,6 +23,8 @@ use serde::{Deserialize, Serialize};
 pub const GAMMA: f32 = 1.5;
 /// Seed: the lock screen at full backlight adds about 110 lx (measured).
 pub const SEED_K: f32 = 110.0;
+/// The seed's weight in the least squares (sum of g²).
+const PRIOR_WEIGHT: f32 = 0.06;
 /// Per accepted wake.
 const FORGETTING: f32 = 0.98;
 /// Leak samples come from the first 30 s after a wake.
@@ -60,11 +62,12 @@ pub struct Calibration {
 
 impl Default for Calibration {
     fn default() -> Self {
-        // The seed counts as a weak prior: one sample at full backlight.
+        // The seed counts as a weak prior, worth about two typical wake
+        // samples (g ≈ 0.17 at level 55).
         Self {
             k: SEED_K,
-            sxx: 1.0,
-            sxy: SEED_K,
+            sxx: PRIOR_WEIGHT,
+            sxy: PRIOR_WEIGHT * SEED_K,
             accepted: 0,
             rejected: 0,
         }
@@ -165,7 +168,13 @@ impl WakeWindow {
     pub fn sample(&mut self, lux: u32, at_ns: u64, backlight: u16, max: u16) {
         let g = g(backlight, max);
         if at_ns < self.started_ns + WINDOW_NS && g >= MIN_G {
-            self.samples.push((g, lux as f32 - self.a0));
+            // One sample per backlight level and wake: the hub's periodic
+            // line repeats an unchanged value every 6 s.
+            let residual = lux as f32 - self.a0;
+            match self.samples.iter_mut().find(|(seen, _)| *seen == g) {
+                Some(sample) => sample.1 = residual,
+                None => self.samples.push((g, residual)),
+            }
         }
     }
 
