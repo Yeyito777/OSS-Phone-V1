@@ -32,6 +32,7 @@
 !/scripts/gpu/
 !/scripts/venus/
 !/scripts/wayland/
+!/scripts/install-all.sh
 /scripts/device/*
 !/scripts/device/90-moon-autostart.sh
 !/scripts/device/moon-boot-supervisor.sh
@@ -46,6 +47,10 @@
 !/scripts/device/moon-suspend-cycle.sh
 !/scripts/device/moon-telephony-start.sh
 !/scripts/device/moon-telephony-stop.sh
+!/scripts/device/moon-power
+!/scripts/device/moon-power.sh
+!/scripts/device/moon-soak.sh
+!/scripts/device/light-sweep-loop.sh
 !/scripts/device/a26-enter-chroot.sh
 !/scripts/device/a26-xorg-takeover.sh
 !/scripts/device/a26-xorg-safety-watchdog.sh
