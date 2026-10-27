@@ -10,6 +10,13 @@
 #                                               the Wayland System build, in the System slot)
 #   scripts/wayland/moon-phone.sh stop          restart Moon with Wayland off
 #   scripts/wayland/moon-phone.sh restore       put the backed-up Moon back, restart it
+#   scripts/wayland/moon-phone.sh xwayland-install
+#                                               add Alpine's Xwayland to the chroot (three
+#                                               pinned packages, offline; Xorg is untouched)
+#   scripts/wayland/moon-phone.sh xwayland-start [debug]
+#                                               milestone 4: Moon on Xwayland instead of the
+#                                               GPU session's headless Xorg (needs install)
+#   scripts/wayland/moon-phone.sh reboot        the way back from xwayland-start
 #   scripts/wayland/moon-phone.sh ctl ARGS...   a26-shellctl on the phone
 #   scripts/wayland/moon-phone.sh log [N]       the last N lines of Moon's log
 #
@@ -58,7 +65,40 @@ restore)
     su_sh "rm -f $ROOT/opt/a26-system/bin/a26-system-wayland"
     su_sh "sh $DEV/moon-wayland-test.sh stop"
     ;;
+xwayland-install)
+    # Alpine v3.24 (the chroot's release); apk verifies them against the
+    # chroot's signing keys. Nothing else is added or upgraded (checked
+    # against the phone's package database: every other dependency is
+    # already installed).
+    mkdir -p "$CACHE"
+    apks="community/aarch64/xwayland-24.1.14-r0.apk main/aarch64/libtirpc-nokrb-1.3.5-r1.apk
+          main/aarch64/libtirpc-conf-1.3.5-r1.apk"
+    names=''
+    for apk in $apks; do
+        name="${apk##*/}"
+        [ -s "$CACHE/$name" ] || curl -fsSL -o "$CACHE/$name" "https://dl-cdn.alpinelinux.org/alpine/v3.24/$apk"
+        adb push -q "$CACHE/$name" "/data/local/tmp/$name" >/dev/null
+        su_sh "mv -f /data/local/tmp/$name $ROOT/root/$name"
+        names="$names /root/$name"
+    done
+    su_sh "A26_ROOT=$ROOT A26_BUSYBOX=$ROOT/busybox.static sh $ROOT/a26-enter-chroot.sh /sbin/apk add --no-network --simulate$names"
+    su_sh "A26_ROOT=$ROOT A26_BUSYBOX=$ROOT/busybox.static sh $ROOT/a26-enter-chroot.sh /sbin/apk add --no-network --quiet$names && rm -f$(echo "$names" | sed "s# /root/# $ROOT/root/#g") && ls -la $ROOT/usr/bin/Xwayland"
+    ;;
+xwayland-start)
+    shift
+    push_root "$HERE/device/moon-xwayland-test.sh" "$DEV/moon-xwayland-test.sh" 0755
+    su_sh "sh $DEV/moon-xwayland-test.sh start $*"
+    ;;
+reboot)
+    adb reboot
+    echo "rebooting; waiting for Moon"
+    for _ in $(seq 1 90); do
+        sleep 2
+        [ "$(adb shell getprop moon.session.ready 2>/dev/null | tr -d '\r')" = 1 ] && break
+    done
+    su_sh "echo mode=\$(getprop moon.boot.mode) ready=\$(getprop moon.session.ready) moon=\$(pidof a26-shell) xorg=\$(pidof Xorg) compositor=\$(pidof moon-compositor)"
+    ;;
 ctl) shift; su_sh "$ROOT/busybox.static chroot $ROOT /opt/a26-shell/bin/a26-shellctl $*" ;;
 log) su_sh "tail -n ${2:-40} $ROOT/root/a26-shell.log" ;;
-*) sed -n '2,16p' "$0"; exit 2 ;;
+*) sed -n '2,23p' "$0"; exit 2 ;;
 esac

@@ -46,6 +46,11 @@ impl Xwayland {
             let socket = theirs.as_raw_fd();
             let display = display_write.as_raw_fd();
             let mut command = Command::new(command);
+            // MOON_XWAYLAND_DISPLAY (":0" on the phone, as Xorg's) pins the
+            // display; otherwise Xwayland takes the first free one.
+            if let Ok(display) = std::env::var("MOON_XWAYLAND_DISPLAY") {
+                command.arg(display);
+            }
             command
                 .args([
                     "-displayfd",

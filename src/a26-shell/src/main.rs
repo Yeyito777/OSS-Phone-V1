@@ -577,6 +577,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             eprintln!("deep suspend disabled by config; screen-off keeps Moon resident");
             (None, persisted)
         }
+        // The deep-suspend helper replaces Xorg and Moon; under Xwayland
+        // (milestone 4) there is no Xorg for it to replace.
+        Ok((_, persisted)) if xwayland_server.is_some() => {
+            eprintln!("deep suspend unavailable under Xwayland; screen-off keeps Moon resident");
+            (None, persisted)
+        }
         Ok((port, persisted)) => {
             eprintln!("deep suspend handoff ready (DPU quiesce, mem/deep, power+RTC wake)");
             (Some(port), persisted)

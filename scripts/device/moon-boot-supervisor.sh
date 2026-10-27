@@ -308,7 +308,11 @@ if [ "$xorg_ready" != 1 ]; then
     exit 30
 fi
 echo "$token" >"$XORG_STATE/keep-token"
-log "Xorg ready pid=$(pidof Xorg 2>/dev/null || true); safety token committed locally"
+if grep -qx 'XSERVER=xwayland' "$ROOT/root/xorg-session.status" 2>/dev/null; then
+    log 'X session ready (Moon starts Xwayland); safety token committed locally'
+else
+    log "Xorg ready pid=$(pidof Xorg 2>/dev/null || true); safety token committed locally"
+fi
 
 # Without the framework nothing boosts the foreground UI, so the scheduler ran
 # Moon's animation frames on slow cores at low clocks. Moon raises its own
@@ -342,6 +346,46 @@ seed_volume() {
         mv -f "$live_dir/volume.new.$$" "$live_dir/volume"
 }
 
+# Milestone 4 (XWAYLAND=1, notes/wayland/MOON-WAYLAND.md): the session the
+# takeover started holds no Xorg; Moon starts Xwayland as its X server.
+xwayland_session() {
+    grep -qx 'XSERVER=xwayland' "$ROOT/root/xorg-session.status" 2>/dev/null
+}
+
+# The X server is up: Xorg, or the held Xwayland session (Moon's Xwayland
+# itself comes and goes with Moon, which the liveness probe covers).
+x_server_alive() {
+    [ -n "$(pidof Xorg 2>/dev/null || true)" ] && return 0
+    xwayland_session || return 1
+    holder="$(cat "$ROOT/run/a26-xwayland-session.pid" 2>/dev/null || true)"
+    case "$holder" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$holder" 2>/dev/null
+}
+
+# Moon did not come up on Xwayland: end that session for this boot; the
+# takeover starts headless Xorg instead (a26-xorg-takeover.sh), and Moon
+# starts again on it. Returns once Moon answers, or fails.
+fall_back_to_xorg() {
+    log 'Moon failed on Xwayland; falling back to headless Xorg for this boot'
+    : >/data/local/tmp/moon-gpu/xwayland-fallback
+    stop_moon_session || true
+    holder="$(cat "$ROOT/run/a26-xwayland-session.pid" 2>/dev/null || true)"
+    case "$holder" in ''|*[!0-9]*) ;; *) kill -TERM "$holder" 2>/dev/null || true ;; esac
+    for _ in $($BB seq 1 500); do
+        if ! xwayland_session; then
+            case "$(cat "$ROOT/root/xorg-session.status" 2>/dev/null || true)" in
+                XORG_READY=1*) break ;;
+                XORG_READY=0*) return 1 ;;
+            esac
+        fi
+        "$BB" sleep 0.2
+    done
+    [ -n "$(pidof Xorg 2>/dev/null || true)" ] || return 1
+    log "headless Xorg ready pid=$(pidof Xorg 2>/dev/null || true)"
+    start_moon
+    wait_for_moon
+}
+
 start_moon() {
     seed_volume
     rm -f "$ROOT/run/a26-shell/control.sock"
@@ -355,8 +399,16 @@ start_moon() {
     # socket in the chroot's /run, a tmpfs of this session.
     wayland_env=''
     [ "$(config_uint WAYLAND_APPS 0)" != 1 ] || wayland_env=MOON_WAYLAND_DIR=/run/moon-wayland
+    # Under Xwayland, Moon's Wayland server is always on (Xwayland is its
+    # client) and Moon reads the touchscreen itself.
+    xwayland_env=''
+    if xwayland_session; then
+        wayland_env=MOON_WAYLAND_DIR=/run/moon-wayland
+        xwayland_env='MOON_XWAYLAND=/usr/bin/Xwayland MOON_XWAYLAND_DISPLAY=:0'
+    fi
     "$BB" nohup "$BB" setsid /system/bin/sh "$ROOT/a26-enter-chroot.sh" \
         /usr/bin/env DISPLAY=:0 A26_SHELL_CONFIG=/etc/a26-shell/config.json $gpu_env $wayland_env \
+        $xwayland_env \
         /opt/a26-shell/bin/a26-shell \
         >>"$ROOT/root/a26-shell.log" 2>&1 </dev/null &
     session_pid=$!
@@ -478,11 +530,14 @@ restart_moon_after_incident() {
         return 0
     fi
     log 'Moon local recovery failed'
+    if xwayland_session && fall_back_to_xorg; then
+        return 0
+    fi
     return 1
 }
 
 start_moon
-if ! wait_for_moon; then
+if ! wait_for_moon && ! { xwayland_session && fall_back_to_xorg; }; then
     log 'Moon control socket did not become ready; restoring Android'
     /system/bin/sh /data/local/tmp/a26-android-graphics-restore.sh
     exit 31
@@ -566,7 +621,7 @@ while :; do
             break
         fi
     fi
-    [ -n "$(pidof Xorg 2>/dev/null || true)" ] || break
+    x_server_alive || break
     if [ -e "$PERSIST/disabled" ]; then
         log 'disabled at runtime; restoring Android'
         /system/bin/sh /data/local/tmp/a26-android-graphics-restore.sh

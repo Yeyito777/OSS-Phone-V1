@@ -322,50 +322,134 @@ Next in M2:
 
 ## Milestone 3: touch from evdev (built, opt-in)
 
-`MOON_TOUCH=evdev` makes Moon read the touchscreen itself:
-- `src/touch.rs`, multi-touch protocol B: slots become begin/update/end
-  contacts in screen pixels from the device's axis ranges, and
-  `SYN_DROPPED` ends every contact;
-- the device is found by name (`MOON_TOUCH_DEVICE`, default
-  `sec_touchscreen`) and never grabbed;
-- XI2 raw touches are ignored meanwhile.
+`MOON_TOUCH=evdev` makes Moon read the touchscreen itself (`src/touch.rs`):
+- Multi-touch protocol B: slots become begin/update/end contacts in screen
+  pixels, scaled from the device's axis ranges.
+- `SYN_DROPPED` ends every contact.
+- The device is found by name (`MOON_TOUCH_DEVICE`, default
+  `sec_touchscreen`) and is never grabbed.
+- XI2 raw touches are ignored while evdev is on.
 
 The XI2 handlers are now `touch_begin/update/end`, shared by both sources,
-so gestures, keyboard rollover and app taps behave the same. Apps still get
-their input from Xorg. Unit-tested off-device; on the phone it needs
-`getevent -p` to confirm the axis ranges and a few real touches.
+so gestures, keyboard rollover and app taps behave the same.
 
-## Milestone 4: Xwayland replaces headless Xorg (plan)
+**Verified off-device.** `MOON_TOUCH_REPLAY=FIFO:MAXX,MAXY` feeds the same
+path from a FIFO; `scripts/wayland/touch-replay.py` writes protocol B
+events at 120 Hz. A uinput device is not an option on a desktop host,
+whose X server would take its touches. These work from the replay:
+- the lock-screen swipe to the keypad
+- the PIN typed on the keypad
+- the home swipe out of an app
+- Moon's keyboard typing into a Wayland app
 
-What has to be true for a GPU-mode session with no Xorg:
+On the phone, `getevent -p` gives the axes: 0..1079 x 0..2339, ten slots,
+the same mapping. Still untested there: the ioctls and real fingers.
 
-1. **Moon draws all of its own UI into moon-compositor layers.** The shell
-   already does in GPU mode. The status strip, keyboard (with callout),
-   volume HUD and banners are still X windows and become layers or nodes
-   (their canvases exist; they're presented to X today).
-2. **Input without Xorg:** touch (M3) and keys (already evdev) are read by
-   Moon. Moon hit-tests surfaces and sends `wl_touch` to the client that
-   owns the touched surface. Xwayland is one such client: it turns
-   `wl_touch` on its surfaces into X touch and pointer events, so X11
-   apps get input the same way.
-3. **Moon is the X11 window manager of a rootless Xwayland.**
-   - Its existing X WM code (`manage_window`, configure, focus) runs
-     unchanged against Xwayland's display.
-   - Each X window's content is the `wl_surface` Xwayland associates with
-     it (`xwayland_shell_v1` serial, or `WL_SURFACE_ID`). That surface is a
-     client surface like any other, shown directly.
-   - XTEST still works inside Xwayland, so the keyboard path for X11 apps
-     (CEF) is unchanged.
-4. **The X mirror goes away.** Every app is surfaces. Snapshots are
-   compositor copies of client surfaces (protocol v4's foreign surfaces,
-   and a "render nodes into a surface" request, to be asked of the GPU
-   agent).
-5. **Session:**
-   - the supervisor starts moon-compositor and then Moon, which starts
-     Xwayland;
-   - readiness is the compositor plus Moon's control socket;
-   - any failure falls back to today's Xorg session on the panel (the
-     existing in-place fallback).
+## Milestone 4: Xwayland replaces headless Xorg (M4a built, opt-in)
+
+Two stages.
+
+**M4a: Xwayland as a drop-in X server** (built, `MOON_XWAYLAND`). Without
+Xorg, Moon starts first:
+1. Its Wayland server binds.
+2. It starts Xwayland on one end of a socket pair (`WAYLAND_SOCKET`),
+   rootful at the panel's size (`MOON_XWAYLAND_GEOMETRY`, default
+   1080x2340), with `-displayfd` (`src/xwayland.rs`).
+3. It serves Xwayland until the display number arrives (140 to 270 ms),
+   points `DISPLAY` at it, and connects as it does to Xorg. If Xwayland
+   exits, so does Moon.
+
+Everything on Moon's X side is unchanged: its windows, the X mirror on the
+GPU path, XTEST keys, the Wayland proxies, apps launched with DISPLAY.
+
+The Wayland server knows its Xwayland client (`ClientInfo::xwayland`):
+- **Scale:** 1 for its output, preferred buffer scale and configure.
+- **Window:** its one toplevel is the whole panel, fullscreen and active,
+  and is not one of Moon's apps.
+- **Buffers and frames:** its buffers go straight back, because Moon
+  mirrors the X root instead. Its frame callbacks follow the panel.
+- **Touch:** Moon reads touch from evdev (M3). Every contact also goes to
+  Xwayland's root as wl_touch, just as Xorg read the device itself.
+  Xwayland turns it into XI2 touch for the X window under it.
+- **Keyboard:** entered on Xwayland's root for good, and never sent a key.
+  Xwayland delivers no key events, XTEST's included, without Wayland
+  keyboard focus. The keymap it gets is Moon's US map; keys still come
+  through XTEST.
+- **Deep suspend:** off under Xwayland. Its helper replaces Xorg.
+- **Tier:** needs the GPU path. Xwayland has no DPMS, and moon-compositor
+  powers the panel.
+
+**Verified off-device** on whale with Alpine 3.24's Xwayland 24.1.14 (the
+chroot's version), in a container: `scripts/wayland/xwayland-run.sh`, with
+`xwayland-podman.sh` as `MOON_XWAYLAND`.
+- Moon renders, unlocks and runs its gestures on Xwayland, in preview and
+  through the GPU path (the mock compositor's frame mirrors Xwayland's root).
+- vimbrowser's x86 build, run with the A26 launcher's flags, works as an X11
+  app under it:
+  - touches reach the page at the right CSS coordinates, with clicks
+  - Moon's keyboard types into a focused input
+  - the home swipe backgrounds it
+- Opening Moon's keyboard from outside (`ctl keyboard show`) blurs
+  vimbrowser's input. It does the same on Xvfb, so it isn't Xwayland; on
+  the phone the Browser asks for the keyboard itself.
+- A whale lesson: a container that shares the host's `/tmp/.X11-unix` but
+  not its lock files let Xwayland take `:0` and replace the desktop's
+  socket file. The wrapper now only takes a display nothing on the host
+  uses, and refuses a pinned one that is in use.
+
+**Packaging.** The chroot needs three pinned Alpine v3.24 packages:
+`xwayland-24.1.14-r0`, `libtirpc-nokrb-1.3.5-r1` and
+`libtirpc-conf-1.3.5-r1`. I checked them against the phone's own package
+database: every other dependency is already installed as an unversioned
+soname, so nothing Xorg uses is upgraded. `moon-phone.sh xwayland-install`
+adds them offline, and apk verifies them with the chroot's keys.
+
+**Session** (XWAYLAND=1 in /data/adb/moon/config, off by default):
+- **Takeover:** `a26-xorg-takeover.sh` chooses it only when the GPU
+  compositor is ready and Xwayland is installed.
+- **Session holder:** `a26-xorg-persistent-session.sh --xwayland` starts no
+  X server. It writes `XORG_READY=1` with `XSERVER=xwayland` and holds the
+  session.
+- **Supervisor start:** `moon-boot-supervisor.sh` starts Moon with
+  `MOON_XWAYLAND=/usr/bin/Xwayland`, display `:0` and the Wayland
+  directory. Its liveness loop accepts the held session in place of Xorg.
+- **Fallback to Xorg:** if Moon doesn't come up on Xwayland, at start or
+  when a recovery fails:
+  1. `fall_back_to_xorg` marks the boot (`moon-gpu/xwayland-fallback`) and
+     ends the held session.
+  2. The takeover loop starts the same GPU session with headless Xorg.
+  3. Moon starts again on it, with Wi-Fi left up.
+  4. Only if that fails too is Android restored, as before.
+- **Compositor failure:** the GPU fallback (`moon-gpu-session.sh`) ends the
+  held session too, and Xorg comes back on the panel.
+- **Tested so far:** the supervisor's new functions ran against a fake
+  takeover on whale.
+- **Not installed yet:** these boot scripts reach the phone only through
+  `scripts/gpu/install.sh`, after the device test below.
+
+**Device test** (no boot-path change):
+1. `moon-phone.sh install` (Moon)
+2. `moon-phone.sh xwayland-install`
+3. `moon-phone.sh xwayland-start [debug]`
+
+`moon-xwayland-test.sh` needs the GPU session. Like the earlier handoff
+experiment, it SIGSTOPs the supervisor and SIGKILLs the takeover chain, so
+no trap restores Android or stops Wi-Fi. It stops Moon and the headless
+Xorg, and starts Moon on Xwayland next to the running moon-compositor. The
+way back is `moon-phone.sh reboot`. To check there:
+- lock and unlock with real touches
+- the Browser (touch, keyboard, pages)
+- the Wayland demo
+- screen off and on
+- frame pacing
+
+**M4b (next): rootless Xwayland, Moon as its X window manager.**
+- Each X window (the Browser, and Moon's own windows at first) has its own
+  wl_surface (`xwayland_shell_v1`). Moon shows it directly, as M2 does for
+  native apps, so the X mirror and its copy go away.
+- Moon's own windows can stay X windows under Xwayland during the
+  transition and become compositor layers later.
+- Snapshots become compositor copies of client surfaces.
 
 The CEF browser stays an X11 app under Xwayland:
 - vimbrowser passes `--ozone-platform=x11` and has its own X11 window code
