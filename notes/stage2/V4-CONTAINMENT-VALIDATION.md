@@ -115,3 +115,29 @@ ten cases pass. Exact-binary checks: each image carries the v2 `.ko`, only the
 canary's `/init` contains `require_mode=1`, and each `/init` (qemu, no module
 load possible) took its fallback without panicking: canary → `/system/bin/init`,
 moon → `/init.stock`, stage 2 → `execveat(held fd)`.
+
+### v5 (2026-10-27): Mali PID-namespace fix + SELinux-safe oss-init
+The on-device Stage-3 run (`ONDEVICE-RESULTS-20261026.md`) proved containment
+works but found three defects. v5 (`recovery-slot-stage2-v5`, sha256
+`4c0ea361…`) fixes them:
+- **Mali:** the slot's payload ramdisk now carries the kernel agent's patched
+  `mali_kbase.ko` (`f36fd339`, `get_task_pid(current, PIDTYPE_TGID)` instead of
+  `find_get_pid(current->tgid)`) at `lib/modules/mali_kbase.ko`. The payload is
+  concatenated last, so it overrides the vendor copy (`b5704023`) — the same
+  last-wins path that makes oss-init the `/init`. Verified: the effective (last
+  fragment) module is `f36fd339`, the vendor copy is left byte-untouched, and
+  `modules.load` is unchanged (bare `mali_kbase.ko`, same deps).
+- **Liveness under SELinux:** `watch_kmsg` treats the first `EACCES`/`EPERM` read
+  of `/dev/kmsg` as proof the container loaded its enforcing policy — which
+  happens in second-stage init, after first stage loaded `sec_reboot` — so it
+  sets both `live` and `reboot_safe`, closes the read fd and stops (no audit-log
+  flood). oss-init logs through a write fd opened at startup (writes on an open
+  fd need only `write`, which the `kernel` domain has), so its later lines
+  survive the policy load.
+- **Hang path:** if the deadline `kill` is refused, oss-init reboots immediately
+  (the PMU clear already succeeded, so a reset lands on BOOT) instead of blocking
+  in `waitpid`.
+Bench: all ten cases pass (the kill-refused and EACCES-live branches only fire
+under SELinux, so they are covered by the device run, not the userns bench).
+Exact-binary checks confirm the effective Mali, the v2 rebootmode `.ko`, the v5
+`/init`, and the qemu fallback (`execveat` of the held fd, no panic).

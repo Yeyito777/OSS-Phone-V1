@@ -84,10 +84,20 @@ extern char **environ;
 #define REBOOT_SAFE_SOURCE "sec-reboot"
 #define POLL_MS 200
 
+/* A write fd opened once at startup. After the container loads its enforcing
+ * SELinux policy, opening /dev/kmsg afresh is denied for the kernel domain, but
+ * writing an already-open fd needs only `write`, which the kernel domain has on
+ * the node. So keep this open for the life of PID 1 and log through it. */
+static int g_kmsg_fd = -1;
+
 static void kmsg(const char *msg) {
 #ifdef TEST_STDERR
     (void)!write(2, msg, strlen(msg));
 #endif
+    if (g_kmsg_fd >= 0) {
+        (void)!write(g_kmsg_fd, msg, strlen(msg));
+        return;
+    }
     int fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
     if (fd < 0) return;
     (void)!write(fd, msg, strlen(msg));
@@ -150,6 +160,7 @@ struct watch {
     int fd;
     int live;        /* container reached second stage */
     int reboot_safe; /* sec_reboot registered its restart handler */
+    int denied;      /* reads now denied: the container loaded its SELinux policy */
 };
 
 static void watch_kmsg(struct watch *w) {
@@ -165,6 +176,20 @@ static void watch_kmsg(struct watch *w) {
             continue;
         }
         if (n < 0 && errno == EPIPE) continue; /* ring overran: resync */
+        if (n < 0 && (errno == EACCES || errno == EPERM)) {
+            /* The container loaded its enforcing SELinux policy, which revalidates
+             * our open fd and denies further reads (avc: kernel -> rootfs chr_file
+             * read). That load happens in second-stage init, after first stage
+             * loaded sec_reboot, so the container is BOTH live and reboot-safe.
+             * Record that, stop reading (don't flood the audit log), and drop the
+             * fd; the write fd (opened O_WRONLY) keeps working for logging. */
+            w->live = 1;
+            w->reboot_safe = 1;
+            w->denied = 1;
+            (void)close(w->fd);
+            w->fd = -1;
+            return;
+        }
         return;                                /* EAGAIN: nothing new */
     }
 }
@@ -297,7 +322,8 @@ int main(int argc, char **argv) {
     /* /dev/kmsg may not exist yet on the bare rootfs; creating the node is a
      * file, not a mount. Stock first-stage mounts its own tmpfs over /dev. */
     (void)mknod("/dev/kmsg", S_IFCHR | 0600, makedev(1, 11));
-    kmsg("<6>oss-init: OSS-Phone init is the real PID 1 (v4, private-rootfs containment)\n");
+    g_kmsg_fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
+    kmsg("<6>oss-init: OSS-Phone init is the real PID 1 (v5, private-rootfs containment)\n");
 
     int fd_stock = open(STOCK_INIT, O_RDONLY | O_CLOEXEC);
     if (clear_err) {
@@ -347,7 +373,13 @@ int main(int argc, char **argv) {
                  "oss-init supervising as the real PID 1\n");
         if (!w.live && now_ms() > deadline) {
             kmsg("<4>oss-init: no liveness by the deadline; stopping the container\n");
-            kill((pid_t)pid, SIGKILL);
+            if (kill((pid_t)pid, SIGKILL) != 0) {
+                /* The kill was refused (e.g. SELinux kernel -> init). Do not block
+                 * in waitpid forever; the PMU clear already succeeded, so a reboot
+                 * lands on BOOT (measured on device). Reboot now. */
+                kmsg("<4>oss-init: cannot signal the container; rebooting to BOOT now\n");
+                real_reboot(0);
+            }
             (void)waitpid((pid_t)pid, &status, 0);
             fall_back("hang", &w, fd_stock, argv);
         }

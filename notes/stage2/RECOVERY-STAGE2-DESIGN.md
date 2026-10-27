@@ -108,7 +108,9 @@ Built, deterministic, whitelisted, unflashed; every image loads
 1. Canary `71d68ced` (CANARY-RUNBOOK.md Stage 1; module loaded with `require_mode=1`).
 2. System-from-recovery `cc406f02` (`build-slot-image.sh plain`: oss-pid1 →
    magiskinit → Moon, with the `oss-recovery-slot` marker for the policy).
-3. Stage-2 v4 containment `f0b7263a` (`build-slot-image.sh containment`).
+3. Stage-2 v5 containment `4c0ea361` (`build-slot-image.sh containment`): v4
+   `f0b7263a` is withdrawn (it hit the Mali PID-namespace bug); v5 adds the
+   patched `mali_kbase.ko` and the SELinux-safe oss-init fixes.
 The earlier OSS-kernel calibration (`aab7a301`) and slot images without the
 clear (`fc974667`, `5a445db7`, `b67b68d3`) are retired and off the whitelist.
 Order: module on-device test (kernel agent) → canary → 2 → 3. Stage 2 needs the

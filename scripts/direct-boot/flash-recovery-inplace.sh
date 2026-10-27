@@ -32,10 +32,11 @@ declare -A KNOWN=(
   # (sha256 7130cf3c, masked mode clear + verified read-back + require_mode)
   # as its first action. Images built against the first module (a18606a8) are
   # withdrawn: 0e4e70b2, 583ad993, 84768b63, and earlier 25540aa1, aab7a301,
-  # fc974667, 5a445db7, b67b68d3.
+  # fc974667, 5a445db7, b67b68d3. Stage-2 v4 (f0b7263a) is superseded by v5
+  # below (Mali PID-namespace fix + oss-init SELinux fixes) and withdrawn.
   [71d68ced3dccbb7d6eabfa695ef9792c856418267d4563a474db3a4f8f54edfc]='panic canary v3 (clear with require_mode=1; else stock recovery, no panic)'
   [cc406f02c52968354da0a67ace51a28b7ae138051dcf9cc75ac2af3c8a30b86e]='recovery-slot plain boot (oss-pid1 clear -> magiskinit -> Moon)'
-  [f0b7263acbcd32dbfd8daaa11edf59a95cc8eccbc7929e706509ce04036022a1]='recovery-slot stage-2 v4 (clear -> oss-init containment)'
+  [4c0ea361d1bec36cb117fae3420f360274a2fde0ba0e63ce4852ddb7bb5cd2e6]='recovery-slot stage-2 v5 (clear -> oss-init containment; patched Mali, SELinux-safe liveness/reboot)'
 )
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
