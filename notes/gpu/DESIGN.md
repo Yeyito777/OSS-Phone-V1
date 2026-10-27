@@ -283,6 +283,14 @@ Xorg, and nothing in the compositor has to change.
   toggles planes (at once since this change), `SIGWINCH` writes what the
   planes path would show (or, planes off, the panel's frame through a
   spare DPP) to `wb.ppm` beside the socket, `SIGURG` runs the probes.
+- **Soak (2026-10-27, `scripts/gpu/soak.sh`, main 6b612b3 installed).**
+  200 screen off/on cycles through Moon: every panel on and off succeeded
+  (on 160 ms mean, 175 max; off 264 ms mean, 267 max), no unusual log line;
+  the compositor stayed at 51 fds and 34 dmabufs, its RSS went from 35.4 to
+  35.8 MB and Moon's from 122.2 to 122.7 MB. A SIGSEGV to the compositor:
+  the keeper restarted it in about 0.7 s (1/2: it had run 535 s, under the
+  10 minutes that reset the count), Moon reconnected and re-sent its
+  layers, the panel came on normally, same footprint (35.4 MB, 51 fds).
 - **Kernel hazards.** Every commit sets `HDR_FD=-1` on every plane it
   touches and a modeset `DQE_FD=-1` (see the panic below). The mode is never
   changed and the CRTC never disabled other than through `ACTIVE`.
