@@ -11,6 +11,10 @@ esac
     echo "moon-power: device helper missing" >&2
     exit 1
 }
-setsid chroot /proc/1/root /system/bin/sh /data/adb/moon/moon-power.sh "$1" \
+# Absolute paths: the rootfs has no chroot(8) and callers' PATH varies. Its
+# static BusyBox (/busybox.static in here) has both applets.
+BB=/busybox.static
+[ -x "$BB" ] || { echo "moon-power: $BB missing" >&2; exit 1; }
+"$BB" setsid "$BB" chroot /proc/1/root /system/bin/sh /data/adb/moon/moon-power.sh "$1" \
     </dev/null >/dev/null 2>&1 &
 exit 0
