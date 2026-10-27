@@ -25,6 +25,10 @@ CONFIG=/data/adb/moon/config
 XORG_STATE=/data/local/tmp/a26-xorg-control
 LOG="$RUN/session.log"
 MAX_RESTARTS=2
+# A compositor that ran this long before it exited is not failing in a
+# loop: its restart budget starts over (a crash after days of uptime does
+# not cost GPU mode for the rest of the boot).
+STABLE_SECONDS=600
 
 mkdir -p "$RUN"
 chmod 0700 "$RUN"
@@ -113,6 +117,12 @@ keep)
     restarts=0
     while [ -e "$RUN/active" ]; do
         rm -f "$RUN/ready"
+        # Keep the log bounded over a long uptime: its last 2000 lines.
+        if [ "$("$BB" stat -c %s "$RUN/compositor.log" 2>/dev/null || echo 0)" -gt 1048576 ]; then
+            "$BB" tail -n 2000 "$RUN/compositor.log" >"$RUN/compositor.log.new" &&
+                mv -f "$RUN/compositor.log.new" "$RUN/compositor.log"
+        fi
+        started="$(cut -d. -f1 /proc/uptime)"
         "$BIN" --socket "$RUN/compositor.sock" --ready-file "$RUN/ready" \
             ${floor:+--gpu-floor "$floor"} $no_planes >>"$RUN/compositor.log" 2>&1 </dev/null &
         pid=$!
@@ -122,8 +132,10 @@ keep)
         wait "$pid"
         status=$?
         [ -e "$RUN/active" ] || break
+        ran=$(($(cut -d. -f1 /proc/uptime) - started))
+        [ "$ran" -ge "$STABLE_SECONDS" ] && restarts=0
         restarts=$((restarts + 1))
-        log "compositor exited with $status ($restarts/$MAX_RESTARTS): $(tail -1 "$RUN/compositor.log" 2>/dev/null)"
+        log "compositor exited with $status after ${ran}s ($restarts/$MAX_RESTARTS): $(tail -1 "$RUN/compositor.log" 2>/dev/null)"
         if [ "$restarts" -le "$MAX_RESTARTS" ]; then
             # Moon reconnects by itself and re-sends its layers.
             log "restarting the compositor"

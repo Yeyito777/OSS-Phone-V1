@@ -220,7 +220,8 @@ Xorg, and nothing in the compositor has to change.
   commit), or after a GPU-mode failure earlier in the same boot. Xorg on the
   panel with the modesetting configuration is exactly today's session.
 - **At runtime** (`scripts/device/moon-gpu-session.sh keep`): a dead
-  compositor is restarted (twice per boot); Moon notices the closed socket,
+  compositor is restarted (twice in a row; a compositor that ran 10 minutes
+  first starts the count over); Moon notices the closed socket,
   reconnects once a second and re-sends every layer (it keeps them all), and
   the mirror is re-attached. After the restarts the session falls back in
   place: headless Xorg is stopped, the takeover starts Xorg on the panel

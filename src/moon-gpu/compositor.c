@@ -1161,6 +1161,11 @@ static void read_flips(struct comp *c, int timeout_ms) {
 static void wait_flip(struct comp *c) {
     for (int i = 0; i < 4 && c->flip_pending; i++)
         read_flips(c, 50);
+    /* A flip that never completed: its fence would leak with it. */
+    if (c->flip_pending && c->flight_fence >= 0) {
+        close(c->flight_fence);
+        c->flight_fence = -1;
+    }
     c->flip_pending = 0;
 }
 
