@@ -27,8 +27,19 @@ log() {
     echo "moon-power: $* [$(date --iso-8601=seconds 2>/dev/null || date) up=$(cut -d' ' -f1 /proc/uptime)]"
 }
 
-# Once per boot: a second request while one runs is ignored.
-mkdir "$RUNTIME/power.lock" 2>/dev/null || { log "$ACTION ignored: already in progress"; exit 0; }
+# Once per boot: a second request while one runs is ignored. /data/local/tmp
+# outlives a reboot, so the lock records the boot it belongs to.
+boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+LOCK="$RUNTIME/power.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+    if [ "$(cat "$LOCK/boot-id" 2>/dev/null)" = "$boot_id" ]; then
+        log "$ACTION ignored: already in progress"
+        exit 0
+    fi
+    rm -rf "$LOCK"
+    mkdir "$LOCK" || exit 1
+fi
+echo "$boot_id" >"$LOCK/boot-id"
 log "$ACTION requested (battery $(cat /sys/class/power_supply/battery/capacity 2>/dev/null)%)"
 
 in_chroot() {
@@ -64,7 +75,6 @@ stop_exe() {
 
 # 1. Nothing restarts or falls back from here on.
 setprop moon.boot.mode shutdown
-: >"$RUNTIME/powering-off"
 supervisor="$(getprop moon.supervisor.pid)"
 case "$supervisor" in
     ''|*[!0-9]*) ;;
