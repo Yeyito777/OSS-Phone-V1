@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <GLES2/gl2ext.h>
 
@@ -78,6 +79,7 @@ static void image_prog(struct image_prog *p, GLuint id) {
 
 int render_init(struct renderer *r, int width, int height) {
     memset(r, 0, sizeof *r);
+    r->no_culling = getenv("MOON_GPU_NO_CULLING") != NULL;
     r->width = width;
     r->height = height;
     GLuint pi = gpu_program(VS, FS_IMAGE), pe = gpu_program(VS, FS_IMAGE_EXT),
@@ -124,15 +126,16 @@ static uint64_t visible(const struct renderer *r, float x, float y, float w,
     return x1 > x0 && y1 > y0 ? (uint64_t)((x1 - x0) * (y1 - y0)) : 0;
 }
 
-static void draw_image(struct renderer *r, const struct texture *t, float sx,
-                       float sy, float sw, float sh, float dx, float dy,
-                       float dw, float dh, float alpha, float dim,
-                       float radius, int smooth, float screen_w,
-                       float screen_h) {
+/* Binds the image program and its uniforms for one image (draw after). */
+static int set_image(struct renderer *r, const struct texture *t, float sx,
+                     float sy, float sw, float sh, float dx, float dy,
+                     float dw, float dh, float alpha, float dim,
+                     float radius, int smooth, float screen_w,
+                     float screen_h) {
     const struct image_prog *p =
         t->target == GL_TEXTURE_EXTERNAL_OES ? &r->image_ext : &r->image;
     if (!p->id)
-        return;
+        return 0;
     glUseProgram(p->id);
     glUniform4f(p->dst, dx, dy, dw, dh);
     glUniform4f(p->src, sx / t->width, sy / t->height, (sx + sw) / t->width,
@@ -146,7 +149,102 @@ static void draw_image(struct renderer *r, const struct texture *t, float sx,
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(t->target, t->id);
     glBindSampler(0, smooth ? r->sampler_linear : r->sampler_nearest);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    return 1;
+}
+
+/* Occlusion: what part of each node a later opaque node does not hide, so
+ * that hidden pixels are never shaded (an opaque full-screen app over the X
+ * mirror leaves only the strips of the mirror around it). */
+struct irect {
+    int x0, y0, x1, y1;
+};
+#define MAX_PIECES 16
+
+/* An opaque node covers the pixels of its rectangle that it fully covers
+ * (the interior of its destination, in whole pixels). */
+static int occluder(const struct renderer *r, const struct mg_node *n,
+                    texture_lookup lookup, void *ctx, struct irect *out) {
+    if (n->alpha < 1 || n->radius > 0 || n->dst_w <= 0 || n->dst_h <= 0)
+        return 0;
+    if (n->kind == MG_NODE_IMAGE) {
+        const struct texture *t = lookup(ctx, n->surface);
+        if (!t || !t->opaque)
+            return 0;
+    } else if (n->kind != MG_NODE_FILL) {
+        return 0;
+    }
+    out->x0 = (int)ceilf(fmaxf(n->dst_x, 0));
+    out->y0 = (int)ceilf(fmaxf(n->dst_y, 0));
+    out->x1 = (int)floorf(fminf(n->dst_x + n->dst_w, (float)r->width));
+    out->y1 = (int)floorf(fminf(n->dst_y + n->dst_h, (float)r->height));
+    return out->x1 > out->x0 && out->y1 > out->y0;
+}
+
+/* Cuts `cut` out of the pieces; returns the new count, or -1 if there would
+ * be too many pieces (then the node is simply drawn whole). */
+static int subtract(struct irect *p, int n, struct irect cut) {
+    struct irect out[MAX_PIECES];
+    int m = 0;
+    for (int i = 0; i < n; i++) {
+        struct irect a = p[i];
+        if (cut.x0 >= a.x1 || cut.x1 <= a.x0 || cut.y0 >= a.y1 || cut.y1 <= a.y0) {
+            if (m == MAX_PIECES)
+                return -1;
+            out[m++] = a;
+            continue;
+        }
+        int y0 = a.y0 > cut.y0 ? a.y0 : cut.y0, y1 = a.y1 < cut.y1 ? a.y1 : cut.y1;
+        struct irect parts[4] = {
+            {a.x0, a.y0, a.x1, cut.y0}, /* above */
+            {a.x0, cut.y1, a.x1, a.y1}, /* below */
+            {a.x0, y0, cut.x0, y1},     /* left */
+            {cut.x1, y0, a.x1, y1},     /* right */
+        };
+        for (int k = 0; k < 4; k++) {
+            if (parts[k].x1 <= parts[k].x0 || parts[k].y1 <= parts[k].y0)
+                continue;
+            if (m == MAX_PIECES)
+                return -1;
+            out[m++] = parts[k];
+        }
+    }
+    memcpy(p, out, (size_t)m * sizeof *out);
+    return m;
+}
+
+/* The visible pieces of the screen rectangle (x, y, w, h) under nodes
+ * after `after` (all nodes for the base: after = -1). Returns the count
+ * (0: hidden), or -1 to draw it whole. */
+static int pieces(const struct renderer *r, float x, float y, float w, float h,
+                  const struct mg_node *nodes, uint32_t count, int64_t after,
+                  const struct irect *occ, const int *has_occ, struct irect *p) {
+    p[0] = (struct irect){(int)floorf(fmaxf(x, 0)), (int)floorf(fmaxf(y, 0)),
+                          (int)ceilf(fminf(x + w, (float)r->width)),
+                          (int)ceilf(fminf(y + h, (float)r->height))};
+    int n = 1;
+    for (uint32_t j = (uint32_t)(after + 1); j < count && n > 0; j++)
+        if (has_occ[j] && (n = subtract(p, n, occ[j])) < 0)
+            return -1;
+    (void)nodes;
+    return n;
+}
+
+/* Draws the current program's quad once per piece (scissored), or whole. */
+static uint64_t draw_pieces(const struct irect *p, int n, uint64_t whole) {
+    if (n < 0) {
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        return whole;
+    }
+    uint64_t area = 0;
+    glEnable(GL_SCISSOR_TEST);
+    for (int i = 0; i < n; i++) {
+        /* GL row 0 is pixel row 0 (see the vertex shader). */
+        glScissor(p[i].x0, p[i].y0, p[i].x1 - p[i].x0, p[i].y1 - p[i].y0);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        area += (uint64_t)(p[i].x1 - p[i].x0) * (uint64_t)(p[i].y1 - p[i].y0);
+    }
+    glDisable(GL_SCISSOR_TEST);
+    return area;
 }
 
 uint64_t render_frame(struct renderer *r, const struct texture *base,
@@ -154,57 +252,66 @@ uint64_t render_frame(struct renderer *r, const struct texture *base,
                       texture_lookup lookup, void *ctx) {
     float W = (float)r->width, H = (float)r->height;
     uint64_t fragments = 0;
+    enum { MAX_OCC = 64 };
+    struct irect occ[MAX_OCC];
+    int has_occ[MAX_OCC];
+    int culling = !r->no_culling && count <= MAX_OCC;
+    for (uint32_t i = 0; culling && i < count; i++)
+        has_occ[i] = occluder(r, &nodes[i], lookup, ctx, &occ[i]);
+    struct irect p[MAX_PIECES];
+    int n;
     glViewport(0, 0, r->width, r->height);
     glDisable(GL_BLEND);
+    /* Always cleared first: a tiler then never loads the old frame, and
+     * whatever no node shows is black. */
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
     if (base) {
-        draw_image(r, base, 0, 0, (float)base->width, (float)base->height, 0,
-                   0, W, H, 1, 1, 0, 0, W, H);
-        fragments += (uint64_t)(W * H);
-    } else {
-        glClearColor(0, 0, 0, 1);
-        glClear(GL_COLOR_BUFFER_BIT);
+        n = culling ? pieces(r, 0, 0, W, H, nodes, count, -1, occ, has_occ, p) : -1;
+        if (n && set_image(r, base, 0, 0, (float)base->width, (float)base->height, 0, 0, W,
+                           H, 1, 1, 0, 0, W, H))
+            fragments += draw_pieces(p, n, (uint64_t)(W * H));
     }
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     int blending = 0;
     for (uint32_t i = 0; i < count; i++) {
-        const struct mg_node *n = &nodes[i];
-        if (n->alpha <= 0 || n->dst_w <= 0 || n->dst_h <= 0)
+        const struct mg_node *nd = &nodes[i];
+        if (nd->alpha <= 0 || nd->dst_w <= 0 || nd->dst_h <= 0)
             continue;
-        uint64_t area = visible(r, n->dst_x, n->dst_y, n->dst_w, n->dst_h);
+        uint64_t area = visible(r, nd->dst_x, nd->dst_y, nd->dst_w, nd->dst_h);
         if (!area)
             continue;
-        if (n->kind == MG_NODE_IMAGE) {
-            const struct texture *t = lookup(ctx, n->surface);
-            if (!t)
+        const struct texture *t = NULL;
+        if (nd->kind == MG_NODE_IMAGE && !(t = lookup(ctx, nd->surface)))
+            continue;
+        if (nd->kind != MG_NODE_IMAGE && nd->kind != MG_NODE_FILL)
+            continue;
+        n = culling ? pieces(r, nd->dst_x, nd->dst_y, nd->dst_w, nd->dst_h, nodes, count,
+                             i, occ, has_occ, p)
+                    : -1;
+        if (!n)
+            continue;
+        int blend = nd->alpha < 1 || nd->radius > 0 || (t && !t->opaque);
+        if (blend != blending) {
+            (blend ? glEnable : glDisable)(GL_BLEND);
+            blending = blend;
+        }
+        if (t) {
+            if (!set_image(r, t, nd->src_x, nd->src_y, nd->src_w, nd->src_h, nd->dst_x,
+                           nd->dst_y, nd->dst_w, nd->dst_h, nd->alpha, nd->dim, nd->radius,
+                           nd->flags & MG_NODE_SMOOTH, W, H))
                 continue;
-            int blend = n->alpha < 1 || n->radius > 0 || !t->opaque;
-            if (blend != blending) {
-                (blend ? glEnable : glDisable)(GL_BLEND);
-                blending = blend;
-            }
-            draw_image(r, t, n->src_x, n->src_y, n->src_w, n->src_h, n->dst_x,
-                       n->dst_y, n->dst_w, n->dst_h, n->alpha, n->dim,
-                       n->radius, n->flags & MG_NODE_SMOOTH, W, H);
-        } else if (n->kind == MG_NODE_FILL) {
-            int blend = n->alpha < 1 || n->radius > 0;
-            if (blend != blending) {
-                (blend ? glEnable : glDisable)(GL_BLEND);
-                blending = blend;
-            }
+        } else {
             glUseProgram(r->fill.id);
-            glUniform4f(r->fill.dst, n->dst_x, n->dst_y, n->dst_w, n->dst_h);
+            glUniform4f(r->fill.dst, nd->dst_x, nd->dst_y, nd->dst_w, nd->dst_h);
             glUniform4f(r->fill.src, 0, 0, 1, 1);
             glUniform2f(r->fill.screen, W, H);
-            glUniform3f(r->fill.color, ((n->color >> 16) & 255) / 255.f,
-                        ((n->color >> 8) & 255) / 255.f,
-                        (n->color & 255) / 255.f);
-            glUniform1f(r->fill.alpha, n->alpha);
-            glUniform1f(r->fill.radius, n->radius);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        } else {
-            continue;
+            glUniform3f(r->fill.color, ((nd->color >> 16) & 255) / 255.f,
+                        ((nd->color >> 8) & 255) / 255.f, (nd->color & 255) / 255.f);
+            glUniform1f(r->fill.alpha, nd->alpha);
+            glUniform1f(r->fill.radius, nd->radius);
         }
-        fragments += area;
+        fragments += draw_pieces(p, n, area);
     }
     return fragments;
 }
@@ -215,6 +322,7 @@ void render_copy(struct renderer *r, const struct texture *from, float sx,
     glViewport(0, 0, width, height);
     glDisable(GL_BLEND);
     int scaled = (int)sw != width || (int)sh != height;
-    draw_image(r, from, sx, sy, sw, sh, 0, 0, (float)width, (float)height, 1, 1,
-               radius, scaled, (float)width, (float)height);
+    if (set_image(r, from, sx, sy, sw, sh, 0, 0, (float)width, (float)height, 1, 1,
+                  radius, scaled, (float)width, (float)height))
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }

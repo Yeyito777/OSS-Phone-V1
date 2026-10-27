@@ -16,6 +16,7 @@ struct texture {
 
 struct renderer {
     int width, height;
+    int no_culling; /* draw hidden parts too (MOON_GPU_NO_CULLING=1, tests) */
     GLuint vao, vbo;
     GLuint sampler_nearest, sampler_linear;
     struct image_prog {

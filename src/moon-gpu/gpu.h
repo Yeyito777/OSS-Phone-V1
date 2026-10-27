@@ -3,6 +3,7 @@
 #ifndef MOON_GPU_GPU_H
 #define MOON_GPU_GPU_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
