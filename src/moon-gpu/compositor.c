@@ -1713,13 +1713,14 @@ int main(int argc, char **argv) {
         }
         if (c.client_fd >= 0 && n > 0 && (p[2].revents & (POLLIN | POLLHUP | POLLERR)))
             read_client(&c);
-        maybe_submit(&c);
+        /* Before the submit, so the switch shows at once. */
         if (toggle_planes) {
             toggle_planes = 0;
             c.planes = !c.planes;
             c.dirty = c.cur_valid;
             LOG("planes %s", c.planes ? "on" : "off");
         }
+        maybe_submit(&c);
         if (wb_shot) {
             wb_shot = 0;
             char path[256];
