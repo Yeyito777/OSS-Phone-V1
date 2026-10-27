@@ -778,7 +778,9 @@ impl WaylandApps {
                     if let Some(timing) = self.timing.as_mut()
                         && let Some(rx) = timing.commit_rx.take()
                     {
-                        timing.sent.push((serial, rx, now_ns(), gpu.upload_times().0));
+                        timing
+                            .sent
+                            .push((serial, rx, now_ns(), gpu.upload_times().0));
                     }
                     for (key, buffer, shm) in sent {
                         self.presenting.push((serial, key, buffer, shm));
@@ -860,7 +862,10 @@ impl WaylandApps {
             Some((_, behind)) => std::mem::take(behind),
             None => rects.to_vec(),
         };
-        let rects = if rects.iter().any(|rect| rect.width >= shm.width && rect.height >= shm.height) {
+        let rects = if rects
+            .iter()
+            .any(|rect| rect.width >= shm.width && rect.height >= shm.height)
+        {
             rects.to_vec()
         } else {
             behind
@@ -1487,7 +1492,9 @@ mod tests {
         let mut rects = Vec::new();
         add_damage(&mut rects, &[wayland::Rect::new(10, 10, 5, 5)]);
         assert_eq!(rects.len(), 1);
-        let many: Vec<_> = (0..8).map(|i| wayland::Rect::new(i * 20, 100, 4, 4)).collect();
+        let many: Vec<_> = (0..8)
+            .map(|i| wayland::Rect::new(i * 20, 100, 4, 4))
+            .collect();
         add_damage(&mut rects, &many);
         assert_eq!(rects, vec![wayland::Rect::new(0, 10, 144, 94)]);
     }

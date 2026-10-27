@@ -1255,7 +1255,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         conn.flush()?;
         let mut retry_sleep = false;
         // A directly shown Wayland app's buffers leave the screen with it.
-        let wayland_shown = wayland.as_ref().is_some_and(|server| server.showing_direct());
+        let wayland_shown = wayland
+            .as_ref()
+            .is_some_and(|server| server.showing_direct());
         match suspend_coordinator.next_action(state.screen_awake) {
             SuspendAction::None => {}
             SuspendAction::Sleep
