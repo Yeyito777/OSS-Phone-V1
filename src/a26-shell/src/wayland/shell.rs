@@ -199,9 +199,7 @@ impl Dispatch<XdgSurface, SurfaceKey> for WlState {
                         xdg_surface: resource.clone(),
                         xdg_toplevel: toplevel,
                         sent: None,
-                        // The X root covers the panel, active for good.
-                        wanted: xwayland
-                            .then_some((state.output_size.0, state.output_size.1, true, false)),
+                        wanted: None,
                         xwayland,
                     },
                 );
@@ -380,6 +378,15 @@ pub(crate) fn on_commit(state: &mut WlState, surface: &WlSurface) {
         .find(|(_, toplevel)| toplevel.key == key)
         .map(|(id, toplevel)| (*id, toplevel.wanted));
     let popup = info.popup.clone();
+    // Xwayland's root is never configured, so Xwayland never maps it and
+    // never copies the root into buffers for it (two, alternating, a CPU
+    // copy of every damaged frame): Moon shows the X root through the
+    // mirror. X input and rendering do not need the root mapped.
+    if let Some((id, _)) = toplevel
+        && state.toplevels.get(&id).is_some_and(|t| t.xwayland)
+    {
+        return;
+    }
     if let Some((id, wanted)) = toplevel {
         let (width, height, activated, suspended) =
             wanted.unwrap_or((state.toplevel_size.0, state.toplevel_size.1, false, false));

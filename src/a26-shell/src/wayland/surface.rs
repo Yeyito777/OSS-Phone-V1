@@ -306,7 +306,11 @@ fn commit(state: &mut WlState, resource: &WlSurface) {
     let scale = data.scale;
     let mut event = None;
     if data.xwayland {
-        // Moon mirrors the X root instead: the buffer is not read.
+        // Moon mirrors the X root instead: the buffer is not read, and its
+        // frame callbacks are never answered, so after its first commit
+        // Xwayland stops copying the root into buffers (it has no
+        // configure either, see shell::on_commit). X clients pace
+        // themselves: Chromium animates at its own rate either way.
         if let Some(Some(buffer)) = attached {
             buffer.release();
         }

@@ -151,10 +151,11 @@ pub enum Event {
 pub struct ClientInfo {
     pub pid: Option<u32>,
     /// Moon's own Xwayland (milestone 4): the X server Moon's X side runs
-    /// on, not an app. Its one toplevel is the X root at the panel's full
-    /// size in pixels (scale 1); it gets touch, and a keyboard that only
-    /// ever enters its root (keys reach X through XTEST, as with Xorg); and
-    /// nothing shows its buffers: Moon still mirrors the X root.
+    /// on, not an app. Its one toplevel is the X root, sized by Moon's
+    /// -geometry, in pixels (scale 1) and never configured, so never mapped:
+    /// Moon still mirrors the X root, and Xwayland makes no buffers for it.
+    /// It gets touch, and a keyboard that only ever enters its root (keys
+    /// reach X through XTEST, as with Xorg).
     pub xwayland: bool,
 }
 
@@ -381,31 +382,6 @@ impl WaylandServer {
             .filter(|key| self.state.surface_by_key(*key).is_some())
     }
 
-    /// Xwayland's frame callbacks fire at the panel's pace (its pixels
-    /// reach the panel through the X mirror, not its buffers).
-    pub fn xwayland_frame_done(&mut self, time_ms: u32) {
-        let keys: Vec<SurfaceKey> = self
-            .state
-            .surfaces
-            .values()
-            .filter(|data| data.xwayland && !data.frame_callbacks.is_empty())
-            .map(|data| data.key)
-            .collect();
-        for key in keys {
-            surface::frame_done(&mut self.state, key, time_ms);
-        }
-        if !self.state.surfaces.is_empty() {
-            self.flush();
-        }
-    }
-
-    /// Whether Xwayland waits for a frame callback.
-    pub fn xwayland_wants_frame(&self) -> bool {
-        self.state
-            .surfaces
-            .values()
-            .any(|data| data.xwayland && !data.frame_callbacks.is_empty())
-    }
 
     pub fn flush(&mut self) {
         if let Err(error) = self.display.flush_clients() {

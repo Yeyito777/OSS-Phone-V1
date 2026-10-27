@@ -443,10 +443,22 @@ way back is `moon-phone.sh reboot`. To check there:
 - screen off and on
 - frame pacing
 
-**Measured: rootful presentation is free.** Xwayland's CPU while the
-Browser scrolls is the same (13 to 15% on whale) whether or not its root
-is configured and presented. Its shm pixmaps go to Wayland without a real
-copy, so M4a has no hidden extra copy on top of the mirror.
+**Xwayland's own root copy is switched off.** Rootful Xwayland double-buffers
+its root: on every damaged frame it copies the damage into one of two
+alternating `wl_shm` buffers (seen while the Browser scrolls: 56 attaches
+in 3 s). It even does this without a configure. On the phone that would
+be a second CPU copy (about 1.6 ms per full frame) beside the mirror's,
+for buffers nobody shows.
+- Moon now never configures Xwayland's root and never answers its frame
+  callbacks.
+- So after one buffer at startup Xwayland makes no more copies (0 attaches
+  while scrolling).
+- X input, rendering and focus don't need the root mapped. Chromium's
+  `requestAnimationFrame` still runs at 59.9 fps with or without the
+  callbacks.
+- An earlier "presentation is free" measurement was wrong. The Browser in
+  it had crashed with SIGBUS, because whale's `/tmp` quota filled up, so
+  nothing was drawing. The test Browser now gets a private `TMPDIR`.
 
 ### dmabuf-backed wl_shm pools (built, opt-in per client)
 

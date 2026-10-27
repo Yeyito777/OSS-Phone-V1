@@ -1250,7 +1250,6 @@ impl WaylandApps {
     /// copied hears `done` once per refresh, so animating clients draw at
     /// the panel's rate and stop drawing while hidden or the screen is off.
     pub fn tick(&mut self, now: Instant, screen_awake: bool) -> Option<Instant> {
-        let xwayland = screen_awake && self.server.xwayland_wants_frame();
         let ready: Vec<SurfaceKey> = self
             .proxies
             .iter()
@@ -1262,16 +1261,13 @@ impl WaylandApps {
             })
             .map(|(key, _)| *key)
             .collect();
-        if ready.is_empty() && !xwayland {
+        if ready.is_empty() {
             return None;
         }
         if now < self.next_frame {
             return Some(self.next_frame);
         }
         let time = wayland::now_ms();
-        if xwayland {
-            self.server.xwayland_frame_done(time);
-        }
         if let Some(timing) = self.timing.as_mut() {
             timing.frame_done();
         }

@@ -648,7 +648,7 @@ mod clipboard {
 }
 
 #[test]
-fn xwayland_root_is_the_panel_in_pixels_with_touch_and_its_keyboard() {
+fn xwayland_root_is_never_mapped_and_takes_touch_and_its_keyboard() {
     let mut h = Harness::with("xwayland", 3, true);
     let qh = h.queue.handle();
     // Xwayland binds its keyboard before or after its root; either way the
@@ -671,34 +671,13 @@ fn xwayland_root_is_the_panel_in_pixels_with_touch_and_its_keyboard() {
     let _toplevel = xdg.get_toplevel(&qh, ());
     surface.commit();
     h.pump();
-    // Scale 1 and the whole panel, fullscreen and active; not an app.
+    // Scale 1; never configured (Moon mirrors the X root), not an app.
     assert_eq!(h.client.output_scale, Some(1));
     assert_eq!(h.client.preferred_scale, Some(1));
-    let (width, height, states) = h.client.configures.first().cloned().unwrap();
-    assert_eq!((width, height), (1080, 2340));
-    assert!(states.contains(&2) && states.contains(&4));
+    assert!(h.client.configures.is_empty());
     assert!(h.server.take_events().is_empty());
     assert_eq!(h.client.keyboard_enters, 1);
     assert!(h.server.xwayland_root().is_some());
-    xdg.ack_configure(*h.client.surface_configures.last().unwrap());
-
-    // Its buffers come straight back; its frames follow the panel.
-    let size = 1080 * 2340 * 4;
-    let fd = memfd(size as usize);
-    let pool = h.client.shm.as_ref().unwrap().create_pool(fd.as_fd(), size, &qh, ());
-    let buffer = pool.create_buffer(0, 1080, 2340, 1080 * 4, wl_shm::Format::Xrgb8888, &qh, ());
-    surface.attach(Some(&buffer), 0, 0);
-    surface.damage_buffer(0, 0, 1080, 2340);
-    surface.frame(&qh, ());
-    surface.commit();
-    h.pump();
-    assert_eq!(h.client.released, 1);
-    assert!(h.server.take_events().is_empty());
-    assert!(h.server.xwayland_wants_frame());
-    h.server.xwayland_frame_done(7);
-    h.pump();
-    assert_eq!(h.client.frames_done, 1);
-    assert!(!h.server.xwayland_wants_frame());
 
     // Touches land on the root in pixels.
     assert!(h.server.xwayland_touch_down(5, 540.0, 1000.0, 1));
