@@ -1,14 +1,9 @@
 # Recovery-slot test runbook: canary v2, then Moon and stage 2 from the slot
 
-> ✅ **Ready; waiting for the user** (2026-10-26). `oss-rebootmode-clear.ko`
-> v2 (sha256 `7130cf3c…`, branch `rebootmode-clear` 0a40464, merging to main)
-> passed its on-device re-test: on a normal boot `require_mode=1` cleanly
-> refused (`-ENOENT`, mode bits 0) and a dry run read 0x810 = 0x48. v2 clears
-> only the mode bits 2:0 of reboot-cmd, verifies the read-back (`-EIO` unless
-> mode 0, magic 0x4E, panic-inform 0x12345670) and logs `before:`/`after:` then
-> `OK:`/`FAIL:`. The canary loads it with `require_mode=1` (and treats "already
-> loaded" as failure), so it panics only after this load cleared a real mode;
-> oss-init and oss-pid1 load it with default parameters.
+> ✅ **Run 2026-10-26: canary PASS (hands-free return), recovery-slot Moon PASS,
+> stage-2 containment WORKS but Moon fails in the container (Mali PID-namespace
+> bug) and oss-init has two SELinux-related defects.** Results and fixes:
+> `ONDEVICE-RESULTS-20261026.md`. Stock recovery restored; BOOT untouched.
 
 ## Why it is built this way (history in one paragraph)
 `adb reboot recovery` writes a sticky `boot-recovery` BCB, so recovery is
