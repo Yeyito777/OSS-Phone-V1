@@ -58,6 +58,12 @@ const CLOSE_WAIT: Duration = Duration::from_millis(500);
 /// The sensor integrates for up to ~0.2 s: a lit reading counts only if the
 /// backlight was steady that long before it.
 const SETTLE_NS: u64 = 300_000_000;
+/// Automatic brightness is offered to the UI (`sensor: ok`) only once its
+/// compensated readings meet the acceptance target (spec §7). Until then the
+/// sensor runs, the model calibrates and readings are logged in normal use,
+/// `sensor` reports `unavailable` (the UI hides the toggle) and `brightness
+/// auto on` over the control socket still works, for testing.
+const AUTO_READY: bool = false;
 /// No reading for this long while on: the sensor is reported unavailable.
 const SILENT_LIMIT: Duration = Duration::from_secs(20);
 /// The CSV log of readings rotates past this size.
@@ -525,7 +531,7 @@ impl BrightnessControl {
             auto: self.auto.settings.auto,
             auto_offset: self.auto.settings.auto_offset,
             lux: self.auto.lux(),
-            sensor: if self.sensor.is_none() || !self.sensor_ok {
+            sensor: if self.sensor.is_none() || !self.sensor_ok || !AUTO_READY {
                 SensorState::Unavailable
             } else {
                 self.auto.sensor
