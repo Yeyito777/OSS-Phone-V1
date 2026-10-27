@@ -1471,6 +1471,20 @@ impl Renderer {
 
     fn frame(&mut self, state: &ShellState, t: Instant) -> Frame {
         let mut nodes = Vec::new();
+        if let Some(square) = state.light_probe.filter(|_| state.screen_awake) {
+            for (dst, color) in [(SCREEN, BLACK), (square, WHITE)] {
+                nodes.push(Node::Fill {
+                    dst,
+                    color,
+                    alpha: 1.0,
+                    radius: 0.0,
+                });
+            }
+            return Frame {
+                base: Some(self.wall),
+                nodes,
+            };
+        }
         if !state.screen_awake {
             nodes.push(Node::Fill {
                 dst: SCREEN,

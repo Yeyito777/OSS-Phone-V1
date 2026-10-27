@@ -45,6 +45,9 @@ pub enum Command {
     Power,
     ScreenOff,
     ScreenOn,
+    /// `light-probe X Y SIZE` / `light-probe off`: a debug frame, black with
+    /// one white square, for locating the light sensor under the panel.
+    LightProbe(Option<crate::gfx::RectF>),
     LeaseAcquire(AppId, LeaseKind, u64),
     LeaseRelease(AppId, LeaseKind),
     SimulateMemoryPressure,
@@ -314,6 +317,21 @@ fn parse_command(line: &str) -> Result<Command, String> {
                 },
             ),
             None => return Err("haptic requires selection, light, medium or error".into()),
+        },
+        "light-probe" => match parts.next() {
+            Some("off") => Command::LightProbe(None),
+            Some(x) => {
+                let number = |text: Option<&str>| -> Result<f32, String> {
+                    text.and_then(|t| t.parse::<f32>().ok())
+                        .filter(|v| v.is_finite() && (0.0..=4000.0).contains(v))
+                        .ok_or_else(|| "light-probe requires X Y SIZE or off".to_string())
+                };
+                let x = number(Some(x))?;
+                let y = number(parts.next())?;
+                let size = number(parts.next())?;
+                Command::LightProbe(Some(crate::gfx::RectF::new(x, y, size, size)))
+            }
+            None => return Err("light-probe requires X Y SIZE or off".into()),
         },
         "screen" => match parts.next() {
             Some("off") => Command::ScreenOff,

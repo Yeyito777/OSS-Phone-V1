@@ -282,6 +282,8 @@ pub struct ShellState {
     /// write the backlight, and restores its level when this clears.
     #[allow(dead_code)]
     pub idle_dimmed: bool,
+    /// Debug: the light-sensor probe frame (`light-probe`), drawn over all.
+    pub light_probe: Option<crate::gfx::RectF>,
     pub view: View,
     pub screen_awake: bool,
     pub pin_input: Vec<u8>,
@@ -398,6 +400,7 @@ impl ShellState {
             display_requests: Vec::new(),
             display_view: None,
             idle_dimmed: false,
+            light_probe: None,
             view: if start_locked {
                 View::Locked
             } else {

@@ -3258,6 +3258,10 @@ fn apply_command(
         }
         Command::ScreenOff => state.screen_off(),
         Command::ScreenOn => state.screen_on(),
+        Command::LightProbe(rect) => {
+            state.light_probe = rect;
+            state.redraw = true;
+        }
         Command::LeaseAcquire(_, _, _)
         | Command::LeaseRelease(_, _)
         | Command::SimulateMemoryPressure
