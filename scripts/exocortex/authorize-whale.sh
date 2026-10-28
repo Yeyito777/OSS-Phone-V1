@@ -65,10 +65,12 @@ echo "  bridge at $(git rev-parse --short HEAD)"
 EOF
 
     echo "== $WHALE: authorized_keys"
-    printf '%s\n' "$entry" | ssh "$WHALE" bash -s -- "$TAG" <<'EOF'
+    # The script comes on stdin, so the entry travels as an argument (base64:
+    # it holds quotes and spaces).
+    ssh "$WHALE" bash -s -- "$TAG" "$(printf '%s' "$entry" | base64 | tr -d '\n')" <<'EOF'
 set -euo pipefail
 tag=$1
-entry="$(cat)"
+entry="$(printf '%s' "$2" | base64 -d)"
 keys="$HOME/.ssh/authorized_keys"
 cp -p "$keys" "$keys.bak-$(date +%Y%m%d%H%M%S)"
 { grep -v " $tag\$" "$keys" || true; printf '%s\n' "$entry"; } >"$keys.new"

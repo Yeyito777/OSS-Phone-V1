@@ -76,7 +76,7 @@ put exocortex-keeper.sh /data/adb/exocortex/exocortex-keeper.sh 0700
 put exocortex-ns.sh /data/adb/exocortex/exocortex-ns.sh 0700
 put 95-exocortex.sh /data/adb/service.d/95-exocortex.sh 0755
 for name in exocortex-supervisor exocortexd android-sh; do put \$name \$root/usr/local/bin/\$name 0755; done
-# Not under /tmp: the daemon's namespace mounts its own /tmp.
+# Not under /tmp: the daemon namespace mounts its own /tmp.
 mkdir -p \$root/var/lib/exocortex-keeper/install
 cp \$stage/phone-setup.sh \$stage/system.md \$root/var/lib/exocortex-keeper/install/
 echo installed"
