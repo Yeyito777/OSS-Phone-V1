@@ -228,8 +228,39 @@ else
     exit 1
 fi
 if [[ "$REBOOT" == 1 ]]; then
-    su_run 'sh /data/adb/moon/moon-power.sh reboot' || adb -s "$SERIAL" reboot
-    echo "rebooting into Moon"
+    # moon-power stops Moon's services and reboots normally; adb drops when it
+    # does, which is the success signal. Only a phone that never goes away
+    # gets a plain adb reboot.
+    old_boot="$(su_run 'cat /proc/sys/kernel/random/boot_id')"
+    su_run "$ROOT/busybox.static chroot $ROOT /opt/a26-shell/bin/moon-power reboot" || true
+    gone=0
+    for _ in $(seq 1 90); do
+        adb -s "$SERIAL" get-state >/dev/null 2>&1 || { gone=1; break; }
+        sleep 1
+    done
+    if [[ "$gone" == 0 ]]; then
+        echo "moon-power did not reboot the phone within 90 s; adb reboot" >&2
+        adb -s "$SERIAL" reboot
+    fi
+    echo "rebooting; waiting for Moon"
+    ready=0
+    for _ in $(seq 1 60); do
+        sleep 5
+        adb -s "$SERIAL" get-state >/dev/null 2>&1 || continue
+        [[ "$(su_run 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null)" != "$old_boot" ]] || continue
+        # Direct boots report moon.session.ready; a legacy takeover does not,
+        # so Moon's control socket counts too.
+        if [[ "$(su_run "getprop moon.session.ready; [ -S $ROOT/run/a26-shell/control.sock ] && echo socket" 2>/dev/null)" == *[1t]* ]]; then
+            ready=1
+            break
+        fi
+    done
+    if [[ "$ready" == 1 ]]; then
+        echo "Moon is up after the reboot"
+    else
+        echo "the phone did not report Moon ready within 5 minutes of the reboot" >&2
+        exit 1
+    fi
 else
     echo "installed; changes take effect at the next boot (or: --reboot)"
 fi
