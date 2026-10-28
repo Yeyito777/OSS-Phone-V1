@@ -152,6 +152,17 @@ nothing while `init.svc.exocortex` is running. Only overlay files change; the ra
 with `flash-boot-inplace.sh` like the direct-boot image, attended. Until
 then the keeper pair above does the same job from `/data`.
 
+## The app and notifications
+
+Moon's Exocortex app (`a26-system --app exocortex`, on the home screen) is a
+full client of the daemon's socket: conversations and folders, history,
+streaming replies with markdown, collapsed tool calls, a model picker, Stop.
+`exocortex-notify`, kept by the same keeper, posts a moon-notifyd
+notification (app `exocortex`, one per conversation) when a turn you were
+waiting on finishes or a goal needs you, unless the app shows that
+conversation; tapping it opens the app there. Details: a26-system
+`docs/exocortex.md`.
+
 ## What the agent can do
 
 Its tools run as root in the chroot, in the daemon's namespace.
@@ -174,7 +185,10 @@ is the agent's own machine, root by design.
 
 ## Limits
 
-- The phone deep-suspends with the screen off, and a running turn pauses
-  with it (the /proxy link reconnects on wake and the turn goes on).
+- While any conversation is working, exocortex-notify holds Moon's
+  `transfer` lease for the `exocortex` app (renewed every 60 s), so the phone
+  does not deep-suspend mid-turn with the screen off; it releases it when
+  nothing runs. In Android mode there is no lease: Android's own sleep
+  applies.
 - There is no compiler on the phone: Rust and NDK components are built on
   the user's machines (scripts here), the agent can install what they build.

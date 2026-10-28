@@ -27,8 +27,9 @@ installation's own story is OSS-Phone-V1 `docs/EXOCORTEX.md`.
   `/var/log/exocortex/`.
 - Power off or restart: `/opt/a26-shell/bin/moon-power poweroff|reboot`
   (docs/power.md); never `reboot` directly.
-- The phone deep-suspends with the screen off: a long job can pause until
-  the screen wakes.
+- The phone deep-suspends with the screen off, except while a conversation
+  is working (exocortex-notify holds Moon's lease); background jobs of
+  yours that outlive a turn can pause until the screen wakes.
 
 ## Installing and updating OSS Phone components
 Builds happen off the phone (Rust/NDK cross builds on the user's machines;
