@@ -25,7 +25,10 @@ ignored):
 1. Sets `moon.boot.mode=shutdown`: nothing restarts or falls back to Android
    from here on (the boot supervisor, the notifyd and audio keepers and the
    init fallback trigger all stand down), and stops the boot supervisor.
-2. Stops, in order, each bounded (TERM, then KILL after a few seconds):
+2. Starts the graceful stop of the Exocortex daemon (docs/EXOCORTEX.md;
+   running turns replay after boot) alongside the rest, and waits for it
+   (up to 25 s) before step 3. Then stops, in order, each bounded (TERM,
+   then KILL after a few seconds):
    Moon (`quit` over its control socket first), moon-notifyd, moon-telephonyd
    (`moon-telephony-stop.sh`, which takes mobile data down), the audio keeper
    and native audio (`moon-audio-stop.sh`, without the Android-handback

@@ -17,13 +17,14 @@ shell and window manager written in Rust (`a26-shell`). Release notes:
 
 Moon draws through its GPU compositor (`moon-compositor`) on a headless Xorg
 session. It provides a lock screen with clock and passcode keypad, a home
-screen with widgets and a dock, icon-zoom app transitions, an app switcher with
+screen with widgets, an app grid and a dock, icon-zoom app transitions, an app switcher with
 swipe-to-close, notifications (banners, a notification centre, the lock
 screen), Control Centre, alarms and timers, a power menu, low-battery and
 charging screens, an iPhone-style system keyboard, external X11 app lifecycle
 management, physical power/volume key policy, and a root-only Unix-socket
-control interface over ADB. The System, Phone and Messages apps come from
-[a26-system](https://github.com/Yeyito777/a26-system).
+control interface over ADB. The System, Phone, Messages and Exocortex apps come from
+[a26-system](https://github.com/Yeyito777/a26-system); Exocortex, the
+user's AI agent, runs on the phone itself ([docs/EXOCORTEX.md](docs/EXOCORTEX.md)).
 
 > [!WARNING]
 > This is research software, not a turnkey custom ROM. The reference setup uses

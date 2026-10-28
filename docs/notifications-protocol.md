@@ -120,7 +120,7 @@ parse them.
 
 | Field | Rules |
 | --- | --- |
-| `app` | required; the posting app's id, `[a-z0-9-]{1,32}` (Moon's app ids: `system`, `browser`; `moon` for Moon's own; `moon-notifyd` for the daemon's; reserved: `phone` for the Phone app, `messages` for the Messages app) |
+| `app` | required; the posting app's id, `[a-z0-9-]{1,32}` (Moon's app ids: `system`, `browser`, `exocortex`; `moon` for Moon's own; `moon-notifyd` for the daemon's; reserved: `phone` for the Phone app, `messages` for the Messages app) |
 | `tag` | optional, `[A-Za-z0-9._-]{1,64}`; a post with the same `app`+`tag` **replaces** the old one (same id, `replaced: true`) instead of adding |
 | `title` | required, 1–120 chars after trimming |
 | `body` | optional, ≤ 1000 chars; plain text, `\n` allowed |

@@ -94,7 +94,17 @@ setprop moon.boot.mode shutdown
 delay="$(cat "$RUNTIME/power-test-delay" 2>/dev/null)"
 case "$delay" in ''|*[!0-9]*) ;; *) log "test delay ${delay}s"; sleep "$delay" ;; esac
 
-# 2. Services, in order.
+# 2. Services, in order. The Exocortex daemon (docs/EXOCORTEX.md) needs
+# only the disk: its graceful stop (running turns settle and replay at the
+# next boot) runs alongside the rest and is waited for before sync. Its
+# keeper stands down by itself on moon.boot.mode=shutdown.
+EXOCORTEX_KEEPER=/data/adb/exocortex/exocortex-keeper.sh
+exocortex_pid=''
+if [ -r "$EXOCORTEX_KEEPER" ]; then
+    log 'stopping Exocortex'
+    "$BB" timeout -s KILL 30 /system/bin/sh "$EXOCORTEX_KEEPER" shutdown 25 >/dev/null 2>&1 &
+    exocortex_pid=$!
+fi
 log 'asking Moon to quit'
 in_chroot 3 /opt/a26-shell/bin/a26-shellctl quit >/dev/null 2>&1
 stop_exe "$ROOT/opt/a26-shell/bin/a26-shell" 3
@@ -117,6 +127,11 @@ fi
 stop_exe "$ROOT/usr/libexec/Xorg" 3
 stop_exe "$ROOT/usr/bin/Xwayland" 3
 stop_exe "$ROOT/opt/moon-gpu/moon-compositor" 3
+
+if [ -n "$exocortex_pid" ]; then
+    wait "$exocortex_pid"
+    log "Exocortex stopped rc=$?"
+fi
 
 # 3. A normal Android shutdown.
 sync
