@@ -49,7 +49,7 @@ done
 # 3. Moon's runtime, live. Its session /run (a tmpfs Moon's chroot session
 # mounts) as a whole, and each socket directory where clients expect it.
 "$BB" ln -s "$LIVE$ROOT/run" "$ROOT/run/moon-session"
-for name in a26-shell moon-notify a26-wifi moon-wayland; do
+for name in a26-shell moon-notify a26-wifi moon-wayland exocortex-app; do
     "$BB" ln -s "$LIVE$ROOT/run/$name" "$ROOT/run/$name"
 done
 for name in moon-audio moon-suspend moon-telephony moon-gpu; do
