@@ -60,7 +60,9 @@ def main(run: Path) -> int:
               f"{life[-1]['threads']:>3}  {fds[-1]:3}  {fd_h:+5.1f}")
         if rss_h > 1024 or fd_h > 2:
             worst.append(f"{name}: rss {rss_h:+.0f} kB/h, fds {fd_h:+.1f}/h")
-        if len(pids) > 1:
+        # udhcpc is restarted by every Wi-Fi rejoin: expected.
+        drops = sum(1 for e in events if e["event"] == "wifi_drop" and e["result"] == "ok")
+        if len(pids) > 1 and not (name == "udhcpc" and len(pids) <= drops + 1):
             worst.append(f"{name}: {len(pids)} pids (restarted)")
 
     # Idle drain: discharging, screen off (backlight 0), consecutive samples.
@@ -69,8 +71,13 @@ def main(run: Path) -> int:
     if len(idle) >= 30:
         points = [((int(s["t"]) - t0) / 3600, float(s["capacity"])) for s in idle]
         current = sorted(abs(int(s["current_ua"] or 0)) for s in idle)
+        mean_ma = sum(current) / len(current) / 1000
+        # Samsung's percentage sticks at 100 for hours after a full charge:
+        # the integrated current is the measure (5000 mAh battery).
         print(f"\nidle drain (screen off, not charging, {len(idle)} min): "
-              f"{-slope(points):.2f} %/h, median current {current[len(current) // 2] / 1000:.0f} mA")
+              f"median {current[len(current) // 2] / 1000:.0f} mA, mean {mean_ma:.0f} mA "
+              f"= {100 * mean_ma / 5000:.2f} %/h of 5000 mAh "
+              f"(percentage reading {-slope(points):.2f} %/h)")
     else:
         print("\nidle drain: not measured (charging, or too few screen-off minutes)")
     # CPU busy % and wakeups (context switches, interrupts) per second, by
@@ -114,7 +121,8 @@ def main(run: Path) -> int:
             worst.append(f"event {e['event']} {e['result']}")
 
     patterns = {
-        "kernel": re.compile(r"Kernel panic|Oops|BUG:|lowmemorykiller|Out of memory|Killed process|hung_task", re.I),
+        # Case-sensitive: "BUG:" must not match "debug:".
+        "kernel": re.compile(r"Kernel panic|Oops|BUG: |lowmemorykiller|Out of memory|Killed process|hung_task"),
         "moon": re.compile(r"panicked|error|failed|exited rc|restoring Android|fallback", re.I),
         "crash": re.compile(r"FATAL EXCEPTION|Fatal signal|tombstone", re.I),
     }
@@ -125,7 +133,16 @@ def main(run: Path) -> int:
         file = run / path
         if not file.exists():
             continue
-        hits = [line.rstrip() for line in file.open(errors="replace") if pattern.search(line)]
+        start = __import__("datetime").datetime.fromtimestamp(t0).strftime("%Y-%m-%dT%H:%M")
+        hits = []
+        for line in file.open(errors="replace"):
+            if not pattern.search(line):
+                continue
+            # Timestamped log lines from before the run belong to earlier boots.
+            stamp = re.search(r"\d{4}-\d\d-\d\dT\d\d:\d\d", line)
+            if stamp and stamp.group(0) < start:
+                continue
+            hits.append(line.rstrip())
         print(f"  {label}: {len(hits)} matching lines")
         for line in hits[-5:]:
             print(f"    {line[:160]}")
