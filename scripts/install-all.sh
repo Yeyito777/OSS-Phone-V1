@@ -103,7 +103,9 @@ if [[ "$SKIP_SYSTEM" == 0 && -n "$A26_SYSTEM" ]]; then
     else
         remote=.cache/a26-system-build
         ssh "$BUILD_HOST" "mkdir -p $remote"
-        rsync -a --delete --exclude target --exclude .git "$A26_SYSTEM/" "$BUILD_HOST:$remote/"
+        # Content, not times: a source older than the host's last build (another
+        # branch's) must still count as changed, or cargo keeps the stale binary.
+        rsync -rlpD --checksum --delete --exclude target --exclude .git "$A26_SYSTEM/" "$BUILD_HOST:$remote/"
         ssh "$BUILD_HOST" "cd $remote && scripts/build.sh >/dev/null"
         mkdir -p "$A26_SYSTEM/target/aarch64-unknown-linux-musl/release"
         for name in a26-system a26-wifi-service a26-wifi-ctl a26-systemctl exocortex-notify; do
