@@ -268,4 +268,28 @@ The live backlog, with where each item resumes, is [TODO.md](TODO.md).
 
 ## Soak results
 
-*To be added when the 24 h release-candidate soak finishes.*
+24 hours on the release candidate (main `d8de466`, the same code as
+v1.0: since then only `VERSION`, docs and the soak-report tool changed). Run `20261027-045519` of
+`scripts/a26-shell/soak.sh`, analysed with `scripts/a26-shell/soak-report.py`:
+**passed**, with no drift, restarts or failed events.
+
+- **No restarts.** Moon, moon-compositor, Xorg, moon-notifyd,
+  moon-telephonyd, moon-audiod, moon-permissiond, the Wi-Fi service and
+  wpa_supplicant kept one process each for the whole run. Only `udhcpc`
+  restarted, once for each Wi-Fi rejoin.
+- **Events, all passed:**
+  - 71 of 71 screen-off/on cycles.
+  - 3 of 3 silent alarms.
+  - 4 of 4 Wi-Fi drops and rejoins.
+- **Memory (RSS):**
+  - Xorg: 40 MB, with a one-time step to 50 MB at 11 h, then flat.
+  - Moon: 120 → 125 MB, slowing. That is +3 MB in the first 6 h, then
+    about +1 MB per 6 h.
+  - moon-compositor: 34 → 35 MB.
+  - The other services stayed flat, and so did file descriptors (at most
+    one or two more per process).
+- **Idle CPU** (all cores): 2.19 % with the screen off, 2.47 % with it on.
+- **Screen-off drain on battery**, over 7.1 h unplugged: median 30 mA, mean
+  42 mA. That is about 5 days of standby, assuming 5000 mAh.
+- **No errors in the logs** during the run: the kernel log, Moon's session
+  logs and logcat.
