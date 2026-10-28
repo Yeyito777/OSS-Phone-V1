@@ -25,6 +25,7 @@ pub enum View {
     Browser,
     Phone,
     Messages,
+    Exocortex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -34,11 +35,18 @@ pub enum AppId {
     Browser,
     Phone,
     Messages,
+    Exocortex,
 }
 
 impl AppId {
-    pub const COUNT: usize = 4;
-    pub const ALL: [Self; Self::COUNT] = [Self::System, Self::Browser, Self::Phone, Self::Messages];
+    pub const COUNT: usize = 5;
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::System,
+        Self::Browser,
+        Self::Phone,
+        Self::Messages,
+        Self::Exocortex,
+    ];
 
     pub fn from_view(view: View) -> Option<Self> {
         match view {
@@ -46,6 +54,7 @@ impl AppId {
             View::Browser => Some(Self::Browser),
             View::Phone => Some(Self::Phone),
             View::Messages => Some(Self::Messages),
+            View::Exocortex => Some(Self::Exocortex),
             View::Locked | View::Launcher => None,
         }
     }
@@ -56,6 +65,7 @@ impl AppId {
             Self::Browser => View::Browser,
             Self::Phone => View::Phone,
             Self::Messages => View::Messages,
+            Self::Exocortex => View::Exocortex,
         }
     }
 
@@ -65,6 +75,7 @@ impl AppId {
             Self::Browser => "Browser",
             Self::Phone => "Phone",
             Self::Messages => "Messages",
+            Self::Exocortex => "Exocortex",
         }
     }
 
@@ -76,6 +87,14 @@ impl AppId {
         self as usize
     }
 
+    /// Whose leases are held for work outside Moon: the Exocortex daemon's
+    /// turns (its bridge holds a transfer lease while any streams). Such a
+    /// lease only keeps the phone out of deep suspend; it never thaws, keeps
+    /// or outlives-with the app's own process, which may not even run.
+    pub fn lease_is_external(self) -> bool {
+        matches!(self, Self::Exocortex)
+    }
+
     /// The app's id (`ctl`, notifications, its freezer cgroup).
     pub fn cgroup_name(self) -> &'static str {
         match self {
@@ -83,6 +102,7 @@ impl AppId {
             Self::Browser => "browser",
             Self::Phone => "phone",
             Self::Messages => "messages",
+            Self::Exocortex => "exocortex",
         }
     }
 }
@@ -254,7 +274,7 @@ pub struct PublicOpenTarget {
 }
 
 /// Pointer events for the app in front, sent through XTEST by the main
-/// loop. Moon's own apps (System, Phone, Messages) get each touch as a held
+/// loop. Moon's own apps (System, Phone, Messages, Exocortex) get each touch as a held
 /// button from touch-down to release; the Browser gets taps on release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppPointer {
@@ -266,7 +286,10 @@ pub enum AppPointer {
 impl View {
     /// Moon's own apps take drags (the Browser keeps its own gestures).
     pub fn takes_drags(self) -> bool {
-        matches!(self, Self::System | Self::Phone | Self::Messages)
+        matches!(
+            self,
+            Self::System | Self::Phone | Self::Messages | Self::Exocortex
+        )
     }
 }
 
@@ -1165,8 +1188,10 @@ impl ShellState {
             Duration::ZERO
         } else {
             match launch.app {
-                // Phone and Messages are the System app's binary.
-                AppId::System | AppId::Phone | AppId::Messages => SYSTEM_FIRST_PAINT_DELAY,
+                // Phone, Messages and Exocortex are the System app's binary.
+                AppId::System | AppId::Phone | AppId::Messages | AppId::Exocortex => {
+                    SYSTEM_FIRST_PAINT_DELAY
+                }
                 AppId::Browser => BROWSER_FIRST_PAINT_DELAY,
             }
         };

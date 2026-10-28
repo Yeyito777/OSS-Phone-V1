@@ -40,6 +40,7 @@ pub const CARD_RAISED: Rgb = 0x2c2c2e;
 const ICON_SOURCE_SIZE: i32 = 220;
 const ICON_SOURCE_BYTES: usize = (ICON_SOURCE_SIZE * ICON_SOURCE_SIZE * 4) as usize;
 const SYSTEM_ICON_PATH: &str = "/opt/a26-system/share/system-app.bgrx";
+const EXOCORTEX_ICON_PATH: &str = "/opt/a26-system/share/exocortex-app.bgrx";
 const BROWSER_ICON_PATH: &str = "/opt/vimbrowser-a26/share/browser-app.bgrx";
 
 /// Home-screen icon size (60 pt) and its continuous-corner radius.
@@ -59,6 +60,13 @@ const DOCK_PITCH: f32 = 254.0;
 /// The order of apps in the dock.
 pub const LAUNCHER_APPS: [AppId; 4] =
     [AppId::Phone, AppId::Browser, AppId::Messages, AppId::System];
+/// Apps on the home screen itself, in the icon grid under the widgets, each
+/// with its name below it (as on iOS; the dock's icons have none).
+pub const HOME_APPS: [AppId; 1] = [AppId::Exocortex];
+/// The grid row under the widgets, and the labels' size.
+const HOME_ROW_TOP: f32 = WIDGET_TOP + WIDGET_SIZE + 66.0;
+const HOME_ROW_PITCH: f32 = 290.0;
+const HOME_LABEL_SIZE: f32 = 33.0;
 
 // Lock screen and passcode geometry.
 const PASSCODE_TITLE_BASELINE: f32 = 612.0;
@@ -170,6 +178,7 @@ impl AppIcon {
         let artwork = match app {
             AppId::System => load_icon("A26_SYSTEM_ICON", SYSTEM_ICON_PATH),
             AppId::Browser => load_icon("A26_BROWSER_ICON", BROWSER_ICON_PATH),
+            AppId::Exocortex => load_icon("A26_EXOCORTEX_ICON", EXOCORTEX_ICON_PATH),
             // Moon draws these two itself.
             AppId::Phone | AppId::Messages => None,
         }
@@ -217,6 +226,7 @@ fn fallback_icon(app: AppId) -> Image {
     let (top, bottom, letter) = match app {
         AppId::System => (0x8e8e93, 0x48484a, "S"),
         AppId::Browser => (0x5ac8fa, 0x0a64d8, "B"),
+        AppId::Exocortex => (0x1d2c52, 0x101b33, "E"),
         AppId::Phone | AppId::Messages => (0x6ce87a, 0x1fc04a, ""),
     };
     canvas.fill_rows(|y| gfx::mix(top, bottom, y as f32 / size as f32));
@@ -224,7 +234,7 @@ fn fallback_icon(app: AppId) -> Image {
     match app {
         AppId::Phone => calls::draw_handset(&mut canvas, c, c, 1.6, false, WHITE),
         AppId::Messages => draw_speech_bubble(&mut canvas, c, c - 4.0, 1.0),
-        AppId::System | AppId::Browser => {}
+        AppId::System | AppId::Browser | AppId::Exocortex => {}
     }
     let baseline = text::centered_baseline(size as f32 / 2.0, Weight::SemiBold, 120.0);
     text::draw_centered(
@@ -769,10 +779,35 @@ impl Renderer {
                 draw_calendar_widget(canvas, widget_rect(0), time);
                 draw_battery_widget(canvas, widget_rect(1), state);
                 canvas.fill_rrect(DOCK, DOCK_RADIUS, WHITE, 0.14);
-                for (index, app) in LAUNCHER_APPS.iter().enumerate() {
-                    let rect = app_icon_rect(index);
+                for (app, rect) in launcher_slots() {
                     canvas.shadow_rrect(rect.inset(6.0), ICON_RADIUS, 20.0, BLACK, 0.18);
                     canvas.draw_image(&icons[app.index()].home, rect.x as i32, rect.y as i32, 1.0);
+                }
+                for (index, app) in HOME_APPS.iter().enumerate() {
+                    let rect = home_icon_rect(index);
+                    let (cx, baseline) = (rect.center().0, rect.y + rect.h + 50.0);
+                    let name = app.display_name();
+                    // A soft shadow keeps the name legible on any wallpaper.
+                    text::draw_centered(
+                        canvas,
+                        name,
+                        cx + 1.5,
+                        baseline + 2.0,
+                        Weight::Medium,
+                        HOME_LABEL_SIZE,
+                        BLACK,
+                        0.45,
+                    );
+                    text::draw_centered(
+                        canvas,
+                        name,
+                        cx,
+                        baseline,
+                        Weight::Medium,
+                        HOME_LABEL_SIZE,
+                        WHITE,
+                        1.0,
+                    );
                 }
                 draw_status_bar(canvas, &status, None);
             })?;
@@ -1747,9 +1782,9 @@ impl Renderer {
             Some(Press::App(app)) => Some(app),
             _ => None,
         };
-        for app in LAUNCHER_APPS {
+        for (app, rect) in launcher_slots() {
             nodes.push(Node::Fill {
-                dst: launcher_icon_rect(app),
+                dst: rect,
                 color: BLACK,
                 alpha: if pressed == Some(app) { 0.38 } else { 0.0 },
                 radius: ICON_RADIUS,
@@ -1889,11 +1924,38 @@ fn app_icon_rect(index: usize) -> RectF {
     RectF::new(cx - size / 2.0, dock_cy - size / 2.0, size, size)
 }
 
-pub fn launcher_icon_rect(app: AppId) -> RectF {
+/// A home-screen grid icon, by its place in `HOME_APPS`: the iOS grid's
+/// columns, which the widgets above span two at a time.
+fn home_icon_rect(index: usize) -> RectF {
+    let size = ICON_SIZE as f32;
+    let column = (index % 4) as f32;
+    let row = (index / 4) as f32;
+    RectF::new(
+        GRID_MARGIN + column * GRID_PITCH,
+        HOME_ROW_TOP + row * HOME_ROW_PITCH,
+        size,
+        size,
+    )
+}
+
+/// Every launcher icon with where it is: the dock's, then the grid's.
+fn launcher_slots() -> impl Iterator<Item = (AppId, RectF)> {
     LAUNCHER_APPS
         .iter()
-        .position(|a| *a == app)
-        .map(app_icon_rect)
+        .enumerate()
+        .map(|(index, app)| (*app, app_icon_rect(index)))
+        .chain(
+            HOME_APPS
+                .iter()
+                .enumerate()
+                .map(|(index, app)| (*app, home_icon_rect(index))),
+        )
+}
+
+pub fn launcher_icon_rect(app: AppId) -> RectF {
+    launcher_slots()
+        .find(|(a, _)| *a == app)
+        .map(|(_, rect)| rect)
         .unwrap_or(RectF::new(
             456.0,
             1086.0,
@@ -1904,9 +1966,13 @@ pub fn launcher_icon_rect(app: AppId) -> RectF {
 
 /// The home-screen app under a touch, including its label.
 pub fn launcher_app_at(x: i16, y: i16) -> Option<AppId> {
-    LAUNCHER_APPS.iter().enumerate().find_map(|(index, app)| {
-        let target = app_icon_rect(index).inset(-40.0);
-        target.contains(f32::from(x), f32::from(y)).then_some(*app)
+    launcher_slots().find_map(|(app, rect)| {
+        // A grid icon's name below it is part of its target.
+        let mut target = rect.inset(-40.0);
+        if HOME_APPS.contains(&app) {
+            target.h += 40.0;
+        }
+        target.contains(f32::from(x), f32::from(y)).then_some(app)
     })
 }
 
@@ -2483,6 +2549,19 @@ mod tests {
         assert_eq!(launcher_app_at(540, by as i16), None);
         assert_eq!(launcher_app_at(1070, by as i16), None);
         assert_eq!(launcher_app_at(10, by as i16), None);
+        // The grid icons under the widgets, and their names.
+        for (index, app) in HOME_APPS.into_iter().enumerate() {
+            let rect = home_icon_rect(index);
+            let (x, y) = rect.center();
+            assert_eq!(launcher_app_at(x as i16, y as i16), Some(app));
+            assert_eq!(
+                launcher_app_at(x as i16, (rect.y + rect.h + 50.0) as i16),
+                Some(app)
+            );
+            assert_eq!(launcher_icon_rect(app), rect);
+            assert!(rect.y > widget_rect(0).y + widget_rect(0).h);
+            assert!(rect.y + rect.h + 80.0 < app_icon_rect(0).y);
+        }
     }
 
     #[test]

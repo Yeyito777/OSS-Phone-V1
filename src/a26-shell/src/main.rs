@@ -2742,7 +2742,7 @@ fn pointer_move(
     }
 }
 
-/// A touch on one of Moon's own apps (System, Phone, Messages) is theirs,
+/// A touch on one of Moon's own apps (System, Phone, Messages, Exocortex) is theirs,
 /// unless it starts on the bottom edge (the home gesture's) or the shell is
 /// in front.
 fn app_takes_touch(state: &ShellState, y: i16) -> bool {
@@ -3266,7 +3266,7 @@ fn handle_tap(
             Some(app) => state.open_app(app),
             None => state.last_action = "launcher_tap_outside".into(),
         },
-        View::System | View::Browser | View::Phone | View::Messages => {
+        View::System | View::Browser | View::Phone | View::Messages | View::Exocortex => {
             let app_name = AppId::from_view(state.view).map_or("app", AppId::cgroup_name);
             let Some(_window) = state.managed_windows.first().copied() else {
                 state.last_action = format!("{app_name}_tap_no_window");

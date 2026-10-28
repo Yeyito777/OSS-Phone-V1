@@ -37,7 +37,8 @@ struct ManagedWindow {
 struct Application {
     id: AppId,
     executable: PathBuf,
-    /// Phone and Messages are the System app's binary with `--app NAME`.
+    /// Phone, Messages and Exocortex are the System app's binary with
+    /// `--app NAME`.
     args: Vec<String>,
     child: Option<Child>,
     pidfd: Option<OwnedFd>,
@@ -50,7 +51,9 @@ struct Application {
 impl Application {
     fn new(id: AppId, executable: PathBuf) -> Self {
         let args = match id {
-            AppId::Phone | AppId::Messages => vec!["--app".into(), id.cgroup_name().into()],
+            AppId::Phone | AppId::Messages | AppId::Exocortex => {
+                vec!["--app".into(), id.cgroup_name().into()]
+            }
             AppId::System | AppId::Browser => Vec::new(),
         };
         Self {
@@ -140,7 +143,8 @@ impl AppRegistry {
                 Application::new(AppId::System, system.clone()),
                 Application::new(AppId::Browser, browser),
                 Application::new(AppId::Phone, system.clone()),
-                Application::new(AppId::Messages, system),
+                Application::new(AppId::Messages, system.clone()),
+                Application::new(AppId::Exocortex, system),
             ],
             active: None,
             leases: LeaseManager::default(),
@@ -274,7 +278,9 @@ impl AppRegistry {
                     application.lifecycle = AppLifecycle::Stopped;
                     application.windows.clear();
                     application.freezer.note_stopped();
-                    self.leases.clear_app(application.id);
+                    if !application.id.lease_is_external() {
+                        self.leases.clear_app(application.id);
+                    }
                     if desired == Some(application.id) {
                         update.active_process_exited = Some(application.id);
                     }
@@ -308,14 +314,14 @@ impl AppRegistry {
                         FreezerState::Thawed | FreezerState::Unknown
                     )
             };
-            if needs_freeze && !self.leases.active(id, now) {
+            if needs_freeze && !self.keeps_running(id, now) {
                 update.freeze_after_hide.push(id);
             }
         }
 
         if self.active != desired {
             if let Some(previous) = self.active {
-                let leased = self.leases.active(previous, now);
+                let leased = self.keeps_running(previous, now);
                 let application = self.app_mut(previous);
                 if application.lifecycle != AppLifecycle::Stopped {
                     application.lifecycle = AppLifecycle::Background;
@@ -437,6 +443,11 @@ impl AppRegistry {
         Ok(())
     }
 
+    /// A lease holds this app's process tree runnable in the background.
+    fn keeps_running(&mut self, app: AppId, now: Instant) -> bool {
+        !app.lease_is_external() && self.leases.active(app, now)
+    }
+
     pub fn acquire_lease(
         &mut self,
         app: AppId,
@@ -444,6 +455,10 @@ impl AppRegistry {
         seconds: u64,
         now: Instant,
     ) -> Result<Duration, &'static str> {
+        if app.lease_is_external() {
+            // Work outside Moon: it only keeps the phone out of deep suspend.
+            return self.leases.acquire(app, kind, seconds, now);
+        }
         if self.app(app).lifecycle == AppLifecycle::Stopped {
             return Err("cannot lease a stopped app");
         }
@@ -464,7 +479,7 @@ impl AppRegistry {
         now: Instant,
     ) -> Result<(), &'static str> {
         self.leases.release(app, kind);
-        if self.app(app).lifecycle == AppLifecycle::Background && !self.leases.active(app, now) {
+        if self.app(app).lifecycle == AppLifecycle::Background && !self.keeps_running(app, now) {
             self.app(app)
                 .freezer
                 .freeze()
@@ -530,7 +545,9 @@ impl AppRegistry {
         if self.active == Some(id) || self.app(id).lifecycle == AppLifecycle::Stopped {
             return false;
         }
-        self.leases.clear_app(id);
+        if !id.lease_is_external() {
+            self.leases.clear_app(id);
+        }
         self.app_mut(id).stop();
         true
     }
@@ -540,14 +557,16 @@ impl AppRegistry {
         let mut candidate: Option<(AppId, Instant)> = None;
         for id in AppId::ALL {
             let background = self.app(id).lifecycle == AppLifecycle::Background;
-            let leased = self.leases.active(id, now);
+            let leased = self.keeps_running(id, now);
             let last_used = self.app(id).last_used;
             if background && !leased && candidate.is_none_or(|(_, oldest)| last_used < oldest) {
                 candidate = Some((id, last_used));
             }
         }
         let candidate = candidate?.0;
-        self.leases.clear_app(candidate);
+        if !candidate.lease_is_external() {
+            self.leases.clear_app(candidate);
+        }
         self.app_mut(candidate).stop();
         Some(candidate)
     }
@@ -610,6 +629,45 @@ mod tests {
         assert_eq!(update.visibility, vec![WindowVisibility::Show(11)]);
         assert_eq!(registry.primary_active_window(), Some(11));
         registry.shutdown();
+    }
+
+    #[test]
+    fn an_exocortex_lease_holds_off_deep_suspend_without_keeping_the_app() {
+        let now = Instant::now();
+        let mut registry = registry();
+        // The daemon streams while the app is not even running.
+        assert_eq!(
+            registry.app(AppId::Exocortex).lifecycle,
+            AppLifecycle::Stopped
+        );
+        registry
+            .acquire_lease(AppId::Exocortex, LeaseKind::Transfer, 120, now)
+            .unwrap();
+        assert!(registry.has_active_leases(now));
+        assert!(
+            registry
+                .acquire_lease(AppId::Exocortex, LeaseKind::Transfer, 121, now)
+                .is_err()
+        );
+        // The app's own process still freezes in the background...
+        registry.active = Some(AppId::Exocortex);
+        registry.app_mut(AppId::Exocortex).lifecycle = AppLifecycle::Foreground;
+        registry.register_window(AppId::Exocortex, 33);
+        let update = registry.reconcile(None);
+        assert_eq!(update.freeze_after_hide, vec![AppId::Exocortex]);
+        // ...may be evicted, and its exit does not end the lease.
+        assert_eq!(registry.evict_lru_background(now), Some(AppId::Exocortex));
+        assert!(registry.has_active_leases(now));
+        registry
+            .release_lease(AppId::Exocortex, LeaseKind::Transfer, now)
+            .unwrap();
+        assert!(!registry.has_active_leases(now));
+        // An ordinary app's lease still needs its process.
+        assert!(
+            registry
+                .acquire_lease(AppId::System, LeaseKind::Transfer, 10, now)
+                .is_err()
+        );
     }
 
     #[test]
