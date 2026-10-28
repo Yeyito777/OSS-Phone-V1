@@ -12,6 +12,14 @@ set -euo pipefail
 say() { printf '  %s\n' "$*"; }
 
 # --- Alpine packages -----------------------------------------------------------
+# The rootfs may have been provisioned offline (pinned packages): give apk the
+# release's own repositories when it has none.
+if ! grep -q '^https\?://' /etc/apk/repositories 2>/dev/null; then
+    release="v$(cut -d. -f1,2 /etc/alpine-release)"
+    printf 'https://dl-cdn.alpinelinux.org/alpine/%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/%s/community\n' \
+        "$release" "$release" >>/etc/apk/repositories
+    say "apk: added the $release repositories"
+fi
 need=()
 for pkg in bash curl git openssh-client openssh-keygen ripgrep libstdc++ libgcc ca-certificates unzip procps coreutils; do
     apk info -e "$pkg" >/dev/null 2>&1 || need+=("$pkg")

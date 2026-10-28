@@ -91,9 +91,10 @@ su_run "rm -rf $ROOT/var/lib/exocortex-keeper/install $STAGE"
 if [[ "$OPENAI_KEY" == 1 ]]; then
     step "OpenAI API key (secrets store -> adb stdin -> exocortexd login openai key)"
     key_file="$ROOT/root/.exocortex-openai-key"
-    # The key goes only through stdin: never argv, a Mac file or a log.
+    # The key goes only through stdin (no pty, so nothing echoes it): never
+    # argv, a Mac file or a log.
     secrets run --allow OPENAI_API_KEY -- sh -c 'printf "%s" "$OPENAI_API_KEY"' |
-        adb -s "$SERIAL" shell "/data/local/tmp/su -c 'umask 077; cat > $key_file'"
+        adb -s "$SERIAL" shell -T "/data/local/tmp/su -c 'umask 077; cat > $key_file'"
     login_ok=1
     in_ns "/usr/local/bin/exocortexd login openai key < $key_file; echo rc=\$?" | tee /dev/stderr | grep -q '^rc=0$' || login_ok=0
     su_run "rm -f $key_file"
