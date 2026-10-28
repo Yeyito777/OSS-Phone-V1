@@ -27,6 +27,9 @@ Current features:
 - bottom-edge horizontal swipe to switch between apps;
 - salted, hashed six-digit PIN configuration (no plaintext PIN in source);
 - touch-first launcher containing separate **System** and **Browser** apps;
+- the **Exocortex** app (a26-system's `--app exocortex`, a client for the
+  Exocortex agent daemon) in the home screen's grid under the widgets, its
+  notifications opening the conversation they are about;
 - app-provided System artwork with a one-pixel launcher frame;
 - external `a26-system` process launch and fullscreen lifecycle management;
 - external ARM64 vimbrowser launch and fullscreen lifecycle management;
@@ -77,6 +80,13 @@ and Moon renews the same five-second Browser media lease. Pausing or ending audi
 stops renewal and refreezes the hidden Browser after expiry. Lease state exposes
 only the fixed purpose and remaining duration through `state`; no URL, title,
 media metadata, or samples enter lifecycle state.
+
+`exocortex` leases are external: `exocortex-notify` (a26-system) holds
+`lease acquire exocortex transfer 120`, renewed every minute, while the
+Exocortex daemon (outside Moon) streams a turn. Moon grants them whether or not
+the Exocortex app runs, and they only hold off deep suspend: the app's own
+process still freezes in the background, may be evicted, and its exit does
+not end the lease.
 
 Every five seconds Moon reads `MemAvailable`. Below the larger of 384 MiB or ten
 percent of physical RAM, it evicts one least-recently-used background app that
@@ -166,7 +176,7 @@ Runtime paths on the phone:
 ```
 
 Useful host controls include `state`, `lock`, `screen on`, `screen off`,
-`launch system`, `launch browser`, `keyboard show url`, `keyboard hide`,
+`launch system`, `launch browser`, `launch exocortex`, `keyboard show url`, `keyboard hide`,
 `swipe-up`, `volume up`, and pointer/tap injection. They are exposed through
 `scripts/a26-shell/ctl.sh` and the root-only Unix socket.
 `scripts/a26-shell/screenshot.sh` captures the composed X11 root screen over ADB
