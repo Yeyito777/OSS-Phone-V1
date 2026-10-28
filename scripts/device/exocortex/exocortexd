@@ -1,0 +1,7 @@
+#!/bin/sh
+# exocortexd on the phone: the Exocortex checkout's own command, with the
+# keeper as its service manager (docs/EXOCORTEX.md).
+export EXOCORTEX_SUPERVISOR=/usr/local/bin/exocortex-supervisor
+export IS_SANDBOX=1
+export PATH="/opt/bun/bin:/root/.local/bin:$PATH"
+exec /opt/exocortex/bin/exocortexd "$@"

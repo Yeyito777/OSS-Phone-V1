@@ -1,0 +1,26 @@
+# PROPOSED, NOT INSTALLED: needs the user's approval and a BOOT image rebuild
+# (docs/EXOCORTEX.md, "Proposed: an init service"). Would go in the boot
+# ramdisk's overlay.d beside moon-direct-boot.rc; magiskinit appends it to
+# init.rc. Only overlay files change, the ramdisk /init stays the same
+# (notes/direct-boot/RESCUE.md).
+#
+# Android's init then supervises Exocortex's keeper itself: an ordinary
+# (not oneshot) service, so init restarts it whenever it exits, in every boot
+# mode, and terminates it in its own shutdown sequence. 95-exocortex.sh sees
+# init.svc.exocortex running and does nothing; the keeper runs in the
+# foreground (`init`): no watchdog, and it stays in this service's cgroup.
+
+service exocortex /system/bin/sh /data/adb/exocortex/exocortex-keeper.sh init
+    user root
+    group root
+    seclabel u:r:magisk:s0
+    disabled
+
+# /data (and /data/adb) is mounted and decrypted from post-fs-data on; the
+# keeper itself waits for nothing else.
+on post-fs-data
+    start exocortex
+
+# No stop on moon.boot.mode=shutdown: init's stop kills the whole process
+# group at once. moon-power.sh stops the daemon gracefully; the keeper then
+# idles until init's shutdown sequence terminates the service.

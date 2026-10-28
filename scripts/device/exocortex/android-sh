@@ -1,0 +1,12 @@
+#!/bin/sh
+# A root shell in Android's own namespace (outside the chroot): its /system,
+# /vendor, getprop/setprop, init services (start/stop), logcat, Magisk.
+#   android-sh                interactive
+#   android-sh -c 'getprop'   one command
+# nsenter (the rootfs's static BusyBox) into PID 1's mount namespace; setns
+# resets the root to that namespace's, so this leaves the chroot. Same uid 0
+# and SELinux context (magisk) as the caller.
+exec /busybox.static nsenter -t 1 -m -- /system/bin/env -i \
+    PATH=/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin:/debug_ramdisk \
+    ANDROID_ROOT=/system ANDROID_DATA=/data ANDROID_STORAGE=/storage HOME=/data/local/tmp TERM="${TERM:-xterm-256color}" \
+    /system/bin/sh "$@"

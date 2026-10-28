@@ -1,0 +1,101 @@
+#!/bin/sh
+# The keeper's control, from inside the chroot: Exocortex's
+# EXOCORTEX_SUPERVISOR (its README), so `exocortexd start|stop|restart|status`
+# and the exo tool's restart work without systemd (docs/EXOCORTEX.md).
+#
+#   exocortex-supervisor start|stop|restart|status|main-pid
+#
+# The keeper (Android side, exocortex-keeper.sh) owns the process; this only
+# leaves it notes in /var/lib/exocortex-keeper and signals the daemon:
+#   stopped      do not start the daemon (until `start` or the next boot)
+#   restart-now  start it again at once, without the crash backoff
+# A plain SIGTERM is the daemon's graceful shutdown with replay.
+set -u
+
+STATE=/var/lib/exocortex-keeper
+SOCKET=/opt/exocortex/config/runtime/exocortexd.sock
+MARK='exocortex-ns\.sh daemon|run-daemon\.sh|exocortexd-main'
+
+daemon_pid() {
+    pid="$(cat "$STATE/daemon.pid" 2>/dev/null)"
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    tr '\0' ' ' 2>/dev/null <"/proc/$pid/cmdline" | grep -q -E -- "$MARK" || return 1
+    echo "$pid"
+}
+
+keeper_running() {
+    pid="$(cat "$STATE/keeper.pid" 2>/dev/null)"
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    tr '\0' ' ' 2>/dev/null <"/proc/$pid/cmdline" | grep -q -E 'exocortex-keeper\.sh (keeper|init)'
+}
+
+# The keeper lives in Android's mount namespace; reach it there.
+ensure_keeper() {
+    keeper_running && return 0
+    echo "  • keeper not running; starting it" >&2
+    /busybox.static nsenter -t 1 -m -- /system/bin/sh /data/adb/exocortex/exocortex-keeper.sh start
+}
+
+wait_until() {
+    limit=$1
+    shift
+    i=0
+    while [ "$i" -lt $((limit * 5)) ]; do
+        "$@" && return 0
+        sleep 0.2
+        i=$((i + 1))
+    done
+    return 1
+}
+
+# Up: a new daemon (not old_pid) past its startup, with its socket.
+serving() {
+    pid="$(daemon_pid)" && [ "$pid" != "${old_pid:-}" ] && [ -S "$SOCKET" ] &&
+        [ "$(cat /opt/exocortex/config/runtime/exocortexd.pid 2>/dev/null)" = "$pid" ]
+}
+gone() { ! daemon_pid >/dev/null; }
+
+case "${1:-}" in
+    main-pid)
+        daemon_pid
+        ;;
+    status)
+        if pid="$(daemon_pid)"; then
+            echo "  ✓ exocortexd running (pid $pid), kept by the OSS Phone keeper"
+        elif [ -e "$STATE/stopped" ]; then
+            echo "  • exocortexd stopped (exocortexd start)"
+            exit 3
+        else
+            echo "  ✗ exocortexd not running"
+            exit 3
+        fi
+        keeper_running || { echo "  ✗ keeper not running (exocortexd start starts it)"; exit 3; }
+        ;;
+    start)
+        rm -f "$STATE/stopped"
+        ensure_keeper
+        if daemon_pid >/dev/null; then echo "  • Already running"; exit 0; fi
+        touch "$STATE/restart-now"
+        old_pid=''
+        wait_until 90 serving || { echo "  ✗ exocortexd did not come up within 90s (/var/log/exocortex/)" >&2; exit 1; }
+        echo "  ✓ Started"
+        ;;
+    stop)
+        touch "$STATE/stopped"
+        if pid="$(daemon_pid)"; then
+            kill -TERM "$pid"
+            wait_until 30 gone || { kill -KILL "$pid" 2>/dev/null; echo "  ⚠ killed after 30s" >&2; }
+        fi
+        echo "  ✓ Stopped"
+        ;;
+    restart)
+        rm -f "$STATE/stopped"
+        touch "$STATE/restart-now"
+        old_pid="$(daemon_pid || true)"
+        [ -z "$old_pid" ] || kill -TERM "$old_pid"
+        ensure_keeper
+        wait_until 120 serving || { echo "  ✗ exocortexd did not come back within 120s (/var/log/exocortex/)" >&2; exit 1; }
+        echo "  ✓ Restarted (pid $(daemon_pid))"
+        ;;
+    *) echo "usage: exocortex-supervisor start|stop|restart|status|main-pid" >&2; exit 2 ;;
+esac

@@ -44,7 +44,11 @@ flashes them.
    Xorg's dummy driver configuration), `moon-power.sh` (docs/power.md) and
    `/data/adb/moon/config` (created with defaults, or old defaults migrated).
 6. **Telephony**: `/opt/moon-telephony` and its start/stop scripts.
-7. **Verification**: every installed file's sha256 against its build, and
+7. **Exocortex** (`--skip-exocortex` to leave it out): the keeper, the
+   chroot's `exocortexd` and an updated daemon in `/opt/exocortex`
+   (`scripts/exocortex/install.sh`). The one-time credential steps are
+   separate: [EXOCORTEX.md](EXOCORTEX.md).
+8. **Verification**: every installed file's sha256 against its build, and
    the config keys Moon needs.
 
 Changes take effect at the next boot (`--reboot` reboots cleanly through

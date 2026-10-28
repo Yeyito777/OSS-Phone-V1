@@ -3,7 +3,7 @@
 # /data, from this repository (docs/INSTALL.md):
 #
 #   scripts/install-all.sh [--dry-run] [--a26-system DIR] [--reset-pin]
-#                          [--skip-system] [--reboot]
+#                          [--skip-system] [--skip-exocortex] [--reboot]
 #
 # Steps, each idempotent (atomic replace; a second run changes nothing):
 #   1. preflight: root, the Alpine rootfs, Magisk, the direct-boot ramdisk
@@ -14,9 +14,11 @@
 #   5. the autostart/direct-boot scripts, the GPU display path, the power
 #      entry point, /data/adb/moon/config (created or migrated)
 #   6. telephony
-#   7. verification: every installed file against its build, by sha256
+#   7. Exocortex: its keeper and daemon (scripts/exocortex/install.sh,
+#      docs/EXOCORTEX.md); credentials are not touched here
+#   8. verification: every installed file against its build, by sha256
 #
-# --dry-run builds everything and runs only 1 and 7: what would change, with
+# --dry-run builds everything and runs only 1 and 8: what would change, with
 # nothing written to the phone. The boot image is never flashed here (see
 # scripts/direct-boot/README.md); the Wi-Fi networks and the time zone keep
 # whatever the phone has (System app; scripts/a26-shell/set-timezone.sh).
@@ -28,6 +30,7 @@ source "$PROJECT_ROOT/scripts/a26-shell/common.sh"
 DRY_RUN=0
 RESET_PIN=0
 SKIP_SYSTEM=0
+SKIP_EXOCORTEX=0
 REBOOT=0
 A26_SYSTEM="${A26_SYSTEM_DIR:-}"
 while [[ $# -gt 0 ]]; do
@@ -35,9 +38,10 @@ while [[ $# -gt 0 ]]; do
         --dry-run) DRY_RUN=1 ;;
         --reset-pin) RESET_PIN=1 ;;
         --skip-system) SKIP_SYSTEM=1 ;;
+        --skip-exocortex) SKIP_EXOCORTEX=1 ;;
         --reboot) REBOOT=1 ;;
         --a26-system) A26_SYSTEM="${2:?--a26-system needs a directory}"; shift ;;
-        -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
     shift
@@ -140,6 +144,17 @@ MANIFEST+=(
 for name in moon-telephonyd moon-telephonyctl moon-call-audio mobile-data; do
     MANIFEST+=("$IMAGE/moon-telephony/$name:$ROOT/opt/moon-telephony/$name")
 done
+if [[ "$SKIP_EXOCORTEX" == 0 ]]; then
+    EXO="$PROJECT_ROOT/scripts/device/exocortex"
+    MANIFEST+=(
+        "$EXO/exocortex-keeper.sh:/data/adb/exocortex/exocortex-keeper.sh"
+        "$EXO/exocortex-ns.sh:/data/adb/exocortex/exocortex-ns.sh"
+        "$EXO/95-exocortex.sh:/data/adb/service.d/95-exocortex.sh"
+        "$EXO/exocortex-supervisor:$ROOT/usr/local/bin/exocortex-supervisor"
+        "$EXO/exocortexd:$ROOT/usr/local/bin/exocortexd"
+        "$EXO/android-sh:$ROOT/usr/local/bin/android-sh"
+    )
+fi
 if [[ "$SKIP_SYSTEM" == 0 && -n "$A26_SYSTEM" ]]; then
     for name in a26-system a26-wifi-service a26-wifi-ctl a26-systemctl; do
         MANIFEST+=("$A26_SYSTEM/target/aarch64-unknown-linux-musl/release/$name:$ROOT/opt/a26-system/bin/$name")
@@ -219,7 +234,15 @@ step "autostart, direct-boot policy, GPU display path, power entry point"
 step telephony
 "$PROJECT_ROOT/scripts/a26-shell/install-telephony.sh"
 
-# --- 7. verification ---------------------------------------------------------
+# --- 7. Exocortex ------------------------------------------------------------
+# The keeper and an updated daemon; the OpenAI key and whale's authorization
+# are separate, one-time steps (docs/EXOCORTEX.md).
+if [[ "$SKIP_EXOCORTEX" == 0 ]]; then
+    step "Exocortex"
+    "$PROJECT_ROOT/scripts/exocortex/install.sh"
+fi
+
+# --- 8. verification ---------------------------------------------------------
 step verification
 if verify; then
     echo "every installed file matches its build"
