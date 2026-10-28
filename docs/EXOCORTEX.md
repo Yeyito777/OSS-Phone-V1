@@ -192,3 +192,28 @@ is the agent's own machine, root by design.
   applies.
 - There is no compiler on the phone: Rust and NDK components are built on
   the user's machines (scripts here), the agent can install what they build.
+
+## Verified on the A26 (2026-10-28, after v1.0)
+
+- Install from scratch with `install.sh --openai-key` (1.5 min) and
+  `authorize-whale.sh`: every whale check passed from the phone.
+- Real turns: OpenAI (gpt-5.4-mini, API key) and Claude (Sonnet 5.5 through
+  whale) ran Moon's `a26-shellctl state`, `android-sh -c getprop …` and read
+  the battery, Alpine and Moon's sockets.
+- Supervision: `kill -9` of the keeper (back within 5 s), the watchdog, the
+  bridge and the daemon (each restarted). Moon killed: the supervisor's local
+  recovery restarted Moon's whole chroot session while a 90 s tool call ran;
+  it finished all its steps. Moon killed again: the supervisor gave the phone
+  to Android (framework up, `moon.boot.mode=android`); the daemon, bridge and
+  keeper kept running. `moon-power.sh reboot` from there and then Moon's own
+  `system reboot` (the power menu's path): Exocortex stopped before `sync`
+  (1.7 s and 3.3 s, rc 0), the keeper came back at boot from `service.d`, and
+  the interrupted turns replayed and finished (one was a 40 s command mid-way
+  through the second reboot).
+- The app: list, chat, typing with Moon's keyboard, streaming markdown,
+  Stop; while a turn ran Moon showed the `exocortex` transfer lease with deep
+  suspend inhibited. Drag scrolls over a long chat while a reply streamed:
+  1,011 frames, total (draw + present) mean 3.45 ms, p95 7.0 ms, 22 over
+  8.33 ms (6 full frames, 16 partial). Notifications: a banner when a turn
+  finished with the app in the background; tapping it opened the app at that
+  conversation, and the notification went away.

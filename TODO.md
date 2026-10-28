@@ -55,6 +55,17 @@ where the work resumes. Finished items are at the bottom.
 ### Audio and connectivity
 - [ ] Bluetooth and USB audio (built-in speaker only today).
 
+### Exocortex (post-v1.0, `docs/EXOCORTEX.md`)
+- [ ] **Exocortex under Android's init** (`scripts/device/exocortex/proposed/exocortex.rc`):
+  an overlay.d rc so init itself supervises the keeper. Needs a BOOT image
+  rebuild and the user's explicit approval; the keeper pair does the job
+  from /data meanwhile.
+- [ ] **Network in Android mode:** after a fallback Android had no Wi-Fi of
+  its own (no saved network), so the daemon waited offline until Moon was
+  back. Check DNS and routing for the daemon once Android has a network.
+- [ ] Exocortex app: the rare partial frame over 8.33 ms while a long reply
+  re-wraps (16 of 1,011 in the device run).
+
 ### Security
 - [ ] The lock screen is a session UI, not a security boundary: root or an
   authorized ADB host can bypass it.
@@ -73,3 +84,4 @@ where the work resumes. Finished items are at the bottom.
 10. [x] Enter deep suspend on screen-off and wake safely from approved hardware sources.
 11. [x] Add a central alarm and notification service with RTC wake scheduling (moon-notifyd, `docs/notifications-protocol.md`).
 12. [x] Measure and document foreground, background, audio, and suspended battery use (`docs/battery.md`).
+13. [x] Exocortex on the phone (after v1.0): the daemon in the chroot with a keeper that survives Moon, Xorg, chroot-session teardown and the Android fallback, a graceful stop in the power-off sequence, OpenAI by API key and Claude through whale's link-only /proxy, the Exocortex app and its notification bridge (`docs/EXOCORTEX.md`, a26-system `docs/exocortex.md`).
