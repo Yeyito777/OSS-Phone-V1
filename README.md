@@ -15,7 +15,7 @@ written in Rust (`a26-shell`).
 
 Moon runs directly on the phone's native Xorg session. It currently
 provides a lock screen with clock and passcode keypad, a home screen with
-widgets and a dock, icon-zoom app transitions, an iPhone-style system keyboard,
+widgets, an app grid and a dock, icon-zoom app transitions, an iPhone-style system keyboard,
 external X11 app
 lifecycle management, one-finger app-closing gestures, physical power/volume
 key policy, and a root-only Unix-socket control interface over ADB.

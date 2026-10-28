@@ -106,11 +106,13 @@ if [[ "$SKIP_SYSTEM" == 0 && -n "$A26_SYSTEM" ]]; then
         rsync -a --delete --exclude target --exclude .git "$A26_SYSTEM/" "$BUILD_HOST:$remote/"
         ssh "$BUILD_HOST" "cd $remote && scripts/build.sh >/dev/null"
         mkdir -p "$A26_SYSTEM/target/aarch64-unknown-linux-musl/release"
-        for name in a26-system a26-wifi-service a26-wifi-ctl a26-systemctl; do
+        for name in a26-system a26-wifi-service a26-wifi-ctl a26-systemctl exocortex-notify; do
             rsync -a "$BUILD_HOST:$remote/target/aarch64-unknown-linux-musl/release/$name" \
                 "$A26_SYSTEM/target/aarch64-unknown-linux-musl/release/$name"
         done
-        rsync -a "$BUILD_HOST:$remote/assets/system-app.bgrx" "$A26_SYSTEM/assets/system-app.bgrx"
+        for icon in system-app exocortex-app; do
+            rsync -a "$BUILD_HOST:$remote/assets/$icon.bgrx" "$A26_SYSTEM/assets/$icon.bgrx"
+        done
     fi
     SYSTEM_PREBUILT=1
 fi
@@ -156,9 +158,12 @@ if [[ "$SKIP_EXOCORTEX" == 0 ]]; then
     )
 fi
 if [[ "$SKIP_SYSTEM" == 0 && -n "$A26_SYSTEM" ]]; then
-    for name in a26-system a26-wifi-service a26-wifi-ctl a26-systemctl; do
+    # The System, Phone, Messages and Exocortex apps (one binary), the Wi-Fi
+    # backend, and the Exocortex notification bridge.
+    for name in a26-system a26-wifi-service a26-wifi-ctl a26-systemctl exocortex-notify; do
         MANIFEST+=("$A26_SYSTEM/target/aarch64-unknown-linux-musl/release/$name:$ROOT/opt/a26-system/bin/$name")
     done
+    MANIFEST+=("$A26_SYSTEM/assets/exocortex-app.bgrx:$ROOT/opt/a26-system/share/exocortex-app.bgrx")
     for name in a26-wifi-start a26-wifi-stop a26-udhcpc.script; do
         MANIFEST+=("$A26_SYSTEM/scripts/phone/$name:$ROOT/opt/a26-system/libexec/$name")
     done

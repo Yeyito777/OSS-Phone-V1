@@ -260,7 +260,9 @@ fn parse_command(line: &str) -> Result<Command, String> {
         "launch" => match parts.next() {
             Some(value) => match AppId::parse(&value.to_ascii_lowercase()) {
                 Some(app) => Command::Launch(app),
-                None => return Err("app must be System, Browser, Phone or Messages".into()),
+                None => {
+                    return Err("app must be System, Browser, Phone, Messages or Exocortex".into());
+                }
             },
             None => return Err("missing app noun".into()),
         },
@@ -359,10 +361,9 @@ fn parse_command(line: &str) -> Result<Command, String> {
             let operation = parts
                 .next()
                 .ok_or_else(|| "lease requires acquire or release".to_string())?;
-            let app = parts
-                .next()
-                .and_then(AppId::parse)
-                .ok_or_else(|| "lease app must be system or browser".to_string())?;
+            let app = parts.next().and_then(AppId::parse).ok_or_else(|| {
+                "lease app must be system, browser, phone, messages or exocortex".to_string()
+            })?;
             let kind = parts
                 .next()
                 .and_then(LeaseKind::parse)
@@ -447,6 +448,14 @@ mod tests {
         assert!(matches!(
             parse_command("lease release system transfer"),
             Ok(Command::LeaseRelease(AppId::System, LeaseKind::Transfer))
+        ));
+        assert!(matches!(
+            parse_command("lease acquire exocortex transfer 120"),
+            Ok(Command::LeaseAcquire(
+                AppId::Exocortex,
+                LeaseKind::Transfer,
+                120
+            ))
         ));
         assert!(parse_command("lease acquire browser arbitrary 5").is_err());
         assert!(parse_command("lease release browser media extra").is_err());
