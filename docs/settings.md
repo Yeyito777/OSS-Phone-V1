@@ -70,8 +70,18 @@ it off after 10 s untouched (`notifications-ui.md`).
 | `power menu [restart]` | the power menu, as when the key is held for 0.9 s (with voice on, power + a volume key): *slide to power off* (or *slide to restart* after tapping Restart), Restart / Power Off, Cancel |
 | `restart` | Moon quits cleanly (apps close, the phone locks) and runs the binary on disk again in the same process: an update goes live with no reboot, and the session, its mounts and the supervisor carry on (refused under Xwayland) |
 | `voice start\|send\|cancel` | hold the power key to talk to Exocortex, release, or drop it (`voice.md`) |
-| `open APP TARGET` | the app opens at a target, as a tapped notification does (after unlocking, when locked) |
+| `open APP TARGET` | the app opens at a target, as a tapped notification does (after unlocking, when locked); `open browser URL` opens the link in the Browser (`app-services.md`) |
 | `system poweroff\|reboot` | power off or restart now: Moon shows *Shutting down…* / *Restarting…*, then runs the supervisor's `/opt/a26-shell/bin/moon-power poweroff\|reboot` (docs/power.md), which starts the ordered shutdown and returns |
+
+## App services
+
+For apps (`app-services.md`):
+
+| Command | Effect |
+| --- | --- |
+| `keyboard show multiline` | the keyboard for a text area: Return types a newline and the keyboard stays |
+| `clipboard set "TEXT"` / `clipboard get` | the system clipboard (X11's CLIPBOARD, kept by Moon); TEXT is a JSON string |
+| `statusbar [APP] color #RRGGBB [light\|dark]` / `statusbar [APP] default` | the status bar over the app that asks (or APP) in its own colour, or black again |
 
 The battery policy is the supervisor's: its `moon` notifications tagged
 `battery-low` show as usual, and `battery-critical` turns into a full-screen

@@ -4,7 +4,9 @@ mod audio;
 mod backdrop;
 mod banner;
 mod brightness;
+mod browser_links;
 mod calls;
+mod clipboard;
 mod clock;
 mod compensation;
 mod compositor;
@@ -366,6 +368,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     raise_shell(&conn, shell_window)?;
     conn.set_input_focus(InputFocus::PARENT, shell_window, CURRENT_TIME)?;
     conn.flush()?;
+    // The system clipboard, on its own thread and X connection.
+    let clipboard = clipboard::Clipboard::start(keyboard_surface.window)
+        .inspect_err(|error| eprintln!("clipboard unavailable: {error}"))
+        .ok();
+    let mut status_styles = status_bar::AppStatusStyles::default();
+    let mut browser_links = browser_links::BrowserLinks::default();
+    let mut browser_link_serial = None;
 
     // The shell is composed server-side with RENDER and presented at vblank
     // through Present (see compositor.rs). Both are resolved here, before
@@ -977,10 +986,34 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 Ok(())
                             }
                         }
+                        // The app named, or the one asking (status_bar.rs).
+                        Command::StatusBar(app, style) => match app.or_else(|| {
+                            ipc::peer_pid(&stream).and_then(|pid| apps.app_of_process(pid))
+                        }) {
+                            None => Err("statusbar: not asked by an app (name one)"),
+                            Some(app) => apps
+                                .pid(app)
+                                .map(|pid| status_styles.set(app, pid, *style))
+                                .ok_or("statusbar: the app is not running"),
+                        },
+                        Command::ClipboardSet(text) => clipboard
+                            .as_ref()
+                            .ok_or("clipboard unavailable")
+                            .and_then(|clipboard| clipboard.set(text)),
                         _ => Ok(()),
                     };
                     if let Err(error) = lease_result {
                         ipc::respond::<model::PublicState>(stream, Err(error));
+                        continue;
+                    }
+                    if let Command::ClipboardSet(text) = &command {
+                        let chars = text.chars().count();
+                        ipc::respond(stream, Ok(&serde_json::json!({ "chars": chars })));
+                        continue;
+                    }
+                    if let Command::ClipboardGet = command {
+                        let text = clipboard.as_ref().and_then(clipboard::Clipboard::text);
+                        ipc::respond(stream, Ok(&serde_json::json!({ "text": text.as_deref() })));
                         continue;
                     }
                     if let Command::Brightness(request) = command {
@@ -1043,9 +1076,27 @@ fn main() -> Result<(), Box<dyn Error>> {
                         clock_24h: renderer.twenty_four_hour,
                     });
                     public.display = Some(brightness.public());
+                    public.status_bar = status_styles.public(|app| apps.pid(app));
                     ipc::respond(stream, Ok(&public));
                 }
                 Err(error) => ipc::respond::<model::PublicState>(stream, Err(&error)),
+            }
+        }
+
+        if std::mem::take(&mut state.paste_requested) {
+            let text = clipboard.as_ref().and_then(clipboard::Clipboard::text);
+            paste_clipboard(&conn, &mut state, text.as_deref(), &key_injector);
+        }
+        // `open browser URL` (or a notification's): the Browser gets the link.
+        if let Some(open) = state.open_target.as_ref()
+            && open.app == AppId::Browser
+            && browser_link_serial != Some(open.serial)
+        {
+            browser_link_serial = Some(open.serial);
+            if browser_links::valid_url(&open.target) {
+                browser_links.open(open.target.clone());
+            } else {
+                eprintln!("browser: an open target that is not an http or https link");
             }
         }
 
@@ -1200,6 +1251,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             app_viewport = desired_viewport;
+        }
+        if let Some(clipboard) = &clipboard {
+            state.keyboard.set_paste_available(clipboard.has_text());
         }
         keyboard_surface.sync(&conn, &mut state.keyboard, keyboard_app_window)?;
         let volume_visible = state.screen_awake
@@ -1461,10 +1515,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         // override-redirect surfaces from alternately covering one another.
         let status_bar_visible =
             state.screen_awake && state.view.is_app() && !state.shell_covers_app();
+        let status_style = apps
+            .active()
+            .and_then(|app| status_styles.get(app, apps.pid(app)));
         if status_bar_surface.sync(
             &conn,
             status_bar_visible,
             &StatusInfo::from_state(&state, renderer.twenty_four_hour),
+            status_style,
         )? {
             banner_surface.request_raise();
         }
@@ -3030,7 +3088,8 @@ fn repeat_keyboard_if_due(
             keyboard::KeyAction::Backspace => keyboard::KeyboardInput::Backspace,
             keyboard::KeyAction::Shift
             | keyboard::KeyAction::SwitchLayout(_)
-            | keyboard::KeyAction::Enter => continue,
+            | keyboard::KeyAction::Enter
+            | keyboard::KeyAction::Paste => continue,
         };
         let result = state
             .managed_windows
@@ -3360,8 +3419,56 @@ fn handle_keyboard_action(
         KeyboardEffect::Inject(input) => {
             inject_keyboard_input(conn, state, input, key_injector, None);
         }
-        KeyboardEffect::None => {}
+        // Typed by the main loop, from the clipboard (`paste_requested`).
+        KeyboardEffect::Paste | KeyboardEffect::None => {}
     }
+}
+
+/// The paste key: the clipboard's text is typed into the app in front, the
+/// way Moon's keys are (`keyboard::paste_inputs`).
+fn paste_clipboard(
+    conn: &RustConnection,
+    state: &mut ShellState,
+    text: Option<&str>,
+    key_injector: &XtestInjector,
+) {
+    let Some(text) = text.filter(|_| state.keyboard.is_visible()) else {
+        state.last_action = "paste_empty".into();
+        return;
+    };
+    let multiline = state.keyboard.purpose() == Some(keyboard::KeyboardPurpose::Multiline);
+    let wayland = state
+        .managed_windows
+        .first()
+        .is_some_and(|primary| state.wayland_windows.contains(primary));
+    let (inputs, mut skipped) = keyboard::paste_inputs(text, multiline, wayland);
+    if wayland {
+        state.wayland_keys.extend(inputs);
+    } else {
+        let result = state
+            .managed_windows
+            .first()
+            .copied()
+            .ok_or_else(|| "active app window is unavailable".into())
+            .and_then(|primary| {
+                key_injector.inject_text(conn, &inputs, primary, state.active_app_focused())
+            });
+        match result {
+            Ok(unresolved) => skipped += unresolved,
+            Err(error) => {
+                // Never the text: it may be a password.
+                eprintln!("paste failed: {error}");
+                state.last_action = "paste_failed".into();
+                return;
+            }
+        }
+    }
+    state.last_action = if skipped == 0 {
+        "paste"
+    } else {
+        "paste_partial"
+    }
+    .into();
 }
 
 fn inject_keyboard_input(
@@ -3423,7 +3530,10 @@ fn apply_command(
         | Command::ProfileBudget(_)
         | Command::ProfileFrames(_)
         | Command::SettingsSet(..)
-        | Command::Transition(_) => {}
+        | Command::Transition(_)
+        | Command::StatusBar(..)
+        | Command::ClipboardGet
+        | Command::ClipboardSet(_) => {}
         Command::TransitionReady => {
             if let Some(transition) = state.page_transition.as_mut() {
                 transition.ready(Instant::now());

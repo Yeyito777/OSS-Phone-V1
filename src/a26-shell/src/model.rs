@@ -329,6 +329,8 @@ pub struct ShellState {
     pub wayland_windows: Vec<u32>,
     pub wayland_keys: Vec<crate::keyboard::KeyboardInput>,
     pub keyboard: KeyboardState,
+    /// The paste key was pressed: the main loop types the clipboard.
+    pub paste_requested: bool,
     pub lock_face: LockFace,
     pub last_lock_input: Instant,
     pub pressed: Option<Press>,
@@ -438,6 +440,8 @@ pub struct PublicState {
     /// Brightness (docs/display-brightness.md); filled in by the backend.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display: Option<crate::brightness::PublicDisplay>,
+    /// The apps' own status bar colours (`statusbar color`), by app.
+    pub status_bar: std::collections::BTreeMap<&'static str, crate::status_bar::PublicStatusStyle>,
 }
 
 impl ShellState {
@@ -470,6 +474,7 @@ impl ShellState {
             wayland_windows: Vec::new(),
             wayland_keys: Vec::new(),
             keyboard: KeyboardState::default(),
+            paste_requested: false,
             lock_face: LockFace::Clock,
             last_lock_input: Instant::now(),
             pressed: None,
@@ -561,6 +566,7 @@ impl ShellState {
             time: None,
             animation: None,
             display: None,
+            status_bar: Default::default(),
         }
     }
 
@@ -1148,8 +1154,12 @@ impl ShellState {
             KeyAction::SwitchLayout(_) => "keyboard_layout",
             KeyAction::Enter => "keyboard_submit",
             KeyAction::Character(_) | KeyAction::Space | KeyAction::Backspace => "keyboard_input",
+            KeyAction::Paste => "keyboard_paste",
         }
         .into();
+        if effect == KeyboardEffect::Paste {
+            self.paste_requested = true;
+        }
         effect
     }
 

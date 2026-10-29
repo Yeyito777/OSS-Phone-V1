@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -72,6 +72,14 @@ pub enum Command {
     /// `haptic STYLE`: a tap haptic for an app's control (System's switches).
     /// (`haptic STYLE MS` plays that length once, for tuning.)
     Haptic(crate::notify_client::Haptic, Option<u32>),
+    /// `statusbar [APP] color #RRGGBB [light|dark]` / `statusbar [APP]
+    /// default`: the status bar over an app in its own colour, or back to
+    /// black (status_bar.rs). Without APP: the app asking.
+    StatusBar(Option<AppId>, Option<crate::status_bar::StatusStyle>),
+    /// `clipboard get`: the clipboard's text (clipboard.rs).
+    ClipboardGet,
+    /// `clipboard set "TEXT"` (a JSON string): the clipboard holds it.
+    ClipboardSet(String),
     Quit,
     /// `restart`: quit cleanly, then run the binary on disk again in the
     /// same process. An update goes live; the session, its mounts and the
@@ -104,6 +112,9 @@ impl Command {
     }
 }
 
+/// The longest command line: `clipboard set` with a 1 MiB text, escaped.
+const MAX_LINE: u64 = 8 << 20;
+
 pub struct IpcServer {
     listener: UnixListener,
     path: PathBuf,
@@ -135,7 +146,7 @@ impl IpcServer {
                     let _ = stream.set_read_timeout(Some(Duration::from_millis(150)));
                     let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
                     let mut line = String::new();
-                    let result = BufReader::new(&mut stream)
+                    let result = BufReader::new((&mut stream).take(MAX_LINE))
                         .read_line(&mut line)
                         .map_err(|error| error.to_string())
                         .and_then(|_| parse_command(line.trim()));
@@ -160,6 +171,27 @@ impl Drop for IpcServer {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
     }
+}
+
+/// The process on the other end of a connection.
+pub fn peer_pid(stream: &UnixStream) -> Option<u32> {
+    let mut credentials = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: SO_PEERCRED fills exactly one ucred of the given length.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut credentials as *mut libc::ucred).cast(),
+            &mut length,
+        )
+    };
+    (result == 0 && credentials.pid > 0).then_some(credentials.pid as u32)
 }
 
 pub fn respond<T: Serialize>(mut stream: UnixStream, result: Result<&T, &str>) {
@@ -189,6 +221,12 @@ pub fn respond<T: Serialize>(mut stream: UnixStream, result: Result<&T, &str>) {
 }
 
 fn parse_command(line: &str) -> Result<Command, String> {
+    // The text is one JSON string, spaces and all.
+    if let Some(text) = line.strip_prefix("clipboard set ") {
+        return serde_json::from_str::<String>(text.trim())
+            .map(Command::ClipboardSet)
+            .map_err(|_| "clipboard set requires a JSON string".into());
+    }
     let mut parts = line.split_whitespace();
     let name = parts.next().ok_or_else(|| "empty command".to_string())?;
     let parse_i16 = |value: Option<&str>, label: &str| {
@@ -280,6 +318,9 @@ fn parse_command(line: &str) -> Result<Command, String> {
         },
         "open" => match (parts.next().map(str::to_ascii_lowercase), parts.next()) {
             (Some(app), Some(target)) => match AppId::parse(&app) {
+                Some(AppId::Browser) if !crate::browser_links::valid_url(target) => {
+                    return Err("open browser requires an http or https URL".into());
+                }
                 Some(app) => Command::Open(app, target.to_owned()),
                 None => return Err("unknown app".into()),
             },
@@ -360,6 +401,35 @@ fn parse_command(line: &str) -> Result<Command, String> {
                 },
             ),
             None => return Err("haptic requires selection, light, medium or error".into()),
+        },
+        "statusbar" => {
+            let mut word = parts.next();
+            let app = word.and_then(AppId::parse);
+            if app.is_some() {
+                word = parts.next();
+            }
+            match word {
+                Some("color") => {
+                    let color = parts
+                        .next()
+                        .ok_or("statusbar color requires #RRGGBB [light|dark]")?;
+                    Command::StatusBar(
+                        app,
+                        Some(crate::status_bar::StatusStyle::parse(color, parts.next())?),
+                    )
+                }
+                Some("default") => Command::StatusBar(app, None),
+                _ => {
+                    return Err(
+                        "statusbar requires [APP] color #RRGGBB [light|dark] or [APP] default"
+                            .into(),
+                    );
+                }
+            }
+        }
+        "clipboard" => match parts.next() {
+            Some("get") => Command::ClipboardGet,
+            _ => return Err("clipboard requires get or set \"TEXT\"".into()),
         },
         "light-probe" => match parts.next() {
             Some("off") => Command::LightProbe(None),
@@ -503,6 +573,88 @@ mod tests {
         assert!(parse_command("voice send now").is_err());
         assert!(matches!(parse_command("restart"), Ok(Command::Restart)));
         assert!(parse_command("restart now").is_err());
+    }
+
+    #[test]
+    fn parses_multiline_keyboard_and_browser_links() {
+        assert!(matches!(
+            parse_command("keyboard show multiline"),
+            Ok(Command::KeyboardShow(KeyboardPurpose::Multiline))
+        ));
+        assert!(matches!(
+            parse_command("open browser https://example.com/a?b=c"),
+            Ok(Command::Open(AppId::Browser, url)) if url == "https://example.com/a?b=c"
+        ));
+        assert!(parse_command("open browser file:///etc/passwd").is_err());
+        assert!(parse_command("open browser example.com").is_err());
+        // Other apps' targets are theirs to read.
+        assert!(parse_command("open exocortex not-a-url").is_ok());
+    }
+
+    #[test]
+    fn parses_status_bar_colours_for_the_caller_or_a_named_app() {
+        use crate::status_bar::StatusStyle;
+        let navy = StatusStyle {
+            background: 0x00050f,
+            dark_content: false,
+        };
+        assert!(matches!(
+            parse_command("statusbar color #00050f"),
+            Ok(Command::StatusBar(None, Some(style))) if style == navy
+        ));
+        let white_light = StatusStyle {
+            background: 0xffffff,
+            dark_content: false,
+        };
+        assert!(matches!(
+            parse_command("statusbar exocortex color #ffffff light"),
+            Ok(Command::StatusBar(Some(AppId::Exocortex), Some(style))) if style == white_light
+        ));
+        assert!(matches!(
+            parse_command("statusbar default"),
+            Ok(Command::StatusBar(None, None))
+        ));
+        assert!(matches!(
+            parse_command("statusbar browser default"),
+            Ok(Command::StatusBar(Some(AppId::Browser), None))
+        ));
+        for bad in [
+            "statusbar",
+            "statusbar color",
+            "statusbar color blue",
+            "statusbar color #00050f grey",
+            "statusbar color #00050f dark extra",
+            "statusbar nowhere color #000000",
+            "statusbar default now",
+        ] {
+            assert!(parse_command(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn parses_clipboard_text_as_one_json_string() {
+        assert!(matches!(
+            parse_command("clipboard get"),
+            Ok(Command::ClipboardGet)
+        ));
+        assert!(matches!(
+            parse_command(r#"clipboard set "two  words\nand é""#),
+            Ok(Command::ClipboardSet(text)) if text == "two  words\nand é"
+        ));
+        assert!(matches!(
+            parse_command(r#"clipboard set """#),
+            Ok(Command::ClipboardSet(text)) if text.is_empty()
+        ));
+        for bad in [
+            "clipboard",
+            "clipboard set",
+            "clipboard set bare words",
+            r#"clipboard set "a" "b""#,
+            "clipboard get more",
+            "clipboard clear",
+        ] {
+            assert!(parse_command(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]
