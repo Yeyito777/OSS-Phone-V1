@@ -1648,7 +1648,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             deadline = deadline.min(now + Duration::from_micros(8_333));
         }
         if !state.animating(now) && !renderer.settling() && state.screen_awake {
-            if let Some(next) = renderer.prepare_idle(&conn, now)? {
+            if let Some(next) = renderer.prepare_idle(&conn, &state, now)? {
                 deadline = deadline.min(next);
             }
         }

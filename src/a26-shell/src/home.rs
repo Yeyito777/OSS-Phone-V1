@@ -1643,6 +1643,8 @@ impl ShellState {
         if self.home_ready() && self.switcher.is_none() {
             self.home
                 .touch_begin(&self.settings.home, x, y, Instant::now());
+            // The icon under the finger darkens.
+            self.redraw = true;
             self.home_effects();
         }
     }
@@ -2180,6 +2182,51 @@ mod tests {
         home.reset(&mut layout, at(start, 600));
         assert_eq!(layout.slot(AppId::Exocortex), Some(Slot::Grid(0)));
         assert!(!home.editing() && !home.live(at(start, 600)));
+    }
+
+    #[test]
+    fn the_shell_routes_commands_taps_and_locks_here() {
+        let mut state = ShellState::new(false, 50);
+        assert_eq!(state.view, View::Launcher);
+        // A command moves Browser into the grid; apps in neither list go.
+        state
+            .home_command(LayoutCommand::Set(
+                vec![AppId::Phone],
+                vec![AppId::Exocortex, AppId::Browser],
+            ))
+            .unwrap();
+        assert!(state.settings_changed);
+        assert_eq!(
+            state.settings.home.removed,
+            vec![AppId::System, AppId::Messages]
+        );
+        assert_eq!(state.home_icon_rect(AppId::Browser), grid_rect(1));
+        assert!(
+            state
+                .home_command(LayoutCommand::Remove(AppId::System))
+                .is_err()
+        );
+        // Home (the gesture, `ctl home`) leaves edit mode.
+        state.home_command(LayoutCommand::Edit(true)).unwrap();
+        assert!(state.home_public().editing);
+        state.home();
+        assert!(!state.home_public().editing);
+        // Locking ends it at once.
+        state.home_command(LayoutCommand::Edit(true)).unwrap();
+        state.lock();
+        assert!(state.home.editing.is_none());
+        assert!(state.home_command(LayoutCommand::Edit(true)).is_err());
+        // A tap opens an app from where its icon is now.
+        state.view = View::Launcher;
+        let (x, y) = grid_rect(1).center();
+        state.home_tap(x, y);
+        assert_eq!(state.view, View::Browser);
+        assert_eq!(
+            state.launch().map(|launch| launch.card.from),
+            Some(grid_rect(1))
+        );
+        state.home_command(LayoutCommand::Reset).unwrap();
+        assert_eq!(state.settings.home, HomeLayout::default());
     }
 
     #[test]

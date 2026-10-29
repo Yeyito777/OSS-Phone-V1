@@ -17,7 +17,9 @@ shell and window manager written in Rust (`a26-shell`). Release notes:
 
 Moon draws through its GPU compositor (`moon-compositor`) on a headless Xorg
 session. It provides a lock screen with clock and passcode keypad, a home
-screen with widgets, an app grid and a dock, icon-zoom app transitions, an app switcher with
+screen with widgets, an app grid and a dock that the user rearranges as on iPhone (hold an
+icon: it jiggles, drags and comes off; an App Library brings it back,
+[docs/home-screen.md](docs/home-screen.md)), icon-zoom app transitions, an app switcher with
 swipe-to-close, notifications (banners, a notification centre, the lock
 screen), Control Centre, alarms and timers, a power menu, low-battery and
 charging screens, an iPhone-style system keyboard, external X11 app lifecycle
@@ -185,6 +187,7 @@ scripts/a26-shell/ctl.sh screen off
 scripts/a26-shell/ctl.sh screen on
 scripts/a26-shell/ctl.sh launch system
 scripts/a26-shell/ctl.sh swipe-up
+scripts/a26-shell/ctl.sh layout reset
 scripts/a26-shell/ctl.sh volume up
 scripts/a26-shell/screenshot.sh
 ```

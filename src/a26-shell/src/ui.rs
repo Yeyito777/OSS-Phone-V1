@@ -1671,14 +1671,16 @@ impl Renderer {
     pub fn prepare_idle<C: Connection>(
         &mut self,
         conn: &C,
+        state: &ShellState,
         now: Instant,
     ) -> Result<Option<Instant>, Box<dyn Error>> {
         if now < self.next_idle_copy {
             return Ok(Some(self.next_idle_copy));
         }
         // Only copies that do not exist yet (after startup); changed ones
-        // are redrawn when a fade next shows them.
-        // Then the icons' jiggle sprites, one at a time.
+        // are redrawn when a fade next shows them. Then the live home
+        // screen's parts, so holding an icon never waits for them: each
+        // jiggle sprite, and the other layers.
         let sprite = AppId::ALL
             .into_iter()
             .find(|app| self.sprites[app.index()].is_none());
@@ -1690,14 +1692,14 @@ impl Renderer {
                 .create_some(conn, &mut self.compositor, 1)?;
         } else if let Some(app) = sprite {
             self.sprite(conn, app)?;
+        } else if self.library.key.is_none() && state.screen_awake {
+            let status = self.status(state);
+            self.refresh_live_layers(conn, state, &status, LocalTime::now())?;
         } else {
             return Ok(None);
         }
         self.next_idle_copy = now + IDLE_COPY_INTERVAL;
-        let missing = self.wall_levels.missing()
-            || self.home_levels.missing()
-            || self.sprites.iter().any(Option::is_none);
-        Ok(missing.then_some(self.next_idle_copy))
+        Ok(Some(self.next_idle_copy))
     }
 
     /// An app's jiggle sprite, drawn and uploaded if it is not yet.

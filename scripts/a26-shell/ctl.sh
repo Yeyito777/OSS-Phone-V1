@@ -7,7 +7,7 @@ SERIAL="$(a26_resolve_serial)"
 [[ $# -gt 0 ]] || { echo "usage: $0 COMMAND [ARGS...]" >&2; exit 2; }
 
 for argument in "$@"; do
-    [[ "$argument" =~ ^[A-Za-z0-9_./:+-]+$ ]] || {
+    [[ "$argument" =~ ^[A-Za-z0-9_.,/:+-]+$ ]] || {
         echo "unsupported control argument: $argument" >&2
         exit 2
     }
