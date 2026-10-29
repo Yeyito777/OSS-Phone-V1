@@ -462,6 +462,24 @@ fn toplevel_configure_commit_release_touch_and_text() {
     h.pump();
     assert_eq!(*h.client.committed.lock().unwrap(), "x");
     assert_eq!(h.client.keys, vec![28]);
+
+    // A text area (the multiline hint) gets the keyboard that keeps Return.
+    text.set_content_type(
+        zwp_text_input_v3::ContentHint::Multiline,
+        zwp_text_input_v3::ContentPurpose::Normal,
+    );
+    text.commit();
+    h.pump();
+    match h.server.take_events().as_slice() {
+        [
+            Event::TextInput {
+                enabled: true,
+                purpose: KeyboardPurpose::Multiline,
+                ..
+            },
+        ] => {}
+        other => panic!("expected a multiline text input, got {other:?}"),
+    }
 }
 
 mod clipboard {

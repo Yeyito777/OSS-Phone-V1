@@ -243,8 +243,14 @@ keyboard show url
 keyboard show search
 keyboard show password
 keyboard show number
+keyboard show multiline
 keyboard hide
 ```
+
+`multiline` is for a text area: Return types a newline and the keyboard stays
+up. The bottom row's paste key types the system clipboard into the app
+(`docs/app-services.md`, with `clipboard set`/`get` and Moon's CLIPBOARD
+ownership).
 
 There is no keyboard event socket. Moon leaves X focus on the app and emits each
 key through XTEST using the server keyboard and modifier maps. Runtime input is
@@ -286,7 +292,8 @@ never present in public state.
 
 Managed apps begin at physical Y=124 rather than drawing underneath the A26's
 camera cutout. Moon owns that 124-pixel strip as a separate override-redirect,
-double-buffered X11 surface: black, so the notch disappears into it, with the
+double-buffered X11 surface: black, so the notch disappears into it (or the
+app's own colour, `statusbar color`, docs/app-services.md), with the
 time in the left safe region, Wi-Fi and battery in the right one, and the
 center cutout region visually quiet. The lock and home screens draw the same
 status content directly over the wallpaper. App height is reduced exactly once. When the global keyboard is

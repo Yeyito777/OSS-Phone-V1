@@ -497,6 +497,28 @@ impl AppRegistry {
         }
     }
 
+    /// The app's process, while it runs.
+    pub fn pid(&self, app: AppId) -> Option<u32> {
+        self.app(app).pid()
+    }
+
+    /// The app a process belongs to: the app's own process or one of its
+    /// descendants (the Browser's CEF helpers, a tool an app runs).
+    pub fn app_of_process(&self, pid: u32) -> Option<AppId> {
+        let mut pid = pid;
+        for _ in 0..32 {
+            if let Some(app) = AppId::ALL
+                .into_iter()
+                .find(|app| self.pid(*app) == Some(pid))
+            {
+                return Some(app);
+            }
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+            pid = parent_pid(&stat).filter(|parent| *parent > 1)?;
+        }
+        None
+    }
+
     pub fn browser_running(&self) -> bool {
         self.app(AppId::Browser).lifecycle != AppLifecycle::Stopped
     }
@@ -580,6 +602,17 @@ impl AppRegistry {
     }
 }
 
+/// The parent in a `/proc/PID/stat` line (the name may hold spaces and
+/// parentheses: the fields resume after the last `)`).
+fn parent_pid(stat: &str) -> Option<u32> {
+    stat.rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
+}
+
 fn open_pidfd(pid: u32) -> io::Result<OwnedFd> {
     // SAFETY: pidfd_open has no pointer arguments. A successful returned fd is
     // uniquely owned here and immediately wrapped in OwnedFd.
@@ -604,6 +637,41 @@ mod tests {
 
     fn registry() -> AppRegistry {
         AppRegistry::new("/bin/true".into(), "/bin/true".into())
+    }
+
+    #[test]
+    fn a_process_belongs_to_the_app_it_descends_from() {
+        assert_eq!(parent_pid("412 (a26-system) S 77 412 412 0"), Some(77));
+        assert_eq!(parent_pid("9 (we ird) (x) R 3 9 9"), Some(3));
+        assert_eq!(parent_pid("garbage"), None);
+
+        let mut registry = registry();
+        // An app that runs a tool (as an app runs a26-shellctl, or CEF its
+        // helpers) and says which.
+        let mut app = Command::new("sh")
+            .args(["-c", "sleep 30 & echo $!; wait"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(app.stdout.take().unwrap()),
+            &mut line,
+        )
+        .unwrap();
+        let child: u32 = line.trim().parse().unwrap();
+        let app_pid = app.id();
+        registry.app_mut(AppId::Exocortex).child = Some(app);
+        assert_eq!(registry.pid(AppId::Exocortex), Some(app_pid));
+        assert_eq!(registry.app_of_process(app_pid), Some(AppId::Exocortex));
+        assert_eq!(registry.app_of_process(child), Some(AppId::Exocortex));
+        // Not an app's: this test, and pids that do not exist.
+        assert_eq!(registry.app_of_process(std::process::id()), None);
+        assert_eq!(registry.app_of_process(u32::MAX), None);
+        let _ = std::process::Command::new("kill")
+            .arg(child.to_string())
+            .status();
+        registry.shutdown();
     }
 
     #[test]

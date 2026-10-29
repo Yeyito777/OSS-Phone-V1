@@ -7,7 +7,7 @@ use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_manager_v3::{
     self, ZwpTextInputManagerV3,
 };
 use wayland_protocols::wp::text_input::zv3::server::zwp_text_input_v3::{
-    self, ContentPurpose, ZwpTextInputV3,
+    self, ContentHint, ContentPurpose, ZwpTextInputV3,
 };
 use wayland_server::protocol::wl_surface::WlSurface;
 use wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource};
@@ -25,9 +25,9 @@ struct Input {
     /// The surface this input has entered (the focused one), if any.
     entered: Option<WlSurface>,
     pending_enabled: Option<bool>,
-    pending_purpose: Option<ContentPurpose>,
+    pending_purpose: Option<(ContentPurpose, ContentHint)>,
     enabled: bool,
-    purpose: ContentPurpose,
+    purpose: (ContentPurpose, ContentHint),
     commits: u32,
 }
 
@@ -46,8 +46,13 @@ pub(crate) fn create_globals(handle: &DisplayHandle) {
     handle.create_global::<WlState, ZwpTextInputManagerV3, ()>(1, ());
 }
 
-fn purpose(value: ContentPurpose) -> KeyboardPurpose {
+fn purpose((value, hint): (ContentPurpose, ContentHint)) -> KeyboardPurpose {
     match value {
+        ContentPurpose::Normal | ContentPurpose::Alpha | ContentPurpose::Name
+            if hint.contains(ContentHint::Multiline) =>
+        {
+            KeyboardPurpose::Multiline
+        }
         ContentPurpose::Digits
         | ContentPurpose::Number
         | ContentPurpose::Phone
@@ -97,7 +102,7 @@ impl Dispatch<ZwpTextInputManagerV3, ()> for WlState {
                 pending_enabled: None,
                 pending_purpose: None,
                 enabled: false,
-                purpose: ContentPurpose::Normal,
+                purpose: (ContentPurpose::Normal, ContentHint::None),
                 commits: 0,
             });
         }
@@ -127,12 +132,13 @@ impl Dispatch<ZwpTextInputV3, ()> for WlState {
             zwp_text_input_v3::Request::Enable => {
                 input.pending_enabled = Some(true);
                 // Enable resets the state to its defaults.
-                input.pending_purpose = Some(ContentPurpose::Normal);
+                input.pending_purpose = Some((ContentPurpose::Normal, ContentHint::None));
             }
             zwp_text_input_v3::Request::Disable => input.pending_enabled = Some(false),
-            zwp_text_input_v3::Request::SetContentType { purpose, .. } => {
+            zwp_text_input_v3::Request::SetContentType { hint, purpose } => {
                 if let Ok(purpose) = purpose.into_result() {
-                    input.pending_purpose = Some(purpose);
+                    let hint = hint.into_result().unwrap_or(ContentHint::None);
+                    input.pending_purpose = Some((purpose, hint));
                 }
             }
             zwp_text_input_v3::Request::Commit => {

@@ -86,7 +86,46 @@ the hold opens the menu whatever the setting says.
   what was said. `EXOCORTEX_VOICE_PROVIDER` / `EXOCORTEX_VOICE_MODEL` pick
   another model for new conversations; `exocortex-voice send FILE.wav` sends
   a recording; `EXOCORTEX_VOICE_CAPTURE=CMD` replaces the microphone with a
-  command printing 16 kHz PCM (testing).
+  command printing 16 kHz PCM (testing). `exocortex-voice dictate` records
+  for an app and returns the text instead (below).
+
+## Dictation for apps
+
+`exocortex-voice dictate` is for an app's own mic button (the Exocortex
+app's composer): it records as `record` does but gives the words back to the
+app instead of sending them. The app runs the hook itself
+(`/usr/local/bin/exocortex-voice dictate`) with pipes on stdin and stdout:
+
+```
+ app                                   exocortex-voice dictate
+ ───                                   ───────────────────────
+ mic tapped ─ spawn ─────────────────► records at once (the same capture)
+ strip ◄────── "level L\n" (stdout) ── every 50 ms while recording
+ "stop\n" or "cancel\n" (stdin) ────► stops recording
+ text at the caret ◄─ "text \"…\"\n" │ "error MESSAGE\n", then it exits
+```
+
+- stdin: `stop` transcribes; `cancel`, anything else or end of input drops
+  the recording: no answer line, exit 0.
+- stdout: `level L` lines while recording (L in 0..1, as for Moon's orb),
+  then after `stop` exactly one line: `text` and the transcription as one
+  JSON string (exit 0; `text ""` when nothing was said), or `error` and a
+  one-line message (exit 1): `The microphone recorded nothing.`, `Exocortex
+  is not running.`, `Transcription failed: …`.
+- Nothing is sent and no notification is posted. stderr carries the hook's
+  log lines (never the words). Recording stops by itself after 120 s (the
+  capture's limit); `EXOCORTEX_VOICE_CAPTURE` replaces the microphone, as for
+  `record`.
+- One microphone: an app should not dictate while Moon listens
+  (`voice_listening` in `state`).
+
+Verified on the A26 (2026-10-29) with a recording replayed at about real
+time through `EXOCORTEX_VOICE_CAPTURE`: 69 `level` lines over 7 s, then
+`text "Please float test. Please reply with just the word okay."` (the
+daemon transcribed it in 0.9 s); `cancel` and end of input printed nothing
+and exited 0; silence gave `text ""`; a capture that failed gave `error The
+microphone recorded nothing.` and no daemon `error Exocortex is not
+running.`; no conversation got a message.
 
 ## Control socket
 

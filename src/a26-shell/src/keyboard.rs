@@ -52,6 +52,8 @@ pub enum KeyboardPurpose {
     Search,
     Password,
     Number,
+    /// A text area: Return types a newline and the keyboard stays up.
+    Multiline,
 }
 
 impl KeyboardPurpose {
@@ -62,6 +64,7 @@ impl KeyboardPurpose {
             "search" => Some(Self::Search),
             "password" => Some(Self::Password),
             "number" => Some(Self::Number),
+            "multiline" => Some(Self::Multiline),
             _ => None,
         }
     }
@@ -70,7 +73,7 @@ impl KeyboardPurpose {
         match self {
             Self::Url => "GO",
             Self::Search => "SEARCH",
-            Self::Text => "RETURN",
+            Self::Text | Self::Multiline => "RETURN",
             Self::Password | Self::Number => "DONE",
         }
     }
@@ -102,6 +105,8 @@ pub struct KeyboardState {
     pressed_key_indices: Vec<usize>,
     redraw: bool,
     raise_pending: bool,
+    /// The clipboard holds text (the paste key is lit).
+    paste_available: bool,
 }
 
 impl Default for KeyboardState {
@@ -114,6 +119,7 @@ impl Default for KeyboardState {
             pressed_key_indices: Vec::new(),
             redraw: false,
             raise_pending: false,
+            paste_available: false,
         }
     }
 }
@@ -168,6 +174,18 @@ impl KeyboardState {
 
     pub fn shift(&self) -> bool {
         self.shift
+    }
+
+    pub fn paste_available(&self) -> bool {
+        self.paste_available
+    }
+
+    /// Lights or dims the paste key as the clipboard gains or loses text.
+    pub fn set_paste_available(&mut self, available: bool) {
+        if self.paste_available != available {
+            self.paste_available = available;
+            self.request_redraw();
+        }
     }
 
     pub fn press_key_index(&mut self, index: usize) {
@@ -258,10 +276,15 @@ impl KeyboardState {
             KeyAction::SwitchLayout(_) => KeyboardEffect::None,
             KeyAction::Space => KeyboardEffect::Inject(KeyboardInput::Character(' ')),
             KeyAction::Backspace => KeyboardEffect::Inject(KeyboardInput::Backspace),
+            // In a text area Return is a newline and the keyboard stays.
+            KeyAction::Enter if self.purpose == Some(KeyboardPurpose::Multiline) => {
+                KeyboardEffect::Inject(KeyboardInput::Enter)
+            }
             KeyAction::Enter => {
                 self.hide();
                 KeyboardEffect::Inject(KeyboardInput::Enter)
             }
+            KeyAction::Paste => KeyboardEffect::Paste,
         }
     }
 }
@@ -274,6 +297,8 @@ pub enum KeyAction {
     Space,
     Backspace,
     Enter,
+    /// Types the clipboard's text into the app (`paste_inputs`).
+    Paste,
 }
 
 impl KeyAction {
@@ -293,6 +318,43 @@ pub enum KeyboardInput {
 pub enum KeyboardEffect {
     None,
     Inject(KeyboardInput),
+    /// The main loop types the clipboard's text.
+    Paste,
+}
+
+/// The most one paste types, in characters (one key each).
+pub const PASTE_LIMIT: usize = 32 * 1024;
+
+/// What pasting `text` types: its characters; a line break as Return in a
+/// text area (`multiline`) and as a space in a one-line field (as iPhone
+/// pastes into one), a tab as four spaces or one. Other control characters
+/// are left out, and so is what the app cannot receive: through XTEST and
+/// the server's US keymap only ASCII (`unicode` is Wayland's text-input).
+/// Returns the inputs and how many characters were left out.
+pub fn paste_inputs(text: &str, multiline: bool, unicode: bool) -> (Vec<KeyboardInput>, usize) {
+    let mut inputs = Vec::with_capacity(text.len().min(PASTE_LIMIT));
+    let mut skipped = 0;
+    let mut after_cr = false;
+    for character in text.chars() {
+        if inputs.len() >= PASTE_LIMIT {
+            skipped += 1;
+            continue;
+        }
+        let cr = std::mem::replace(&mut after_cr, character == '\r');
+        match character {
+            '\n' if cr => {}
+            '\n' | '\r' if multiline => inputs.push(KeyboardInput::Enter),
+            '\n' | '\r' => inputs.push(KeyboardInput::Character(' ')),
+            '\t' => {
+                let spaces = if multiline { 4 } else { 1 };
+                inputs.extend(std::iter::repeat_n(KeyboardInput::Character(' '), spaces));
+            }
+            c if c.is_control() || !(unicode || c.is_ascii()) => skipped += 1,
+            c => inputs.push(KeyboardInput::Character(c)),
+        }
+    }
+    inputs.truncate(PASTE_LIMIT);
+    (inputs, skipped)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -589,14 +651,16 @@ impl KeyboardGeometry {
             .purpose()
             .unwrap_or(KeyboardPurpose::Text)
             .submit_label();
+        // The paste key sits where iPhone has its emoji key.
         if state.purpose() == Some(KeyboardPurpose::Url) {
             self.add_row(
                 keys,
                 3,
                 16,
                 &[
-                    (switch_label, KeyAction::SwitchLayout(switch_to), 18),
-                    ("SPACE", KeyAction::Space, 48),
+                    (switch_label, KeyAction::SwitchLayout(switch_to), 16),
+                    ("PASTE", KeyAction::Paste, 12),
+                    ("SPACE", KeyAction::Space, 38),
                     (".", KeyAction::Character('.'), 12),
                     (submit, KeyAction::Enter, 22),
                 ],
@@ -607,9 +671,10 @@ impl KeyboardGeometry {
                 3,
                 16,
                 &[
-                    (switch_label, KeyAction::SwitchLayout(switch_to), 20),
-                    ("SPACE", KeyAction::Space, 60),
-                    (submit, KeyAction::Enter, 20),
+                    (switch_label, KeyAction::SwitchLayout(switch_to), 16),
+                    ("PASTE", KeyAction::Paste, 12),
+                    ("SPACE", KeyAction::Space, 50),
+                    (submit, KeyAction::Enter, 22),
                 ],
             );
         }
@@ -1013,7 +1078,11 @@ fn key_style(key: &KeyboardKey, state: &KeyboardState) -> (Rgb, bool) {
     let purpose = state.purpose().unwrap_or(KeyboardPurpose::Text);
     match key.action {
         KeyAction::Character(_) | KeyAction::Space => (LETTER_KEY, true),
-        KeyAction::Enter if purpose != KeyboardPurpose::Text => (BLUE, false),
+        KeyAction::Enter
+            if !matches!(purpose, KeyboardPurpose::Text | KeyboardPurpose::Multiline) =>
+        {
+            (BLUE, false)
+        }
         KeyAction::Shift if state.shift() => (WHITE, false),
         _ if state.layout() == KeyboardLayout::NumberPad => (LETTER_KEY, true),
         _ => (FUNCTION_KEY, false),
@@ -1046,6 +1115,10 @@ fn draw_key(canvas: &mut Canvas, key: &KeyboardKey, state: &KeyboardState, press
     match key.action {
         KeyAction::Shift => draw_shift(canvas, cx, cy, state.shift(), ink),
         KeyAction::Backspace => draw_delete(canvas, cx, cy, ink),
+        KeyAction::Paste => {
+            let alpha = if state.paste_available() { 1.0 } else { 0.35 };
+            draw_paste(canvas, cx, cy, ink, fill, alpha);
+        }
         _ => {
             let label = display_label(key, state);
             let single = label.chars().count() == 1;
@@ -1133,6 +1206,27 @@ fn draw_delete(canvas: &mut Canvas, cx: f32, cy: f32, ink: Rgb) {
     canvas.fill_path(&path, ink, 1.0);
 }
 
+/// A clipboard: an outlined board with its clip on top (dimmed while the
+/// clipboard holds no text).
+fn draw_paste(canvas: &mut Canvas, cx: f32, cy: f32, ink: Rgb, fill: Rgb, alpha: f32) {
+    canvas.fill_rrect(
+        RectF::new(cx - 23.0, cy - 24.0, 46.0, 54.0),
+        8.0,
+        ink,
+        alpha,
+    );
+    canvas.fill_rrect(RectF::new(cx - 18.5, cy - 19.5, 37.0, 45.0), 4.0, fill, 1.0);
+    canvas.fill_rrect(
+        RectF::new(cx - 13.0, cy - 32.0, 26.0, 15.0),
+        5.0,
+        ink,
+        alpha,
+    );
+    for dy in [-2.0, 8.0] {
+        canvas.fill_rrect(RectF::new(cx - 10.0, cy + dy, 20.0, 4.5), 2.0, ink, alpha);
+    }
+}
+
 pub struct XtestInjector {
     root: Window,
     mapping: Option<ServerKeyboardMapping>,
@@ -1173,7 +1267,7 @@ impl XtestInjector {
         primary_app: Window,
         focus_within_active_app: bool,
     ) -> Result<(), Box<dyn Error>> {
-        let mapping = self.mapping.as_ref().ok_or("XTEST is unavailable")?;
+        self.mapping.as_ref().ok_or("XTEST is unavailable")?;
         if primary_app == 0 || !focus_within_active_app {
             return Err("X focus is outside the active app".into());
         }
@@ -1190,39 +1284,8 @@ impl XtestInjector {
         // Queue the complete sequence without checked cookies. Any protocol error
         // remains asynchronous and is handled by the ordinary X event loop; input
         // can no longer block shell IPC, touch, power, or volume handling.
-        let keysym = match input {
-            KeyboardInput::Character(character) if character.is_ascii() => character as Keysym,
-            KeyboardInput::Character(_) => {
-                return Err("non-ASCII keyboard input is unsupported".into());
-            }
-            KeyboardInput::Backspace => XK_BACK_SPACE,
-            KeyboardInput::Enter => XK_RETURN,
-        };
-        let resolved = mapping
-            .resolve(keysym)
-            .ok_or("keysym is absent from the X server keyboard mapping")?;
-
-        let mut modifiers = [None, None];
-        if resolved.level3 {
-            modifiers[0] = mapping.level3_keycode;
-        }
-        if resolved.shift {
-            modifiers[1] = mapping.shift_keycode;
-        }
-        if (resolved.level3 && modifiers[0].is_none()) || (resolved.shift && modifiers[1].is_none())
-        {
-            return Err("required modifier is absent from the X server mapping".into());
-        }
-
-        let modifiers: Vec<Keycode> = modifiers.into_iter().flatten().collect();
-        for keycode in modifiers.iter().copied() {
-            self.fake_key_unchecked(conn, KEY_PRESS_EVENT, keycode)?;
-        }
-        self.fake_key_unchecked(conn, KEY_PRESS_EVENT, resolved.keycode)?;
-        self.fake_key_unchecked(conn, KEY_RELEASE_EVENT, resolved.keycode)?;
-        for keycode in modifiers.iter().copied().rev() {
-            self.fake_key_unchecked(conn, KEY_RELEASE_EVENT, keycode)?;
-        }
+        let (modifiers, keycode) = self.resolve_input(input)?;
+        self.queue_key(conn, &modifiers, keycode)?;
         conn.flush()?;
         Ok(())
     }
@@ -1242,10 +1305,48 @@ impl XtestInjector {
         if count == 0 {
             return Ok(());
         }
-        let mapping = self.mapping.as_ref().ok_or("XTEST is unavailable")?;
+        self.mapping.as_ref().ok_or("XTEST is unavailable")?;
         if primary_app == 0 || !focus_within_active_app {
             return Err("X focus is outside the active app".into());
         }
+        let (modifiers, keycode) = self.resolve_input(input)?;
+        for _ in 0..count {
+            self.queue_key(conn, &modifiers, keycode)?;
+        }
+        conn.flush()?;
+        Ok(())
+    }
+
+    /// Types a whole sequence (a paste) in one batch, one-way like `inject`.
+    /// Inputs the server's keymap cannot type are left out; returns how many.
+    pub fn inject_text<C: Connection>(
+        &self,
+        conn: &C,
+        inputs: &[KeyboardInput],
+        primary_app: Window,
+        focus_within_active_app: bool,
+    ) -> Result<usize, Box<dyn Error>> {
+        self.mapping.as_ref().ok_or("XTEST is unavailable")?;
+        if primary_app == 0 || !focus_within_active_app {
+            return Err("X focus is outside the active app".into());
+        }
+        let mut skipped = 0;
+        for input in inputs.iter().copied() {
+            match self.resolve_input(input) {
+                Ok((modifiers, keycode)) => self.queue_key(conn, &modifiers, keycode)?,
+                Err(_) => skipped += 1,
+            }
+        }
+        conn.flush()?;
+        Ok(skipped)
+    }
+
+    /// The keycode that types `input` and the modifiers held around it.
+    fn resolve_input(
+        &self,
+        input: KeyboardInput,
+    ) -> Result<(Vec<Keycode>, Keycode), Box<dyn Error>> {
+        let mapping = self.mapping.as_ref().ok_or("XTEST is unavailable")?;
         let keysym = match input {
             KeyboardInput::Character(character) if character.is_ascii() => character as Keysym,
             KeyboardInput::Character(_) => {
@@ -1269,18 +1370,24 @@ impl XtestInjector {
         {
             return Err("required modifier is absent from the X server mapping".into());
         }
-        let modifiers: Vec<Keycode> = modifiers.into_iter().flatten().collect();
-        for _ in 0..count {
-            for keycode in modifiers.iter().copied() {
-                self.fake_key_unchecked(conn, KEY_PRESS_EVENT, keycode)?;
-            }
-            self.fake_key_unchecked(conn, KEY_PRESS_EVENT, resolved.keycode)?;
-            self.fake_key_unchecked(conn, KEY_RELEASE_EVENT, resolved.keycode)?;
-            for keycode in modifiers.iter().copied().rev() {
-                self.fake_key_unchecked(conn, KEY_RELEASE_EVENT, keycode)?;
-            }
+        Ok((modifiers.into_iter().flatten().collect(), resolved.keycode))
+    }
+
+    /// Queues one key press and release with its modifiers held around it.
+    fn queue_key<C: Connection>(
+        &self,
+        conn: &C,
+        modifiers: &[Keycode],
+        keycode: Keycode,
+    ) -> Result<(), Box<dyn Error>> {
+        for modifier in modifiers.iter().copied() {
+            self.fake_key_unchecked(conn, KEY_PRESS_EVENT, modifier)?;
         }
-        conn.flush()?;
+        self.fake_key_unchecked(conn, KEY_PRESS_EVENT, keycode)?;
+        self.fake_key_unchecked(conn, KEY_RELEASE_EVENT, keycode)?;
+        for modifier in modifiers.iter().copied().rev() {
+            self.fake_key_unchecked(conn, KEY_RELEASE_EVENT, modifier)?;
+        }
         Ok(())
     }
 
@@ -1459,6 +1566,7 @@ mod tests {
             (KeyboardPurpose::Url, "GO"),
             (KeyboardPurpose::Search, "SEARCH"),
             (KeyboardPurpose::Password, "DONE"),
+            (KeyboardPurpose::Multiline, "RETURN"),
         ] {
             let state = visible(purpose);
             assert!(
@@ -1469,6 +1577,129 @@ mod tests {
                 "missing submit label for {purpose:?}"
             );
         }
+    }
+
+    #[test]
+    fn multiline_return_types_a_newline_and_keeps_the_keyboard() {
+        assert_eq!(
+            KeyboardPurpose::parse("multiline"),
+            Some(KeyboardPurpose::Multiline)
+        );
+        let mut state = visible(KeyboardPurpose::Multiline);
+        assert!(matches!(
+            state.activate(KeyAction::Enter),
+            KeyboardEffect::Inject(KeyboardInput::Enter)
+        ));
+        assert!(state.is_visible());
+        assert_eq!(state.purpose(), Some(KeyboardPurpose::Multiline));
+        let return_key = KeyboardGeometry::new(1080, 2340)
+            .keys(&state)
+            .into_iter()
+            .find(|key| key.action == KeyAction::Enter)
+            .unwrap();
+        assert_eq!(key_style(&return_key, &state).0, FUNCTION_KEY);
+
+        // Every other purpose still submits and hides.
+        let mut state = visible(KeyboardPurpose::Text);
+        assert!(matches!(
+            state.activate(KeyAction::Enter),
+            KeyboardEffect::Inject(KeyboardInput::Enter)
+        ));
+        assert!(!state.is_visible());
+        let public = serde_json::to_value(visible(KeyboardPurpose::Multiline).public()).unwrap();
+        assert_eq!(public["purpose"], "multiline");
+    }
+
+    #[test]
+    fn paste_key_is_on_every_letter_page_but_not_the_number_pad() {
+        let geometry = KeyboardGeometry::new(1080, 2340);
+        for purpose in [
+            KeyboardPurpose::Text,
+            KeyboardPurpose::Url,
+            KeyboardPurpose::Search,
+            KeyboardPurpose::Password,
+            KeyboardPurpose::Multiline,
+        ] {
+            let mut state = visible(purpose);
+            for layout in [
+                KeyboardLayout::Letters,
+                KeyboardLayout::Numbers,
+                KeyboardLayout::Symbols,
+            ] {
+                state.activate(KeyAction::SwitchLayout(layout));
+                let keys = geometry.keys(&state);
+                let paste = keys.iter().find(|key| key.action == KeyAction::Paste);
+                let paste = paste.unwrap_or_else(|| panic!("no paste key: {purpose:?} {layout:?}"));
+                // About a letter key and a third wide, on the bottom row.
+                assert_eq!(paste.rect.y, ROW_Y[3] as i16);
+                assert!(
+                    (110..140).contains(&paste.rect.width),
+                    "{}",
+                    paste.rect.width
+                );
+            }
+            assert!(matches!(
+                state.activate(KeyAction::Paste),
+                KeyboardEffect::Paste
+            ));
+            assert!(state.is_visible());
+        }
+        let state = visible(KeyboardPurpose::Number);
+        assert!(
+            geometry
+                .keys(&state)
+                .iter()
+                .all(|key| key.action != KeyAction::Paste)
+        );
+    }
+
+    #[test]
+    fn paste_key_lights_with_the_clipboard() {
+        let mut state = visible(KeyboardPurpose::Text);
+        state.clear_redraw();
+        assert!(!state.paste_available());
+        state.set_paste_available(true);
+        assert!(state.paste_available() && state.needs_redraw());
+        state.clear_redraw();
+        state.set_paste_available(true);
+        assert!(!state.needs_redraw());
+        // Hidden, it repaints on the next show (and the state survives).
+        state.hide();
+        state.set_paste_available(false);
+        assert!(!state.needs_redraw() && !state.paste_available());
+    }
+
+    #[test]
+    fn paste_types_lines_by_purpose_and_leaves_out_what_it_cannot() {
+        use KeyboardInput::{Character as C, Enter};
+        let (inputs, skipped) = paste_inputs("a b\r\nc\td\u{7}é", true, false);
+        assert_eq!(
+            inputs,
+            [
+                C('a'),
+                C(' '),
+                C('b'),
+                Enter,
+                C('c'),
+                C(' '),
+                C(' '),
+                C(' '),
+                C(' '),
+                C('d')
+            ]
+        );
+        assert_eq!(skipped, 2, "the bell and é");
+        let (inputs, skipped) = paste_inputs("x\ny\rz\tw", false, false);
+        assert_eq!(
+            inputs,
+            [C('x'), C(' '), C('y'), C(' '), C('z'), C(' '), C('w')]
+        );
+        assert_eq!(skipped, 0);
+        // Wayland's text-input takes any character.
+        assert_eq!(paste_inputs("é✓", false, true), (vec![C('é'), C('✓')], 0));
+        let long = "a".repeat(PASTE_LIMIT + 5);
+        let (inputs, skipped) = paste_inputs(&long, false, false);
+        assert_eq!((inputs.len(), skipped), (PASTE_LIMIT, 5));
     }
 
     #[test]
@@ -1525,6 +1756,7 @@ mod tests {
             KeyAction::Shift,
             KeyAction::SwitchLayout(KeyboardLayout::Numbers),
             KeyAction::Enter,
+            KeyAction::Paste,
         ] {
             assert!(!action.is_repeatable());
         }
@@ -1553,7 +1785,7 @@ mod tests {
         assert_eq!(rows[2][8].label, "DEL");
         assert_eq!(
             rows[3].iter().map(|key| key.label).collect::<Vec<_>>(),
-            ["123", "SPACE", "RETURN"]
+            ["123", "PASTE", "SPACE", "RETURN"]
         );
         assert!(rows[1][0].rect.x > rows[0][0].rect.x);
         assert!(rows[2][0].rect.width > rows[2][1].rect.width);

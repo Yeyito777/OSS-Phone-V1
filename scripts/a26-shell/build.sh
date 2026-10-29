@@ -55,6 +55,10 @@ startup_keyboard_round_trips = {
 }
 seen_startup_keyboard_round_trips = {line: 0 for line in startup_keyboard_round_trips}
 for path in sorted(source_dir.glob("*.rs")):
+    if path.name == "clipboard.rs":
+        # The clipboard thread's own X connection waits as X clients do; it
+        # never touches the event loop's connection.
+        continue
     text = path.read_text()
     runtime_offset = 0
     if path.name == "main.rs":
