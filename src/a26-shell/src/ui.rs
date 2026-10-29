@@ -18,7 +18,7 @@ use crate::calls;
 use crate::clock::LocalTime;
 use crate::compositor::{Compositor, Frame, Node, SurfaceId};
 use crate::gfx::{self, Canvas, Image, Path, RectF, Rgb};
-use crate::home::{self, DOCK, DOCK_RADIUS, HomeLayout, IconView, Slot};
+use crate::home::{self, DOCK, DOCK_RADIUS, HomeLayout, IconView, Item, Slot, Widget, WidgetView};
 use crate::interaction::{CARD_RADIUS, SCREEN, SCREEN_H, SCREEN_W, SWITCHER_DIM};
 use crate::model::{AppId, Press, SHAKE_ANIMATION, ShellState, UNLOCK_ANIMATION, View};
 use crate::power;
@@ -49,11 +49,12 @@ const BROWSER_ICON_PATH: &str = "/opt/vimbrowser-a26/share/browser-app.bgrx";
 pub const ICON_SIZE: i32 = 168;
 pub const ICON_RADIUS: f32 = 38.0;
 const SPLASH_ICON_SIZE: f32 = 236.0;
-/// The two widgets at the top of the home page (the icon grid and the dock
-/// are home.rs's).
-pub const WIDGET_TOP: f32 = 186.0;
-pub const WIDGET_SIZE: f32 = 422.0;
+/// The widgets' corner radius (their places are home.rs's).
 const WIDGET_RADIUS: f32 = 62.0;
+/// Widget sprites: a widget and its shadow, turned (home::WIDGET_FRAMES
+/// ways) side by side, each frame the widget plus this margin.
+const WIDGET_PAD: i32 = 56;
+const WIDGET_SPRITE: i32 = home::WIDGET_SIZE as i32 + 2 * WIDGET_PAD;
 /// Grid icons' names (as on iOS; the dock's icons have none).
 const HOME_LABEL_SIZE: f32 = 33.0;
 /// A layer with one name, and where its baseline is.
@@ -66,8 +67,6 @@ const SPRITE_PAD: i32 = 16;
 const SPRITE: i32 = ICON_SIZE + 2 * SPRITE_PAD;
 /// The removal badge's layer (its shadow around it).
 const BADGE_LAYER: i32 = 80;
-/// The widgets' layer (with their shadows) for the edit and paging frames.
-const WIDGETS_H: i32 = 680;
 /// How much the App Library darkens the wallpaper.
 const LIBRARY_DIM: f32 = 0.38;
 
@@ -400,17 +399,21 @@ pub struct Renderer {
     voice_core: Layer<()>,
     voice_label: Layer<bool>,
     /// The home screen while live (editing, the App Library; home.rs),
-    /// in parts: the widgets, the dock's shelf, the status bar, the App
-    /// Library, edit mode's Done button and badge, the removal alert, the
-    /// App Library's menu; and each app's jiggle sprite and name.
-    widgets: Layer<u64>,
+    /// in parts: each widget's jiggle sprite (made when a widget is on the
+    /// home screen), the dock's shelf, the status bar, the App Library,
+    /// edit mode's + and Done buttons and badge, the removal alert, the App
+    /// Library's menu, the widget gallery; and each app's jiggle sprite and
+    /// name.
+    widget_sprites: [Option<Layer<u64>>; Widget::COUNT],
     dock: Layer<()>,
     home_status: Layer<StatusInfo>,
     library: Layer<()>,
     done: Layer<()>,
+    plus: Layer<()>,
     badge: Layer<()>,
     alert: Layer<u64>,
     menu: Layer<u64>,
+    gallery: Layer<u64>,
     /// (Drawn in idle time after startup, or when first needed.)
     sprites: [Option<SurfaceId>; AppId::COUNT],
     names: [SurfaceId; AppId::COUNT],
@@ -611,7 +614,15 @@ impl Renderer {
                     true,
                 )?,
             ],
-            widgets: Layer::new(conn, &mut compositor, w, WIDGETS_H, true)?,
+            widget_sprites: [None, None],
+            plus: Layer::new(
+                conn,
+                &mut compositor,
+                home::PLUS.w as i32,
+                home::PLUS.h as i32,
+                true,
+            )?,
+            gallery: Layer::new(conn, &mut compositor, w, home::GALLERY_H as i32, true)?,
             dock: Layer::new(conn, &mut compositor, DOCK.w as i32, DOCK.h as i32, true)?,
             home_status: Layer::new(
                 conn,
@@ -871,10 +882,13 @@ impl Renderer {
             let icons = &self.icons;
             let redrawn = self.home.update(conn, compositor, key, |canvas| {
                 canvas.copy_from(wallpaper);
-                draw_calendar_widget(canvas, widget_rect(0), time);
-                draw_battery_widget(canvas, widget_rect(1), state);
-                canvas.fill_rrect(DOCK, DOCK_RADIUS, WHITE, 0.14);
                 let layout = &state.settings.home;
+                for widget in &layout.widgets {
+                    if let Some(rect) = layout.widget_rect(*widget) {
+                        draw_widget(canvas, *widget, rect, time, state);
+                    }
+                }
+                canvas.fill_rrect(DOCK, DOCK_RADIUS, WHITE, 0.14);
                 for (app, slot) in layout.slots() {
                     let rect = layout.rect(slot);
                     draw_icon_shadow(canvas, rect);
@@ -1076,17 +1090,8 @@ impl Renderer {
         for app in AppId::ALL {
             self.sprite(conn, app)?;
         }
+        self.widget_sprites(conn, state, time)?;
         let compositor = &mut self.compositor;
-        let key = key_of(&(
-            (time.weekday, time.day, time.month),
-            state.battery_percent,
-            state.battery_charging,
-        ));
-        self.widgets.update(conn, compositor, key, |canvas| {
-            canvas.clear(0);
-            draw_calendar_widget(canvas, widget_rect(0), time);
-            draw_battery_widget(canvas, widget_rect(1), state);
-        })?;
         self.dock.update(conn, compositor, (), |canvas| {
             canvas.clear(0);
             let shelf = RectF::new(0.0, 0.0, DOCK.w, DOCK.h);
@@ -1099,18 +1104,41 @@ impl Renderer {
                 draw_status_bar(canvas, &drawn, None);
             })?;
         self.done.update(conn, compositor, (), draw_done_button)?;
+        self.plus.update(conn, compositor, (), draw_plus_button)?;
         self.badge.update(conn, compositor, (), draw_badge)?;
         let icons = &self.icons;
         self.library.update(conn, compositor, (), |canvas| {
             draw_library(canvas, icons);
         })?;
-        if let Some(alert) = state.home.alert {
-            self.alert.update(
-                conn,
-                compositor,
-                key_of(&(alert.app, alert.pressed)),
-                |canvas| draw_remove_alert(canvas, alert.app, alert.pressed),
-            )?;
+        if let Some(alert) = state.home.alert
+            && let Some(item) = alert.item
+        {
+            self.alert
+                .update(conn, compositor, key_of(&(item, alert.pressed)), |canvas| {
+                    draw_remove_alert(canvas, item, alert.pressed)
+                })?;
+        }
+        if let Some(gallery) = state.home.gallery {
+            let layout = &state.settings.home;
+            let rows = Widget::ALL.map(|widget| {
+                if layout.widgets.contains(&widget) {
+                    GalleryRow::Added
+                } else if layout.can_add_widget(widget) {
+                    GalleryRow::Add
+                } else {
+                    GalleryRow::NoRoom
+                }
+            });
+            let key = key_of(&(
+                rows,
+                gallery.pressed,
+                (time.weekday, time.day, time.month),
+                state.battery_percent,
+                state.battery_charging,
+            ));
+            self.gallery.update(conn, compositor, key, |canvas| {
+                draw_gallery(canvas, &rows, gallery.pressed, time, state);
+            })?;
         }
         if let Some(menu) = state.home.menu {
             let pressed = menu.pressed.is_some();
@@ -1692,6 +1720,8 @@ impl Renderer {
                 .create_some(conn, &mut self.compositor, 1)?;
         } else if let Some(app) = sprite {
             self.sprite(conn, app)?;
+        } else if state.screen_awake && self.widget_sprites_stale(state) {
+            self.widget_sprites(conn, state, LocalTime::now())?;
         } else if self.library.key.is_none() && state.screen_awake {
             let status = self.status(state);
             self.refresh_live_layers(conn, state, &status, LocalTime::now())?;
@@ -1700,6 +1730,46 @@ impl Renderer {
         }
         self.next_idle_copy = now + IDLE_COPY_INTERVAL;
         Ok(Some(self.next_idle_copy))
+    }
+
+    fn widget_sprites_stale(&self, state: &ShellState) -> bool {
+        let time = LocalTime::now();
+        state.settings.home.widgets.iter().any(|widget| {
+            self.widget_sprites[widget.index()]
+                .as_ref()
+                .is_none_or(|layer| layer.key != Some(widget_key(*widget, time, state)))
+        })
+    }
+
+    /// The jiggle sprites of the widgets on the home screen, made when
+    /// first needed and redrawn when what they show changes.
+    fn widget_sprites<C: Connection>(
+        &mut self,
+        conn: &C,
+        state: &ShellState,
+        time: LocalTime,
+    ) -> Result<(), Box<dyn Error>> {
+        for widget in &state.settings.home.widgets {
+            let slot = &mut self.widget_sprites[widget.index()];
+            if slot.is_none() {
+                let width = WIDGET_SPRITE * home::WIDGET_FRAMES as i32;
+                *slot = Some(Layer::new(
+                    conn,
+                    &mut self.compositor,
+                    width,
+                    WIDGET_SPRITE,
+                    true,
+                )?);
+            }
+            let Some(layer) = slot.as_mut() else {
+                continue;
+            };
+            let key = widget_key(*widget, time, state);
+            layer.update(conn, &mut self.compositor, key, |canvas| {
+                draw_widget_sprite(canvas, *widget, time, state);
+            })?;
+        }
+        Ok(())
     }
 
     /// An app's jiggle sprite, drawn and uploaded if it is not yet.
@@ -2135,14 +2205,10 @@ impl Renderer {
         let shown = page.clamp(0.0, 1.0);
         let shift = (page * SCREEN_W).round();
         nodes.push(backdrop_node(self.wall));
-        nodes.push(Self::full(
-            self.widgets.id,
-            SCREEN_W,
-            WIDGETS_H as f32,
-            -shift,
-            0.0,
-            1.0,
-        ));
+        let widgets = home.widget_views(&state.settings.home, t);
+        for index in 0..Widget::COUNT {
+            self.widget_nodes(widgets.get(index), nodes);
+        }
         nodes.push(Self::full(
             self.dock.id,
             DOCK.w,
@@ -2193,6 +2259,14 @@ impl Renderer {
             quantized(home.edit_amount(t)),
         ));
         nodes.push(Self::full(
+            self.plus.id,
+            home::PLUS.w,
+            home::PLUS.h,
+            home::PLUS.x,
+            home::PLUS.y,
+            quantized(home.edit_amount(t)),
+        ));
+        nodes.push(Self::full(
             self.home_status.id,
             SCREEN_W,
             f32::from(status_bar::HEIGHT),
@@ -2210,7 +2284,7 @@ impl Renderer {
             alpha: 0.35 * alpha,
             radius: 0.0,
         });
-        let app = menu.map_or(AppId::System, |menu| menu.app);
+        let app = menu.and_then(|menu| menu.app()).unwrap_or(AppId::System);
         let (cx, cy) = library_icon(app).center();
         let size = SPRITE as f32 * home::LIBRARY_ICON * 1.08 / ICON_SIZE as f32;
         nodes.push(Node::Image {
@@ -2261,6 +2335,24 @@ impl Renderer {
             radius: 0.0,
             smooth: !still,
         });
+        // The widget gallery rises from the bottom edge over a dimmed
+        // screen.
+        let shown = quantized(home.gallery.map_or(0.0, |gallery| gallery.alpha(t)));
+        nodes.push(Node::Fill {
+            dst: SCREEN,
+            color: BLACK,
+            alpha: 0.4 * shown,
+            radius: 0.0,
+        });
+        let sheet = home::gallery_rect();
+        nodes.push(Self::full(
+            self.gallery.id,
+            sheet.w,
+            sheet.h,
+            0.0,
+            sheet.y + (1.0 - shown) * sheet.h,
+            if shown > 0.0 { 1.0 } else { 0.0 },
+        ));
         // The switcher's (or the home gesture's) dim over all of it.
         nodes.push(Node::Fill {
             dst: SCREEN,
@@ -2268,6 +2360,61 @@ impl Renderer {
             alpha: quantized(home_dim(state, t)),
             radius: 0.0,
         });
+    }
+
+    /// A widget's sprite frame and its badge (invisible without a `view`).
+    fn widget_nodes(&self, view: Option<&WidgetView>, nodes: &mut Vec<Node>) {
+        let surface = view.and_then(|view| {
+            self.widget_sprites[view.widget.index()]
+                .as_ref()
+                .map(|layer| layer.id)
+        });
+        let (Some(view), Some(surface)) = (view, surface) else {
+            for surface in [self.wall, self.badge.id] {
+                nodes.push(Node::Image {
+                    surface,
+                    src: RectF::new(0.0, 0.0, 1.0, 1.0),
+                    dst: RectF::new(0.0, 0.0, 1.0, 1.0),
+                    alpha: 0.0,
+                    radius: 0.0,
+                    smooth: false,
+                });
+            }
+            return;
+        };
+        let scale = view.rect.w / home::WIDGET_SIZE;
+        let size = WIDGET_SPRITE as f32 * scale;
+        let still = (scale - 1.0).abs() < 1e-3;
+        let (cx, cy) = view.rect.center();
+        let (x, y) = (cx - size / 2.0, cy - size / 2.0);
+        let frame = home::jiggle_frame(view.angle, home::WIDGET_FRAMES);
+        nodes.push(Node::Image {
+            surface,
+            src: RectF::new(
+                (frame as i32 * WIDGET_SPRITE) as f32,
+                0.0,
+                WIDGET_SPRITE as f32,
+                WIDGET_SPRITE as f32,
+            ),
+            dst: if still {
+                RectF::new(x.round(), y.round(), size, size)
+            } else {
+                RectF::new(x, y, size, size)
+            },
+            alpha: quantized(view.alpha),
+            radius: 0.0,
+            smooth: !still,
+        });
+        let (bx, by) = view.badge_center();
+        let half = BADGE_LAYER as f32 / 2.0;
+        nodes.push(Self::full(
+            self.badge.id,
+            BADGE_LAYER as f32,
+            BADGE_LAYER as f32,
+            bx - half,
+            by - half,
+            quantized(view.badge * view.alpha),
+        ));
     }
 
     /// An icon's name, its sprite frame, its pressed shade and its badge
@@ -2314,7 +2461,7 @@ impl Renderer {
         let (x, y) = (cx - size / 2.0, cy - size / 2.0);
         nodes.push(Node::Image {
             surface: self.sprites[index].unwrap_or(self.wall),
-            src: sprite_frame(home::jiggle_frame(view.angle)),
+            src: sprite_frame(home::jiggle_frame(view.angle, home::JIGGLE_FRAMES)),
             dst: if still {
                 RectF::new(x.round(), y.round(), size, size)
             } else {
@@ -2430,7 +2577,7 @@ fn jiggle_sprite(icon: &Image) -> Canvas {
     }
     for frame in 0..home::JIGGLE_FRAMES {
         let x = frame as i32 * SPRITE + SPRITE_PAD;
-        let angle = home::frame_angle(frame);
+        let angle = home::frame_angle(frame, home::JIGGLE_FRAMES);
         if angle == 0.0 {
             canvas.draw_image(icon, x, SPRITE_PAD, 1.0);
         } else {
@@ -2455,6 +2602,17 @@ fn draw_badge(canvas: &mut Canvas) {
     );
     canvas.fill_circle(c, c, r, 0xe5e5ea, 0.96);
     canvas.fill_rrect(RectF::new(c - 13.0, c - 3.0, 26.0, 6.0), 3.0, 0x1c1c1e, 1.0);
+}
+
+/// Edit mode's + button: iOS's light translucent circle with a dark plus.
+fn draw_plus_button(canvas: &mut Canvas) {
+    canvas.clear(0);
+    let r = home::PLUS.w / 2.0;
+    canvas.fill_circle(r, r, r, WHITE, 0.78);
+    let mut plus = Path::new();
+    plus.stroke_segment((r - 15.0, r), (r + 15.0, r), 6.5);
+    plus.stroke_segment((r, r - 15.0), (r, r + 15.0), 6.5);
+    canvas.fill_path(&plus, 0x1c1c1e, 1.0);
 }
 
 /// Edit mode's Done button: iOS's light translucent pill with dark
@@ -2527,15 +2685,27 @@ fn draw_library(canvas: &mut Canvas, icons: &[AppIcon; AppId::COUNT]) {
     }
 }
 
-/// The removal alert: `Remove “App”?`, what that means, and its buttons
+/// The removal alert, as iOS words it: `Remove “App”?` (Remove from Home
+/// Screen) or `Remove Widget?` (Remove), what that means, and its buttons
 /// (0 removes, 1 cancels; `pressed` is lit).
-fn draw_remove_alert(canvas: &mut Canvas, app: AppId, pressed: Option<usize>) {
+fn draw_remove_alert(canvas: &mut Canvas, item: Item, pressed: Option<usize>) {
     canvas.clear(0);
     let card = RectF::new(0.0, 0.0, home::ALERT_W, home::alert_rect().h);
     let radius = 38.0;
     canvas.fill_rrect(card, radius, 0x252527, 0.97);
     let cx = card.w / 2.0;
-    let title = format!("Remove \u{201c}{}\u{201d}?", app.display_name());
+    let (title, message, remove) = match item {
+        Item::App(app) => (
+            format!("Remove \u{201c}{}\u{201d}?", app.display_name()),
+            "Removing from Home Screen will keep the app in your App Library.",
+            ("Remove from Home Screen", BLUE),
+        ),
+        Item::Widget(_) => (
+            "Remove Widget?".to_owned(),
+            "Removing this widget will not delete any data.",
+            ("Remove", RED),
+        ),
+    };
     text::draw_centered(
         canvas,
         &title,
@@ -2546,7 +2716,6 @@ fn draw_remove_alert(canvas: &mut Canvas, app: AppId, pressed: Option<usize>) {
         WHITE,
         1.0,
     );
-    let message = "Removing from Home Screen will keep the app in your App Library.";
     for (line, text) in wrap(message, Weight::Regular, 37.0, card.w - 110.0)
         .iter()
         .enumerate()
@@ -2564,10 +2733,10 @@ fn draw_remove_alert(canvas: &mut Canvas, app: AppId, pressed: Option<usize>) {
         );
     }
     let buttons = [
-        ("Remove from Home Screen", Weight::Regular),
-        ("Cancel", Weight::SemiBold),
+        (remove.0, Weight::Regular, remove.1),
+        ("Cancel", Weight::SemiBold, BLUE),
     ];
-    for (index, (label, weight)) in buttons.into_iter().enumerate() {
+    for (index, (label, weight, color)) in buttons.into_iter().enumerate() {
         let top = home::ALERT_TEXT_H + index as f32 * home::ALERT_BUTTON_H;
         if pressed == Some(index) {
             canvas.set_clip(
@@ -2581,7 +2750,7 @@ fn draw_remove_alert(canvas: &mut Canvas, app: AppId, pressed: Option<usize>) {
         }
         canvas.fill_rect(0, top as i32, card.w as i32, 2, WHITE, 0.16);
         let baseline = text::centered_baseline(top + home::ALERT_BUTTON_H / 2.0, weight, 47.0);
-        text::draw_centered(canvas, label, cx, baseline, weight, 47.0, BLUE, 1.0);
+        text::draw_centered(canvas, label, cx, baseline, weight, 47.0, color, 1.0);
     }
 }
 
@@ -2629,13 +2798,179 @@ fn draw_library_menu(canvas: &mut Canvas, pressed: bool) {
     canvas.fill_path(&plus, WHITE, 1.0);
 }
 
-fn widget_rect(column: usize) -> RectF {
-    RectF::new(
-        home::GRID_MARGIN + column as f32 * 2.0 * home::GRID_PITCH,
-        WIDGET_TOP,
-        WIDGET_SIZE,
-        WIDGET_SIZE,
-    )
+/// A widget on the home page.
+fn draw_widget(
+    canvas: &mut Canvas,
+    widget: Widget,
+    rect: RectF,
+    time: LocalTime,
+    state: &ShellState,
+) {
+    match widget {
+        Widget::Calendar => draw_calendar_widget(canvas, rect, time),
+        Widget::Battery => draw_battery_widget(canvas, rect, state),
+    }
+}
+
+/// What a widget shows, for redrawing it when that changes.
+fn widget_key(widget: Widget, time: LocalTime, state: &ShellState) -> u64 {
+    match widget {
+        Widget::Calendar => key_of(&(widget, time.weekday, time.day, time.month)),
+        Widget::Battery => key_of(&(widget, state.battery_percent, state.battery_charging)),
+    }
+}
+
+/// A widget and its shadow on a transparent square of WIDGET_SPRITE.
+fn widget_image(widget: Widget, time: LocalTime, state: &ShellState) -> Image {
+    let mut canvas = Canvas::new(WIDGET_SPRITE, WIDGET_SPRITE);
+    let at = WIDGET_PAD as f32;
+    let rect = RectF::new(at, at, home::WIDGET_SIZE, home::WIDGET_SIZE);
+    draw_widget(&mut canvas, widget, rect, time, state);
+    Image {
+        width: canvas.width,
+        height: canvas.height,
+        pixels: canvas.pixels,
+    }
+}
+
+/// A widget turned each of its jiggle's ways, side by side. The middle
+/// frame is drawn as the home page draws it, so edit mode shows no step.
+fn draw_widget_sprite(canvas: &mut Canvas, widget: Widget, time: LocalTime, state: &ShellState) {
+    canvas.clear(0);
+    let image = widget_image(widget, time, state);
+    let c = WIDGET_SPRITE as f32 / 2.0;
+    for frame in 0..home::WIDGET_FRAMES {
+        let x = frame as i32 * WIDGET_SPRITE;
+        let angle = home::frame_angle(frame, home::WIDGET_FRAMES);
+        // A turned corner stays in its own frame.
+        canvas.set_clip(x, 0, x + WIDGET_SPRITE, WIDGET_SPRITE);
+        if angle == 0.0 {
+            canvas.draw_image(&image, x, 0, 1.0);
+        } else {
+            canvas.draw_image_rotated(&image, x as f32 + c, c, angle, 1.0);
+        }
+        canvas.reset_clip();
+    }
+}
+
+/// What a widget gallery row offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum GalleryRow {
+    Add,
+    Added,
+    /// The page's apps leave no room for it.
+    NoRoom,
+}
+
+/// The widget gallery, as a small iOS sheet: a grabber, its title and close
+/// button, then each widget with a preview, its name, what it shows and an
+/// Add Widget button (`pressed` is lit).
+fn draw_gallery(
+    canvas: &mut Canvas,
+    rows: &[GalleryRow; Widget::COUNT],
+    pressed: Option<usize>,
+    time: LocalTime,
+    state: &ShellState,
+) {
+    canvas.clear(0);
+    let sheet = RectF::new(0.0, 0.0, SCREEN_W, home::GALLERY_H);
+    // Rounded at the top only: the bottom corners lie past the panel.
+    canvas.fill_rrect(
+        RectF::new(0.0, 0.0, SCREEN_W, home::GALLERY_H + 80.0),
+        56.0,
+        CARD,
+        1.0,
+    );
+    canvas.fill_rrect(
+        RectF::new(SCREEN_W / 2.0 - 54.0, 20.0, 108.0, 14.0),
+        7.0,
+        WHITE,
+        0.3,
+    );
+    text::draw(
+        canvas,
+        "Widgets",
+        home::GRID_MARGIN,
+        116.0,
+        Weight::Bold,
+        64.0,
+        WHITE,
+        1.0,
+    );
+    let close = home::gallery_close();
+    let (cx, cy) = close.center();
+    canvas.fill_circle(cx, cy, close.w / 2.0, CARD_RAISED, 1.0);
+    let mut cross = Path::new();
+    cross.stroke_segment((cx - 13.0, cy - 13.0), (cx + 13.0, cy + 13.0), 6.0);
+    cross.stroke_segment((cx + 13.0, cy - 13.0), (cx - 13.0, cy + 13.0), 6.0);
+    canvas.fill_path(&cross, SECONDARY, SECONDARY_ALPHA);
+    let preview_scale = home::GALLERY_PREVIEW / home::WIDGET_SIZE;
+    for (index, widget) in Widget::ALL.into_iter().enumerate() {
+        let row = home::gallery_row(index);
+        let image = widget_image(widget, time, state);
+        let size = WIDGET_SPRITE as f32 * preview_scale;
+        let preview_cy = row.y + row.h / 2.0;
+        let preview_cx = home::GRID_MARGIN + home::GALLERY_PREVIEW / 2.0;
+        canvas.draw_image_scaled(
+            &image,
+            RectF::new(preview_cx - size / 2.0, preview_cy - size / 2.0, size, size),
+            1.0,
+        );
+        let x = home::GRID_MARGIN + home::GALLERY_PREVIEW + 44.0;
+        text::draw(
+            canvas,
+            widget.name(),
+            x,
+            preview_cy - 10.0,
+            Weight::SemiBold,
+            46.0,
+            WHITE,
+            1.0,
+        );
+        text::draw(
+            canvas,
+            widget.description(),
+            x,
+            preview_cy + 46.0,
+            Weight::Regular,
+            34.0,
+            SECONDARY,
+            SECONDARY_ALPHA,
+        );
+        let button = home::gallery_button(index);
+        let (bx, by) = button.center();
+        let label = match rows[index] {
+            GalleryRow::Add => {
+                let lit = pressed == Some(index);
+                canvas.fill_rrect(button, button.h / 2.0, BLUE, if lit { 0.7 } else { 1.0 });
+                ("Add Widget", WHITE, 1.0)
+            }
+            GalleryRow::Added => ("Added", SECONDARY, SECONDARY_ALPHA),
+            GalleryRow::NoRoom => ("No Room", SECONDARY, SECONDARY_ALPHA),
+        };
+        let baseline = text::centered_baseline(by, Weight::SemiBold, 36.0);
+        text::draw_centered(
+            canvas,
+            label.0,
+            bx,
+            baseline,
+            Weight::SemiBold,
+            36.0,
+            label.1,
+            label.2,
+        );
+        if index + 1 < Widget::COUNT {
+            let y = (row.y + row.h).round() as i32;
+            canvas.fill_rect(
+                x as i32,
+                y,
+                (sheet.w - home::GRID_MARGIN - x) as i32,
+                2,
+                WHITE,
+                0.12,
+            );
+        }
+    }
 }
 
 fn draw_widget_card(canvas: &mut Canvas, rect: RectF) {
@@ -3237,7 +3572,7 @@ mod tests {
         // the home screen draws them, look as it does: entering and leaving
         // edit mode shows no step.
         let icon = fallback_icon(AppId::Exocortex).icon_mask(ICON_SIZE, ICON_RADIUS);
-        let rect = home::grid_rect(1);
+        let rect = home::cell_rect(1, 0);
         let mut drawn = Canvas::new(SCREEN_W as i32, 1200);
         drawn.clear(0x2a3b5c);
         let mut composed = Canvas::new(SCREEN_W as i32, 1200);
@@ -3272,6 +3607,30 @@ mod tests {
         for y in 0..SPRITE {
             assert_eq!(turned.pixels[(y * SPRITE) as usize], 0);
             assert_eq!(turned.pixels[(y * SPRITE + SPRITE - 1) as usize], 0);
+        }
+    }
+
+    #[test]
+    fn edit_mode_widgets_match_the_drawn_home_screen() {
+        // The unturned widget frame, composited where the home page draws
+        // the widget, looks as it does; turned frames stay in their frame.
+        let state = ShellState::new(false, 50);
+        let time = LocalTime::now();
+        for widget in Widget::ALL {
+            let rect = RectF::new(75.0, 228.0, home::WIDGET_SIZE, home::WIDGET_SIZE);
+            let mut drawn = Canvas::new(SCREEN_W as i32, 800);
+            drawn.clear(0x2a3b5c);
+            let mut composed = Canvas::new(SCREEN_W as i32, 800);
+            composed.clear(0x2a3b5c);
+            draw_widget(&mut drawn, widget, rect, time, &state);
+            let mut sprite = Canvas::new(WIDGET_SPRITE * home::WIDGET_FRAMES as i32, WIDGET_SPRITE);
+            draw_widget_sprite(&mut sprite, widget, time, &state);
+            let middle = home::WIDGET_FRAMES as i32 / 2 * WIDGET_SPRITE;
+            let frame = crop(&sprite, middle, 0, WIDGET_SPRITE, WIDGET_SPRITE);
+            composed.draw_image(&frame, 75 - WIDGET_PAD, 228 - WIDGET_PAD, 1.0);
+            assert!(difference(&drawn, &composed) <= 2, "{widget:?}");
+            let turned = crop(&sprite, 0, 0, WIDGET_SPRITE, WIDGET_SPRITE);
+            assert_ne!(turned.pixels, frame.pixels);
         }
     }
 
