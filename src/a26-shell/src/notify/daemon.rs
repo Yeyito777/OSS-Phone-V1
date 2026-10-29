@@ -678,7 +678,7 @@ impl AlarmTimer {
                 tv_nsec: 0,
             },
             it_value: libc::timespec {
-                tv_sec: at as libc::time_t,
+                tv_sec: at as _,
                 tv_nsec: 0,
             },
         };
@@ -729,7 +729,7 @@ fn timerfd(clock: libc::clockid_t) -> io::Result<OwnedFd> {
 
 fn arm_periodic(fd: RawFd, period: Duration) -> io::Result<()> {
     let value = libc::timespec {
-        tv_sec: period.as_secs() as libc::time_t,
+        tv_sec: period.as_secs() as _,
         tv_nsec: period.subsec_nanos() as libc::c_long,
     };
     let spec = libc::itimerspec {
