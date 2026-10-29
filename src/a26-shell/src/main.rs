@@ -2,6 +2,7 @@ mod alerts;
 mod apps;
 mod audio;
 mod backdrop;
+mod badges;
 mod banner;
 mod brightness;
 mod browser_links;
@@ -374,6 +375,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .inspect_err(|error| eprintln!("clipboard unavailable: {error}"))
         .ok();
     let mut status_styles = status_bar::AppStatusStyles::default();
+    let mut awake = lease::AwakeRequests::default();
     let mut browser_links = browser_links::BrowserLinks::default();
     let mut browser_link_serial = None;
 
@@ -476,6 +478,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut state = ShellState::new(config.start_locked, initial_volume);
     let settings_path = settings::Settings::path();
     state.settings = settings::Settings::load(&settings_path);
+    let badges_path = badges::Badges::path();
+    state.badges = badges::Badges::load(&badges_path);
     refresh_voice(&mut state);
     // The user's time zone and clock (System's Date & Time) over config.json.
     if let Some(rule) = state.settings.timezone.as_deref().and_then(tz::rule) {
@@ -1002,6 +1006,33 @@ fn main() -> Result<(), Box<dyn Error>> {
                             .as_ref()
                             .ok_or("clipboard unavailable")
                             .and_then(|clipboard| clipboard.set(text)),
+                        Command::ClipboardSetImage(image) => clipboard
+                            .as_ref()
+                            .ok_or("clipboard unavailable")
+                            .map(|clipboard| clipboard.set_image(image.clone())),
+                        // As `statusbar`: the app named, or the one asking.
+                        Command::Awake(app, on) => match app.or_else(|| {
+                            ipc::peer_pid(&stream).and_then(|pid| apps.app_of_process(pid))
+                        }) {
+                            None => Err("awake: not asked by an app (name one)"),
+                            Some(app) => apps
+                                .pid(app)
+                                .map(|pid| awake.set(app, pid, *on))
+                                .ok_or("awake: the app is not running"),
+                        },
+                        // A badge stays while its app is closed (badges.rs).
+                        Command::Badge(app, count) => match app.or_else(|| {
+                            ipc::peer_pid(&stream).and_then(|pid| apps.app_of_process(pid))
+                        }) {
+                            None => Err("badge: not asked by an app (name one)"),
+                            Some(app) => {
+                                if state.badges.set(app, *count) {
+                                    state.badges_changed = true;
+                                    state.redraw = true;
+                                }
+                                Ok(())
+                            }
+                        },
                         _ => Ok(()),
                     };
                     if let Err(error) = lease_result {
@@ -1013,9 +1044,59 @@ fn main() -> Result<(), Box<dyn Error>> {
                         ipc::respond(stream, Ok(&serde_json::json!({ "chars": chars })));
                         continue;
                     }
+                    if let Command::ClipboardUpload = command {
+                        let clipboard = clipboard.clone();
+                        clipboard_io(move || {
+                            let result = ipc::read_clipboard_upload(&stream).and_then(|image| {
+                                let clipboard = clipboard.ok_or("clipboard unavailable")?;
+                                let reply = serde_json::json!({
+                                    "type": image.kind.mime(),
+                                    "bytes": image.bytes.len(),
+                                });
+                                clipboard.set_image(image);
+                                Ok(reply)
+                            });
+                            match result {
+                                Ok(reply) => ipc::respond(stream, Ok(&reply)),
+                                Err(error) => ipc::respond::<()>(stream, Err(&error)),
+                            }
+                        });
+                        continue;
+                    }
+                    if let Command::ClipboardSetImage(image) = &command {
+                        let reply = serde_json::json!({
+                            "type": image.kind.mime(),
+                            "bytes": image.bytes.len(),
+                        });
+                        ipc::respond(stream, Ok(&reply));
+                        continue;
+                    }
                     if let Command::ClipboardGet = command {
                         let text = clipboard.as_ref().and_then(clipboard::Clipboard::text);
-                        ipc::respond(stream, Ok(&serde_json::json!({ "text": text.as_deref() })));
+                        let image = clipboard.as_ref().and_then(clipboard::Clipboard::image);
+                        let image = image.map(|image| {
+                            serde_json::json!({
+                                "type": image.kind.mime(),
+                                "bytes": image.bytes.len(),
+                            })
+                        });
+                        let reply = serde_json::json!({ "text": text.as_deref(), "image": image });
+                        ipc::respond(stream, Ok(&reply));
+                        continue;
+                    }
+                    if let Command::ClipboardGetImage = command {
+                        let image = clipboard.as_ref().and_then(clipboard::Clipboard::image);
+                        clipboard_io(move || {
+                            let image = image.map(|image| {
+                                serde_json::json!({
+                                    "type": image.kind.mime(),
+                                    "bytes": image.bytes.len(),
+                                    "data": clipboard::base64_encode(&image.bytes),
+                                })
+                            });
+                            let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+                            ipc::respond(stream, Ok(&serde_json::json!({ "image": image })));
+                        });
                         continue;
                     }
                     if let Command::Brightness(request) = command {
@@ -1079,6 +1160,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     });
                     public.display = Some(brightness.public());
                     public.status_bar = status_styles.public(|app| apps.pid(app));
+                    public.awake = awake.public(|app| apps.pid(app));
                     ipc::respond(stream, Ok(&public));
                 }
                 Err(error) => ipc::respond::<model::PublicState>(stream, Err(&error)),
@@ -1369,6 +1451,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             // Control Centre's slider shows it; no HUD over it.
             state.volume_overlay_until = None;
         }
+        if std::mem::take(&mut state.badges_changed)
+            && let Err(error) = state.badges.save(&badges_path)
+        {
+            eprintln!("badges not saved: {error}");
+        }
         if std::mem::take(&mut state.settings_changed) {
             if let Err(error) = state.settings.save(&settings_path) {
                 eprintln!("settings not saved: {error}");
@@ -1383,8 +1470,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             state.redraw = true;
         }
         // Auto-Lock: dim five seconds ahead, then the power fade; any input
-        // (note_input) restores the brightness.
-        let auto_lock = auto_lock_due(&state, &mut apps, Instant::now());
+        // (note_input) restores the brightness. The app in front holds it
+        // off while it plays media or keeps the screen awake, and its count
+        // starts over when that ends.
+        let held = AppId::from_view(state.view).is_some_and(|app| {
+            apps.media_active(app, Instant::now()) || awake.holds(app, apps.pid(app))
+        });
+        if state.auto_lock_held && !held {
+            state.last_input = Instant::now();
+        }
+        state.auto_lock_held = held;
+        let auto_lock = auto_lock_due(&state, Instant::now());
         match auto_lock {
             AutoLock::Off if state.idle_dimmed && state.screen_awake && state.fade.is_none() => {
                 state.idle_dimmed = false;
@@ -1960,15 +2056,11 @@ enum AutoLock {
 
 /// Whether Auto-Lock applies now and where it stands. It waits while a
 /// finger is down, a fade runs, something rings, or the app in front plays
-/// media.
-fn auto_lock_due(state: &ShellState, apps: &mut AppRegistry, now: Instant) -> AutoLock {
+/// media or keeps the screen awake (`auto_lock_held`).
+fn auto_lock_due(state: &ShellState, now: Instant) -> AutoLock {
     let Some(timeout) = auto_lock_timeout(state) else {
         return AutoLock::Off;
     };
-    let playing = AppId::from_view(state.view).is_some_and(|app| apps.media_active(app, now));
-    if playing {
-        return AutoLock::Off;
-    }
     let idle = now.saturating_duration_since(state.last_input);
     if idle >= timeout {
         AutoLock::Lock
@@ -1989,8 +2081,9 @@ fn auto_lock_timeout(state: &ShellState) -> Option<Duration> {
         && state.keyboard.latest_pressed().is_none()
         && state.alerts.ringing().is_none()
         && state.calls.ringing().is_none()
-        && !state.voice_listening())
-    .then(|| Duration::from_secs(u64::from(seconds)))
+        && !state.voice_listening()
+        && !state.auto_lock_held)
+        .then(|| Duration::from_secs(u64::from(seconds)))
 }
 
 /// Holding the power key listens when `power_hold` is `voice` and the hook
@@ -3441,6 +3534,17 @@ fn handle_keyboard_action(
     }
 }
 
+/// Clipboard images are megabytes: reading, decoding, encoding and writing
+/// them happens on a thread of its own, never on Moon's loop.
+fn clipboard_io(work: impl FnOnce() + Send + 'static) {
+    if let Err(error) = std::thread::Builder::new()
+        .name("clipboard-io".into())
+        .spawn(work)
+    {
+        eprintln!("clipboard: no thread for an image: {error}");
+    }
+}
+
 /// The paste key: the clipboard's text is typed into the app in front, the
 /// way Moon's keys are (`keyboard::paste_inputs`).
 fn paste_clipboard(
@@ -3551,7 +3655,12 @@ fn apply_command(
         | Command::Transition(_)
         | Command::StatusBar(..)
         | Command::ClipboardGet
-        | Command::ClipboardSet(_) => {}
+        | Command::ClipboardGetImage
+        | Command::ClipboardSet(_)
+        | Command::ClipboardSetImage(_)
+        | Command::ClipboardUpload
+        | Command::Awake(..)
+        | Command::Badge(..) => {}
         Command::TransitionReady => {
             if let Some(transition) = state.page_transition.as_mut() {
                 transition.ready(Instant::now());

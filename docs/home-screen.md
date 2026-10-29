@@ -17,6 +17,10 @@ widget, then below). At the bottom is the dock: up to four apps without
 names, centered as a group. By default the page has both widgets, the dock
 Phone, Browser, Messages and System, and the grid Exocortex.
 
+An app can put a count on its icon (`badge N`, `app-services.md`): iOS's
+red badge at the icon's top-right corner, on the grid, in the dock and in
+the App Library, kept while the app is closed.
+
 A tap opens an app: its card grows from where its icon is now. Going home
 zooms the app back into its icon (or, for an app not on the home screen,
 shrinks it away in the middle of the screen).
@@ -81,16 +85,18 @@ moving, the alert, the menu or the gallery) the frame is composed from
 parts instead, each a layer drawn once: the wallpaper, the dock's shelf,
 the status bar, the App Library, the + and Done buttons, the badge and the
 gallery. Every icon is
-its own compositor node, as is its name and its badge: nothing is
+its own compositor node, as is its name, its "−" badge and its count badge
+(a layer per app, redrawn only when its count changes): nothing is
 re-rasterized per frame, on the GPU compositor and on the XRender path
 alike.
 
 The compositor has no rotation, so the jiggle uses sprites: for each app,
 its icon and shadow pre-turned 11 ways (±0.03 rad) side by side in one
 layer (drawn in idle time after startup); a frame shows the sprite frame
-nearest the icon's angle, and its badge and name follow the turn. The
-unturned frame is drawn exactly as the home page draws the icon, so edit
-mode starts and ends without a visible step (a unit test checks this).
+nearest the icon's angle, and its badges and name follow the turn (the
+count badge scales with a lifted or shrinking icon too). The unturned frame
+is drawn exactly as the home page draws the icon and its count badge, so
+edit mode starts and ends without a visible step (unit tests check this).
 Widgets jiggle the same way from 5 pre-turned frames of each (their sprite
 is made only while the widget is on the page, in idle time, and redrawn
 when what it shows changes: the date, the battery's charge). Node counts

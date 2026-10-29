@@ -97,8 +97,10 @@ or key during the dim restores the brightness and starts the count again.
 While dimmed, Moon sets `idle_dimmed` and the brightness backend leaves the
 backlight alone (`display-brightness.md`). Auto-Lock waits while a finger is
 down, while an alarm or timer rings, and while the app in front plays media
-(its media lease is held). A notification that woke the screen still turns
-it off after 10 s untouched (`notifications-ui.md`).
+(its media lease is held) or keeps the screen awake (`awake on`,
+`app-services.md`); when that ends, Auto-Lock counts from then. A
+notification that woke the screen still turns it off after 10 s untouched
+(`notifications-ui.md`).
 
 ## Power
 
@@ -120,7 +122,10 @@ For apps (`app-services.md`):
 | --- | --- |
 | `keyboard show multiline` | the keyboard for a text area: Return types a newline and the keyboard stays |
 | `clipboard set "TEXT"` / `clipboard get` | the system clipboard (X11's CLIPBOARD, kept by Moon); TEXT is a JSON string |
+| `clipboard set image/png BASE64` / `clipboard get image` | an image on the clipboard (PNG, JPEG, GIF or WebP, up to 8 MiB) |
 | `statusbar [APP] color #RRGGBB [light\|dark]` / `statusbar [APP] default` | the status bar over the app that asks (or APP) in its own colour, or black again |
+| `awake [APP] on\|off` | the app that asks (or APP) keeps the screen on while it is in front: no Auto-Lock |
+| `badge [APP] N` | a count on the app's home screen icon (0 removes it) |
 
 The battery policy is the supervisor's: its `moon` notifications tagged
 `battery-low` show as usual, and `battery-critical` turns into a full-screen

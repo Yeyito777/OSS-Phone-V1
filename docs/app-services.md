@@ -1,4 +1,4 @@
-# App services: text areas, the clipboard, links, status bar colour
+# App services: text areas, the clipboard, links, status bar colour, keeping the screen awake, icon badges
 
 What Moon does for any app that asks, over its control socket
 (`/run/a26-shell/control.sock`, one command per connection, a JSON reply
@@ -9,16 +9,23 @@ an in-app mic button is the voice hook's, not Moon's (`voice.md`).
 | Command | Effect |
 | --- | --- |
 | `keyboard show multiline` | Moon's keyboard for a text area: Return (grey, `return`) types a newline and the keyboard stays up |
-| `clipboard set "TEXT"` | the system clipboard holds TEXT, a JSON string (any Unicode, up to 1 MiB); `""` empties it. Reply `{"chars": N}` |
-| `clipboard get` | the clipboard's text: `{"text": "…"}`, or `{"text": null}` when it holds none |
+| `clipboard set "TEXT"` | the system clipboard holds TEXT, a JSON string (any Unicode, up to 1 MiB), and no image; `""` empties it. Reply `{"chars": N}` |
+| `clipboard set image/png BASE64` | the clipboard holds the image, and no text: `image/png`, `image/jpeg`, `image/gif` or `image/webp`, its bytes in standard base64 (up to 8 MiB decoded; the bytes must be of that type). Reply `{"type": "image/png", "bytes": N}` |
+| `clipboard get` | the clipboard's text, and whether it holds an image: `{"text": "…", "image": {"type": "image/png", "bytes": N}}`, each `null` when it holds none |
+| `clipboard get image` | the clipboard's image: `{"image": {"type": "image/png", "bytes": N, "data": "BASE64"}}`, or `{"image": null}` |
 | `open browser URL` | the Browser opens URL (`http` or `https` only) in a new tab in front, started first if it is not running; on the lock screen, after unlocking |
 | `statusbar color #RRGGBB [light\|dark]` | the status bar over the app that asks is drawn in its colour, with light or dark time and glyphs (without a choice: whichever reads better) |
 | `statusbar default` | back to Moon's black |
 | `statusbar APP color …` / `statusbar APP default` | the same for a named app (`system`, `browser`, `phone`, `messages`, `exocortex`): tools and tests |
+| `awake on` / `awake off` | the app that asks keeps the screen on while it is in front (a recording, a video): Auto-Lock neither dims nor locks, until `awake off` or the app exits |
+| `awake APP on` / `awake APP off` | the same for a named app: tools and tests |
+| `badge N` | the app that asks shows N on its home screen icon (0 to 99999; `0` removes it) |
+| `badge APP N` | the same for a named app: a helper keeping a closed app's count, tools and tests |
 
-`state` carries `keyboard.purpose` (`"multiline"`) and `status_bar`, the
-running apps' colours: `{"exocortex": {"color": "#00050f", "content":
-"light"}}`.
+`state` carries `keyboard.purpose` (`"multiline"`), `status_bar`, the
+running apps' colours (`{"exocortex": {"color": "#00050f", "content":
+"light"}}`), `awake`, the running apps keeping the screen on
+(`["exocortex"]`), and `badges`, the icons' counts (`{"exocortex": 3}`).
 
 ## Text areas
 
@@ -42,21 +49,36 @@ The system clipboard is X11's CLIPBOARD selection, which the Browser
   being frozen in the background or closed, and every paste is answered by
   Moon: an X app's own Paste (Ctrl+V, a context menu), the paste key, and
   `clipboard get`.
-- Text only. A copy with no text form (an image), longer than 1 MiB, or
-  whose app does not answer within 2 s stays with its app; the clipboard
-  then has no text (`clipboard get` is null, the paste key dims).
+- Text and images. Moon asks a copy what it offers (`TARGETS`), then takes
+  its text (`UTF8_STRING`, else `STRING`) and its image (`image/png`, else
+  `image/jpeg`, `image/gif`, `image/webp`), one conversion after the other,
+  INCR transfers included. Text over 1 MiB, an image over 8 MiB or not of
+  its type, and a form its app does not deliver within 2 s are left out; a
+  copy left with neither stays with its app (`clipboard get` is null, the
+  paste key dims). Other forms (`text/html`, `text/uri-list`) are not kept.
+  An app that does not answer `TARGETS` is asked for `UTF8_STRING`, else
+  `STRING`, as before.
+- The clipboard holds one copy, as iOS's pasteboard does: `clipboard set`
+  of text clears the image and `clipboard set image/…` the text; a copy
+  from an X app that offers both (text and an image) keeps both.
 - Moon serves `UTF8_STRING`, `TEXT`, `text/plain;charset=utf-8`, `STRING` /
-  `text/plain` (Latin-1) and `TARGETS`; it reads a copy as `UTF8_STRING`,
-  else `STRING`, including INCR transfers.
+  `text/plain` (Latin-1) while it holds text, its image's type (in one
+  property: 8 MiB is well within BIG-REQUESTS) while it holds an image, and
+  `TARGETS` listing them.
 - All of it runs on a thread with its own X connection, so Moon's event
-  loop never waits on another app. The text is never logged.
+  loop never waits on another app. `clipboard set image/…` and `clipboard
+  get image` (megabytes of base64 on one line, at most 12 MiB) are read,
+  decoded, encoded and written on a thread of their own too. Neither the
+  text nor the image is ever logged.
 - Wayland apps (Moon's experimental Wayland server) keep their own
   wl_data_device clipboard among themselves; the paste key types into them
   too.
 
 **The paste key** sits on Moon's keyboard where iPhone has its emoji key,
 between `123`/`ABC` and Space, on every page except the number pad. It is lit
-while the clipboard holds text and dim otherwise. Tapping it types the
+while the clipboard holds text and dim otherwise (an image alone cannot be
+typed: an app pastes an image itself, from `clipboard get image`). Tapping
+it types the
 clipboard into the app in front the way Moon's keys are typed (XTEST, or the
 Wayland server for Wayland apps): a line break is Return in a text area
 (`multiline`) and a space in a one-line field (as iPhone pastes into one); a
@@ -95,6 +117,39 @@ WCAG's 0.179 luminance (where black text has the higher contrast), light
 below. Dark content keeps the battery's colours. Asked by something that is
 not an app, without naming one: refused (`not asked by an app`).
 
+## Keeping the screen awake
+
+`awake on` is iOS's idle timer switch: while the app that asked is in front
+with the screen on, Auto-Lock neither dims nor locks (`settings.md`), however
+long nobody touches the phone (a voice recording, a video, a timer the user
+watches). Moon finds the app from the connection as for `statusbar`, and
+the request lasts as long as that process: `awake off`, the app exiting or
+restarting ends it (it asks again when it starts). It only counts while the
+app is in front: at home, in another app, on the lock screen or with the
+screen off nothing changes, and the power key still sleeps the phone. When
+it ends, or the app leaves the front, Auto-Lock counts from then (the
+screen dims `auto_lock_s` − 5 s later, not at once). The app's media lease
+(`lease acquire APP media N`) holds Auto-Lock off the same way, renewed
+every 30 s at most, and also keeps the app running in the background;
+`awake` needs no renewal and does not keep the app running once it leaves
+the front. Asked by something that is not an app, without naming one:
+refused (`awake: not asked by an app (name one)`); for an app that is not
+running: refused (`awake: the app is not running`).
+
+## Icon badges
+
+`badge N` puts N on the asking app's home screen icon, as iOS's badge: a
+red circle with white digits over the icon's top-right corner, a pill for
+more digits (over 999 it reads `999+`), on the home grid, in the dock and
+in the App Library; in edit mode it jiggles with its icon, the "−" at the
+other corner. `badge 0` removes it. The count is the app's to keep current:
+it stays while the app is frozen or closed, and across Moon's restarts
+and reboots (Moon keeps the counts in `badges.json` beside its settings,
+`/var/lib/a26-shell/badges.json`), so an app sets 0 when nothing is left to
+show. While the app is closed, a helper running for it names the app
+(`badge exocortex 2`). Asked by something that is not an app, without
+naming one: refused (`badge: not asked by an app (name one)`).
+
 ## Verified (2026-10-29)
 
 On the phone, in `moon-sandbox` (a dummy-driver Xorg; the real Moon, panel
@@ -122,3 +177,28 @@ and sockets untouched), with xev standing in for an app:
 - `statusbar color #f2f2f7` asked by a tool the app ran: Moon found the app,
   drew the bar light grey with dark content; `#00050f` light content; the
   colour was gone once the app exited.
+
+Images, keeping the screen awake and badges, in `moon-sandbox` the same way,
+with a test X client standing in for other apps:
+
+- An X client copied a PNG (no text): Moon took it within 0.7 s and
+  `clipboard get image` returned the same bytes; after the client exited,
+  another X client read `TARGETS image/png` and the PNG from Moon, byte for
+  byte (`UTF8_STRING` refused). A 3 MB PNG over INCR arrived exactly; an
+  8.3 MiB one stayed with its owner (`clipboard: a copied image over 8
+  MiB`); a copy offering text and a PNG kept both.
+- `clipboard set image/png` with an 8.0 MB PNG (10.6 MB of base64) was
+  answered in 40–110 ms; another X client pasted it byte for byte and
+  `clipboard get image` gave it back. Meanwhile Moon answered a ping every
+  2 ms within 11 ms (9 ms idle); done on its event loop, the same transfer
+  had held Moon for 40–150 ms. Text then replaced the image; the paste key
+  dimmed for the image and lit again for the text.
+- `awake system on`, Auto-Lock at 15 s: no dim or lock in 24 s untouched,
+  Moon idle meanwhile (no CPU time); after `awake system off` the screen
+  dimmed at 10 s and locked at 15 s. Closing the app ended it, and it did
+  not come back with the next start.
+- `badge`: 1, 3, 42 and 1234 (`999+`) on the dock, the grid and in the App
+  Library, and in edit mode (a change while jiggling showed at once); the
+  counts were back after `restart`. Edit mode's frame times were the same
+  with four badges as with none (the sandbox's XRender: 33–41 ms and 33–36
+  ms a frame). The GPU compositor (none in the sandbox) was not tried.

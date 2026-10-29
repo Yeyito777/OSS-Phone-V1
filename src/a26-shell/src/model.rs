@@ -375,8 +375,15 @@ pub struct ShellState {
     /// main loop to save and apply them.
     pub settings: crate::settings::Settings,
     pub settings_changed: bool,
+    /// The apps' icon badges (`badge N`; badges.rs); `badges_changed` asks
+    /// the main loop to save them.
+    pub badges: crate::badges::Badges,
+    pub badges_changed: bool,
     /// The last touch or key, for Auto-Lock.
     pub last_input: Instant,
+    /// The app in front holds Auto-Lock off: it plays media (its media
+    /// lease) or keeps the screen awake (`awake on`). Set by the main loop.
+    pub auto_lock_held: bool,
     /// The app shown before the current one (the bottom-edge swipe).
     previous_app: Option<AppId>,
     /// Touch events for the app in front, drained by the main loop.
@@ -447,6 +454,10 @@ pub struct PublicState {
     pub display: Option<crate::brightness::PublicDisplay>,
     /// The apps' own status bar colours (`statusbar color`), by app.
     pub status_bar: std::collections::BTreeMap<&'static str, crate::status_bar::PublicStatusStyle>,
+    /// The running apps keeping the screen awake (`awake on`).
+    pub awake: Vec<&'static str>,
+    /// The apps' icon badges (`badge N`), by app.
+    pub badges: std::collections::BTreeMap<&'static str, u32>,
 }
 
 impl ShellState {
@@ -506,6 +517,9 @@ impl ShellState {
             voice: Default::default(),
             settings: Default::default(),
             settings_changed: false,
+            badges: Default::default(),
+            badges_changed: false,
+            auto_lock_held: false,
             last_input: Instant::now(),
             previous_app: None,
             app_pointer: Vec::new(),
@@ -574,6 +588,8 @@ impl ShellState {
             animation: None,
             display: None,
             status_bar: Default::default(),
+            awake: Vec::new(),
+            badges: self.badges.public(),
         }
     }
 
