@@ -2457,23 +2457,27 @@ fn draw_badge(canvas: &mut Canvas) {
     canvas.fill_rrect(RectF::new(c - 13.0, c - 3.0, 26.0, 6.0), 3.0, 0x1c1c1e, 1.0);
 }
 
-/// Edit mode's Done button: a light capsule.
+/// Edit mode's Done button: iOS's light translucent pill with dark
+/// semibold text.
 fn draw_done_button(canvas: &mut Canvas) {
     canvas.clear(0);
     let rect = RectF::new(0.0, 0.0, home::DONE.w, home::DONE.h);
-    canvas.fill_rrect(rect, rect.h / 2.0, 0xe5e5ea, 0.92);
-    let baseline = text::centered_baseline(rect.h / 2.0, Weight::SemiBold, 34.0);
+    canvas.fill_rrect(rect, rect.h / 2.0, WHITE, 0.78);
+    let baseline = text::centered_baseline(rect.h / 2.0, Weight::SemiBold, DONE_TEXT);
     text::draw_centered(
         canvas,
         "Done",
         rect.w / 2.0,
         baseline,
         Weight::SemiBold,
-        34.0,
-        BLACK,
+        DONE_TEXT,
+        0x1c1c1e,
         1.0,
     );
 }
+
+/// The Done button's label size (15 pt).
+const DONE_TEXT: f32 = 41.0;
 
 /// The App Library: a search field, then every app by name, each with its
 /// icon, as iOS lists them.
@@ -3306,6 +3310,47 @@ mod tests {
         let (_, zero_y) = keypad_center(0);
         assert_eq!(keypad_action_at(240, zero_y as i16, true), None);
         assert_eq!(keypad_action_at(540, 300, true), None);
+    }
+
+    #[test]
+    fn done_sits_below_the_status_bar_glyphs_with_room_for_its_label() {
+        // A full status bar draws nothing in Done's row (above it, in its
+        // columns); the label leaves the pill iOS's padding.
+        let mut canvas = Canvas::new(1080, 300);
+        let status = StatusInfo {
+            time: "12:59".into(),
+            wifi_connected: true,
+            battery_percent: Some(100),
+            battery_charging: true,
+            alarm_set: true,
+            dnd: true,
+            cellular: Cellular::Bars {
+                level: 3,
+                rat: Some("LTE"),
+            },
+            carrier: None,
+            call_pill: true,
+        };
+        draw_status_bar(&mut canvas, &status, None);
+        let (x0, x1) = (
+            home::DONE.x as usize,
+            (home::DONE.x + home::DONE.w) as usize,
+        );
+        let lowest = (0..300)
+            .rev()
+            .find(|y| {
+                canvas.pixels[y * 1080 + x0..y * 1080 + x1]
+                    .iter()
+                    .any(|p| *p != 0)
+            })
+            .unwrap();
+        assert!(
+            (lowest as f32) < home::STATUS_GLYPHS_BOTTOM,
+            "lowest {lowest}"
+        );
+        let label = text::measure("Done", Weight::SemiBold, DONE_TEXT);
+        let padding = (home::DONE.w - label) / 2.0;
+        assert!((28.0..=40.0).contains(&padding), "padding {padding}");
     }
 
     #[test]

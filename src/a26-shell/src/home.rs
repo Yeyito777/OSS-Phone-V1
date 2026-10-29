@@ -54,10 +54,28 @@ pub const LIBRARY_ROW: f32 = 168.0;
 pub const LIBRARY_ICON: f32 = 120.0;
 pub const LIBRARY_ICON_X: f32 = 72.0;
 
-/// Edit mode's Done button (top right, under the status bar), and the area
-/// that takes its taps.
-pub const DONE: RectF = RectF::new(858.0, 132.0, 156.0, 54.0);
-const DONE_TARGET: RectF = RectF::new(800.0, 131.0, 280.0, 110.0);
+/// The status bar's glyphs (its time, Wi-Fi and battery) end here.
+pub const STATUS_GLYPHS_BOTTOM: f32 = 84.0;
+/// Edit mode's Done button, as on iOS: a pill in a row of its own under the
+/// status bar, its right edge on the grid's right margin, centred between
+/// the status bar's glyphs and the widgets. Taps reach it a little around
+/// it (never the widgets'); a swipe down from the status bar above it is
+/// still Control Centre's.
+const DONE_W: f32 = 166.0;
+const DONE_H: f32 = 64.0;
+const GRID_RIGHT: f32 = GRID_MARGIN + (GRID_COLUMNS - 1) as f32 * GRID_PITCH + ICON;
+pub const DONE: RectF = RectF::new(
+    GRID_RIGHT - DONE_W,
+    ((STATUS_GLYPHS_BOTTOM + crate::ui::WIDGET_TOP - DONE_H) / 2.0).round(),
+    DONE_W,
+    DONE_H,
+);
+const DONE_TARGET: RectF = RectF::new(
+    DONE.x - 32.0,
+    DONE.y - 16.0,
+    SCREEN_W - DONE.x + 32.0,
+    DONE_H + 32.0,
+);
 /// The "−" badge: its radius, its center's inset from the icon's top-left
 /// corner, and the reach of a tap on it.
 pub const BADGE_RADIUS: f32 = 28.0;
@@ -1775,6 +1793,12 @@ impl ShellState {
         Ok(())
     }
 
+    /// Edit mode's Done button is under (x, y): a touch there is not a pull
+    /// from the top edge.
+    pub fn home_done_at(&self, x: f32, y: f32) -> bool {
+        self.home_ready() && self.home.editing() && DONE_TARGET.contains(x, y)
+    }
+
     pub fn home_public(&self) -> PublicHome {
         PublicHome {
             editing: self.home.editing(),
@@ -1896,6 +1920,14 @@ mod tests {
         let last = grid_rect(GRID_MAX - 1);
         assert!(last.y + last.h + LABEL_DROP + 20.0 < DOCK.y);
         assert!(grid_rect(0).y > crate::ui::WIDGET_TOP + crate::ui::WIDGET_SIZE);
+        // Done sits in a row of its own: on the grid's right margin, clear
+        // of the status bar's glyphs and the widgets, centred between them.
+        assert_eq!(DONE.x + DONE.w, grid_rect(3).x + ICON);
+        let above = DONE.y - STATUS_GLYPHS_BOTTOM;
+        let below = crate::ui::WIDGET_TOP - (DONE.y + DONE.h);
+        assert!(above >= 16.0 && below >= 16.0 && (above - below).abs() <= 1.0);
+        assert!(DONE_TARGET.y + DONE_TARGET.h < crate::ui::WIDGET_TOP);
+        assert!(DONE_TARGET.x + DONE_TARGET.w <= SCREEN_W);
         // Jiggle frames run evenly through zero.
         assert_eq!(jiggle_frame(0.0), JIGGLE_FRAMES / 2);
         assert_eq!(frame_angle(JIGGLE_FRAMES / 2), 0.0);
@@ -2221,6 +2253,17 @@ mod tests {
         state.home_command(LayoutCommand::Edit(true)).unwrap();
         assert!(state.home_public().editing);
         state.home();
+        assert!(!state.home_public().editing);
+        // A touch on Done is Done's; above it, the status bar still pulls
+        // Control Centre down.
+        state.home_command(LayoutCommand::Edit(true)).unwrap();
+        let (dx, dy) = DONE.center();
+        assert!(state.home_done_at(dx, dy));
+        assert!(!state.control_pointer_begin(dx, dy));
+        assert!(!state.control_pointer_begin(dx, DONE.y - 8.0));
+        assert!(state.control_pointer_begin(dx, 40.0));
+        state.control_cancel_touch();
+        state.home_tap(dx, dy);
         assert!(!state.home_public().editing);
         // Locking ends it at once.
         state.home_command(LayoutCommand::Edit(true)).unwrap();

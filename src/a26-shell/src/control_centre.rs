@@ -248,6 +248,7 @@ impl ShellState {
         }
         let allowed = y <= PULL_ZONE
             && x >= SPLIT_X
+            && !self.home_done_at(x, y)
             && self.switcher.is_none()
             && self.gesture.is_none()
             && !self.app_launching()

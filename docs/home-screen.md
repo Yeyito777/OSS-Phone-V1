@@ -22,7 +22,7 @@ shrinks it away in the middle of the screen).
 
 | Do this | And this happens |
 | --- | --- |
-| Hold an app icon (grid or dock) or empty space for 0.5 s | Edit mode: every icon jiggles, each a little out of phase, with a "−" badge at its top-left, and **Done** shows at the top right. A tap haptic plays (when `haptics` is on) |
+| Hold an app icon (grid or dock) or empty space for 0.5 s | Edit mode: every icon jiggles, each a little out of phase, with a "−" badge at its top-left, and **Done** shows at the top right: iOS's light pill in a row of its own under the status bar, its right edge on the grid's right margin (a swipe down from the status bar above it still opens Control Centre). A tap haptic plays (when `haptics` is on) |
 | Keep holding and move | The held icon lifts (a little larger, under the finger) and drags at once |
 | In edit mode, touch an icon and move | It drags |
 | Drag over the grid or the dock | After a short rest over a place (90 ms), the other icons spring out of the way to leave it room. Grid ↔ dock both ways; a full dock (four) takes no fifth app |
