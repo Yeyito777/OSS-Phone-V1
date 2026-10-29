@@ -25,6 +25,7 @@ use crate::present::Damage;
 use crate::status_bar;
 use crate::telephony_client::Cellular;
 use crate::text::{self, Weight};
+use crate::voice;
 
 pub const BLACK: Rgb = 0x000000;
 pub const WHITE: Rgb = 0xffffff;
@@ -390,6 +391,11 @@ pub struct Renderer {
     power: Layer<u64>,
     power_knob: Layer<power::PowerAction>,
     charge_card: Layer<Option<u8>>,
+    /// Voice's orb (its glow and its core) and its label (whether it was
+    /// started locked).
+    voice_halo: Layer<()>,
+    voice_core: Layer<()>,
+    voice_label: Layer<bool>,
 }
 
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
@@ -527,6 +533,27 @@ impl Renderer {
                 &mut compositor,
                 power::CARD.w as i32,
                 power::CARD.h as i32,
+                true,
+            )?,
+            voice_halo: Layer::new(
+                conn,
+                &mut compositor,
+                voice::HALO as i32,
+                voice::HALO as i32,
+                true,
+            )?,
+            voice_core: Layer::new(
+                conn,
+                &mut compositor,
+                voice::CORE as i32,
+                voice::CORE as i32,
+                true,
+            )?,
+            voice_label: Layer::new(
+                conn,
+                &mut compositor,
+                voice::LABEL.w as i32,
+                voice::LABEL.h as i32,
                 true,
             )?,
             call_line: Layer::new(conn, &mut compositor, w, calls::LINE.h as i32, true)?,
@@ -1151,6 +1178,17 @@ impl Renderer {
                     power::draw_charging_card(canvas, percent);
                 })?;
         }
+        if state.voice.listening.is_some() || state.voice.closing.is_some() {
+            self.voice_halo
+                .update(conn, compositor, (), voice::draw_halo)?;
+            self.voice_core
+                .update(conn, compositor, (), voice::draw_core)?;
+            let locked = state.voice.locked;
+            self.voice_label
+                .update(conn, compositor, locked, |canvas| {
+                    voice::draw_label(canvas, locked);
+                })?;
+        }
         if let Some(view) = state.call_view() {
             let calls = &state.calls;
             let key = calls::CallKey {
@@ -1339,6 +1377,38 @@ impl Renderer {
             src: RectF::new(0.0, 0.0, power::CARD.w, power::CARD.h),
             dst: power::CARD,
             alpha: (card_alpha * 255.0).round() / 255.0,
+            radius: 0.0,
+            smooth: false,
+        });
+        // Voice over everything: the screen dims, the orb breathes and
+        // swells with the voice, and the label says what releasing does.
+        let alpha = (state.voice.alpha(t) * 255.0).round() / 255.0;
+        nodes.push(Node::Fill {
+            dst: SCREEN,
+            color: BLACK,
+            alpha: alpha * voice::DIM,
+            radius: 0.0,
+        });
+        let (cx, cy) = voice::ORB_CENTER;
+        for (surface, side, scale) in [
+            (self.voice_halo.id, voice::HALO, state.voice.halo_scale(t)),
+            (self.voice_core.id, voice::CORE, state.voice.core_scale()),
+        ] {
+            let size = side * scale;
+            nodes.push(Node::Image {
+                surface,
+                src: RectF::new(0.0, 0.0, side, side),
+                dst: RectF::new(cx - size / 2.0, cy - size / 2.0, size, size),
+                alpha,
+                radius: 0.0,
+                smooth: true,
+            });
+        }
+        nodes.push(Node::Image {
+            surface: self.voice_label.id,
+            src: RectF::new(0.0, 0.0, voice::LABEL.w, voice::LABEL.h),
+            dst: voice::LABEL,
+            alpha,
             radius: 0.0,
             smooth: false,
         });

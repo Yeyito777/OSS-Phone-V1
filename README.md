@@ -24,7 +24,8 @@ charging screens, an iPhone-style system keyboard, external X11 app lifecycle
 management, physical power/volume key policy, and a root-only Unix-socket
 control interface over ADB. The System, Phone, Messages and Exocortex apps come from
 [a26-system](https://github.com/Yeyito777/a26-system); Exocortex, the
-user's AI agent, runs on the phone itself ([docs/EXOCORTEX.md](docs/EXOCORTEX.md)).
+user's AI agent, runs on the phone itself ([docs/EXOCORTEX.md](docs/EXOCORTEX.md)):
+hold the power key to talk to it ([docs/voice.md](docs/voice.md)).
 
 > [!WARNING]
 > This is research software, not a turnkey custom ROM. The reference setup uses
@@ -116,7 +117,8 @@ which `install-all.sh` installs from a checkout (`--a26-system DIR`).
 
 To iterate on the shell itself, `scripts/a26-shell/deploy.sh [--reboot]`
 rebuilds and replaces only the Moon binaries, keeping the phone's PIN
-config.
+config, and Moon runs the new build at once (`a26-shellctl restart`: no
+reboot).
 
 Start just the shell when Xorg is already running:
 

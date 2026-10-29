@@ -38,6 +38,7 @@ mod touch;
 mod tz;
 mod uevent;
 mod ui;
+mod voice;
 mod volume;
 mod wallpaper;
 mod wayland;
@@ -465,6 +466,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut state = ShellState::new(config.start_locked, initial_volume);
     let settings_path = settings::Settings::path();
     state.settings = settings::Settings::load(&settings_path);
+    refresh_voice(&mut state);
     // The user's time zone and clock (System's Date & Time) over config.json.
     if let Some(rule) = state.settings.timezone.as_deref().and_then(tz::rule) {
         tz::apply(rule);
@@ -677,6 +679,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // supervisor's helper while it runs.
     let mut shutdown_shown: Option<Instant> = None;
     let mut power_helper: Option<std::process::Child> = None;
+    // Holding the power key: the voice hook recording, and those finishing.
+    let mut voice_hook = voice::VoiceHook::default();
     // Passes a screen-off has waited for the app to be released.
     let mut sleep_retries = 0_u32;
     while !state.should_exit {
@@ -883,9 +887,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                             continue;
                         }
                         state.note_input();
+                        refresh_voice(&mut state);
                         if !state.screen_awake {
-                            // Waking needs no hold.
-                            state.power_key();
+                            // Waking needs no hold (held on, Moon listens).
+                            state.power_key_wake(Instant::now());
                         } else if !(state.calls_power_key() || state.alerts_power_key()) {
                             // While a call, an alarm or a timer rings the
                             // power key silences, snoozes or stops it.
@@ -905,6 +910,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Ok(keys) => {
                     for key in keys {
                         state.note_input();
+                        // With the power key held: the power menu.
+                        if state.power_chord() {
+                            continue;
+                        }
                         change_volume(
                             &mut state,
                             audio_volume.as_ref(),
@@ -941,7 +950,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                         Command::SettingsSet(key, value) => {
                             state.settings.set(key, value).map(|()| {
                                 state.settings_changed = true;
+                                refresh_voice(&mut state);
                             })
+                        }
+                        // Under Xwayland Moon owns the X server: a new image
+                        // could not take it over.
+                        Command::Restart if xwayland_server.is_some() => {
+                            Err("restart is unavailable under Xwayland")
+                        }
+                        Command::Voice(voice::VoiceRequest::Start) => {
+                            refresh_voice(&mut state);
+                            if !state.voice.available {
+                                Err("voice is off (no hook, or power_hold is menu)")
+                            } else if !state.voice_start(Instant::now()) {
+                                Err("cannot listen now")
+                            } else {
+                                Ok(())
+                            }
                         }
                         Command::SuspendTest(seconds) => {
                             if platform_suspend.is_none() {
@@ -1225,6 +1250,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                     state.shutdown_failed();
                 }
             }
+        }
+        for request in std::mem::take(&mut state.voice.requests) {
+            voice_hook.handle(request, state.voice.locked);
+        }
+        voice_hook.reap();
+        // The orb follows the voice (frames run while it shows).
+        if state.voice.visible(Instant::now()) {
+            let reading = voice_hook.level();
+            state.voice.advance_level(reading, Instant::now());
         }
         // The helper starts the ordered shutdown detached and exits at
         // once; anything but 0 means it did not.
@@ -1629,6 +1663,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             // The shutdown screen's frame, then the helper, then its exit.
             deadline = deadline.min(now + Duration::from_millis(20));
         }
+        if voice_hook.busy() {
+            // Reaps the hook once it has sent.
+            deadline = deadline.min(now + Duration::from_secs(1));
+        }
         if pending_transition.is_some() {
             // The snapshot's completion comes as an X event; look again soon.
             deadline = deadline.min(now + Duration::from_millis(2));
@@ -1703,7 +1741,26 @@ fn main() -> Result<(), Box<dyn Error>> {
     renderer.destroy(&conn);
     let _ = conn.flush();
     eprintln!("a26-shell stopping");
+    if state.restart {
+        restart_in_place();
+    }
     Ok(())
+}
+
+/// `restart`: the binary on disk (an update) in this same process, so the
+/// session, its mounts and the supervisor's PIDs carry on, and the GPU
+/// compositor keeps the last frame until the new image connects. Every
+/// descriptor Moon holds is close-on-exec. Returns only when the exec failed:
+/// Moon then exits, as after `quit`.
+fn restart_in_place() {
+    use std::os::unix::process::CommandExt;
+    let mut args = env::args_os();
+    let Some(program) = args.next() else {
+        return;
+    };
+    eprintln!("a26-shell restarting: {}", program.to_string_lossy());
+    let error = std::process::Command::new(&program).args(args).exec();
+    eprintln!("restart failed: {error}");
 }
 
 fn parse_config_path() -> Result<PathBuf, Box<dyn Error>> {
@@ -1863,8 +1920,16 @@ fn auto_lock_timeout(state: &ShellState) -> Option<Duration> {
         // A finger resting on a keyboard key (its own touch path).
         && state.keyboard.latest_pressed().is_none()
         && state.alerts.ringing().is_none()
-        && state.calls.ringing().is_none())
+        && state.calls.ringing().is_none()
+        && !state.voice_listening())
     .then(|| Duration::from_secs(u64::from(seconds)))
+}
+
+/// Holding the power key listens when `power_hold` is `voice` and the hook
+/// is installed (voice.rs); otherwise it opens the power menu.
+fn refresh_voice(state: &mut ShellState) {
+    state.voice.available =
+        state.settings.power_hold == settings::PowerHold::Voice && voice::VoiceHook::installed();
 }
 
 /// The next Auto-Lock step (dim, then off).
@@ -3404,6 +3469,12 @@ fn apply_command(
         Command::Home => state.home(),
         Command::Switcher => state.pending_switcher = true,
         Command::Launch(app) => state.open_app(app),
+        Command::Open(app, target) => state.open_target(app, target),
+        // Started above (it may be refused).
+        Command::Voice(voice::VoiceRequest::Start) => {}
+        Command::Voice(request) => {
+            state.voice_stop(request == voice::VoiceRequest::Send, Instant::now())
+        }
         Command::KeyboardShow(purpose) => {
             state.show_keyboard(purpose);
         }
@@ -3440,6 +3511,10 @@ fn apply_command(
         | Command::SimulateMemoryPressure
         | Command::SuspendTest(_) => {}
         Command::Quit => state.should_exit = true,
+        Command::Restart => {
+            state.restart = true;
+            state.should_exit = true;
+        }
     }
 }
 

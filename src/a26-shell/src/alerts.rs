@@ -395,8 +395,8 @@ impl ShellState {
 
     /// The shell must cover the foreground app: the centre or the ringing
     /// screen is up.
-    /// The centre, Control Centre or the ringing screen is up: the shell
-    /// covers the foreground app.
+    /// The centre, Control Centre, the ringing screen, the power menu or
+    /// voice's overlay is up: the shell covers the foreground app.
     pub fn alerts_cover_app(&self, now: Instant) -> bool {
         self.alerts.ring_sheet.visible()
             || self.alerts.centre.visible(now)
@@ -404,6 +404,7 @@ impl ShellState {
             || self.calls_cover()
             || self.power.menu_visible(now)
             || self.power_takes_over()
+            || self.voice.visible(now)
     }
 
     pub fn alerts_animating(&self, now: Instant) -> bool {

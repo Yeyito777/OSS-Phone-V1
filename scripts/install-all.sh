@@ -126,7 +126,7 @@ for name in a26-shell a26-shellctl a26-shellshot a26-renderbench a26-touchpath m
     MANIFEST+=("$IMAGE/a26-shell-0.1.0/bin/$name:$ROOT/opt/a26-shell/bin/$name")
 done
 MANIFEST+=("$PROJECT_ROOT/scripts/device/moon-power:$ROOT/opt/a26-shell/bin/moon-power")
-for name in moon-audiod moon-permissiond; do
+for name in moon-audiod moon-permissiond moon-voice-capture; do
     MANIFEST+=("$IMAGE/moon-audiod/$name:$ROOT/opt/a26-audio/$name")
 done
 for name in moon-boot-supervisor.sh moon-direct-policy.sh moon-post-ready.sh moon-audio-start.sh \
@@ -157,6 +157,7 @@ if [[ "$SKIP_EXOCORTEX" == 0 ]]; then
         "$EXO/exocortex-supervisor:$ROOT/usr/local/bin/exocortex-supervisor"
         "$EXO/exocortexd:$ROOT/usr/local/bin/exocortexd"
         "$EXO/android-sh:$ROOT/usr/local/bin/android-sh"
+        "$EXO/exocortex-voice:$ROOT/usr/local/bin/exocortex-voice"
     )
 fi
 if [[ "$SKIP_SYSTEM" == 0 && -n "$A26_SYSTEM" ]]; then

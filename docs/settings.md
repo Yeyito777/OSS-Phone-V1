@@ -15,13 +15,14 @@ with their own commands: see `display-brightness.md`.
 | `settings set clock_24h on\|off` | the 24-hour clock (unset: config.json's `clock_24h`) |
 | `settings set haptics on\|off` | tap haptics (keyboard keys, Control Centre toggles and slider ends, switches; **off** by default: the A26's coin motor is too faint for crisp taps). The wrong-passcode buzz plays either way |
 | `settings set haptic_STYLE_ms N` | the pulse length for `selection`, `light`, `medium` or `error` taps: 5–400 ms, or `0` for moon-notifyd's default (100, 120, 150, 300 ms) |
+| `settings set power_hold voice\|menu` | what holding the power key does: talk to Exocortex (`voice`, the default, when its hook is installed; the power menu is then power + a volume key) or open the power menu (`menu`). See `voice.md` |
 | `haptic STYLE [MS]` | an app asks for a tap haptic (with `MS`: that length once, for tuning) (`selection`, `light`, `medium`, `error`); Moon plays it through moon-notifyd's `haptic` when `haptics` is on and the screen is on |
 
 An unknown key or value is refused (`ok: false`); nothing changes. Every
 reply and `state` carry the current settings:
 
 ```json
-"settings": {"version": 1, "wallpaper": "moon", "auto_lock_s": 30, "haptics": false, "haptic_ms": [0, 0, 0, 0]}
+"settings": {"version": 1, "wallpaper": "moon", "auto_lock_s": 30, "haptics": false, "haptic_ms": [0, 0, 0, 0], "power_hold": "voice"}
 ```
 
 ## File
@@ -66,7 +67,10 @@ it off after 10 s untouched (`notifications-ui.md`).
 | Command | Effect |
 | --- | --- |
 | `power` | the power key's short press (sleep / wake) |
-| `power menu [restart]` | the power menu, as when the key is held for 0.9 s: *slide to power off* (or *slide to restart* after tapping Restart), Restart / Power Off, Cancel |
+| `power menu [restart]` | the power menu, as when the key is held for 0.9 s (with voice on, power + a volume key): *slide to power off* (or *slide to restart* after tapping Restart), Restart / Power Off, Cancel |
+| `restart` | Moon quits cleanly (apps close, the phone locks) and runs the binary on disk again in the same process: an update goes live with no reboot, and the session, its mounts and the supervisor carry on (refused under Xwayland) |
+| `voice start\|send\|cancel` | hold the power key to talk to Exocortex, release, or drop it (`voice.md`) |
+| `open APP TARGET` | the app opens at a target, as a tapped notification does (after unlocking, when locked) |
 | `system poweroff\|reboot` | power off or restart now: Moon shows *Shutting down…* / *Restarting…*, then runs the supervisor's `/opt/a26-shell/bin/moon-power poweroff\|reboot` (docs/power.md), which starts the ordered shutdown and returns |
 
 The battery policy is the supervisor's: its `moon` notifications tagged

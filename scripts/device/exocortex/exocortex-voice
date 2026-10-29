@@ -1,0 +1,380 @@
+#!/opt/bun/bin/bun
+// Moon's voice hook (docs/voice.md): hold the power key, talk, let go, and
+// Exocortex gets what you said.
+//
+//   exocortex-voice record          Moon runs it when a hold starts. It records
+//                                   at once and reads one line on stdin when the
+//                                   key comes up: `send`, `send locked` (held on
+//                                   the lock screen: sent only once unlocked) or
+//                                   `cancel`; end of input is `cancel`. Until
+//                                   then it prints `level L` lines on stdout
+//                                   (0..1, how loud the voice is) for Moon's orb.
+//   exocortex-voice send FILE.wav   transcribe and send a recording (testing)
+//
+// The microphone is Android's: moon-voice-capture (AAudio, 16 kHz mono) runs
+// outside the chroot through /proc/1/root, as moon-power does. The daemon
+// transcribes (`transcribe_audio`, its OpenAI login), then the text goes to the
+// voice conversation named in /etc/exocortex-voice.json (queued if it is
+// working), which the app then shows. Without one: to the conversation the
+// Exocortex app shows in front, or a new conversation with Claude. Problems
+// become a notification (app exocortex, tag voice).
+// Logs (to Moon's log) never carry what was said.
+
+import { createConnection } from "node:net";
+import { mkdtempSync, readFileSync, rmSync, writeSync } from "node:fs";
+
+const CAPTURE = "/data/local/a26-linux/opt/a26-audio/moon-voice-capture";
+const BUSYBOX = "/busybox.static";
+/** Testing: a command that prints 16 kHz PCM in place of the microphone. */
+const CAPTURE_OVERRIDE = process.env.EXOCORTEX_VOICE_CAPTURE;
+const SHELLCTL = "/opt/a26-shell/bin/a26-shellctl";
+const NOTIFYCTL = "/opt/a26-shell/bin/moon-notifyctl";
+const SOCKET = process.env.EXOCORTEX_SOCKET ?? "/opt/exocortex/config/runtime/exocortexd.sock";
+const APP_STATE = process.env.EXOCORTEX_APP_STATE ?? "/run/exocortex-app/view.json";
+const RATE = 16000;
+const MAX_SECONDS = 120;
+/** New conversations go to Claude (the daemon's default Claude model), not
+ * the daemon's default provider. */
+const PROVIDER = process.env.EXOCORTEX_VOICE_PROVIDER ?? "anthropic";
+const MODEL = process.env.EXOCORTEX_VOICE_MODEL;
+/** Where every message goes: {"conversation": "ID"} (the phone's main one). */
+const TARGET_FILE = process.env.EXOCORTEX_VOICE_TARGET ?? "/etc/exocortex-voice.json";
+/** Held on the lock screen: how long the words wait for the passcode. */
+const UNLOCK_WAIT_MS = 120_000;
+
+const log = (message: string) => console.error(`exocortex-voice: ${message}`);
+
+async function main(): Promise<number> {
+  const [mode, file] = process.argv.slice(2);
+  if (mode === "record") return await record();
+  if (mode === "send" && file) return await deliver(readFileSync(file), false);
+  console.error("usage: exocortex-voice record | send FILE.wav");
+  return 2;
+}
+
+async function record(): Promise<number> {
+  const dir = mkdtempSync("/tmp/exocortex-voice.");
+  try {
+    const command = CAPTURE_OVERRIDE
+      ? ["/bin/sh", "-c", CAPTURE_OVERRIDE]
+      : [BUSYBOX, "chroot", "/proc/1/root", CAPTURE, String(MAX_SECONDS)];
+    const capture = Bun.spawn(command, {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: Bun.file(`${dir}/capture.log`),
+    });
+    // The recording, metered as it comes for Moon's orb (until the key comes
+    // up: Moon then closes our stdout).
+    const chunks: Uint8Array[] = [];
+    const meter = new LevelMeter();
+    let metering = true;
+    const pump = (async () => {
+      for await (const chunk of capture.stdout) {
+        chunks.push(chunk);
+        const level = metering ? meter.push(chunk) : null;
+        if (level !== null) metering = emitLevel(level);
+      }
+    })();
+    const word = (await firstLine()).trim();
+    metering = false;
+    capture.kill("SIGTERM");
+    const killer = setTimeout(() => capture.kill("SIGKILL"), 3000);
+    const status = await capture.exited;
+    await pump;
+    clearTimeout(killer);
+    if (word !== "send" && word !== "send locked") return 0;
+    const pcm = Buffer.concat(chunks);
+    if (pcm.length < RATE * 2 * 0.3) {
+      const why = readFileSync(`${dir}/capture.log`, "utf8").trim().split("\n").pop() ?? "";
+      log(`no audio (capture exit ${status}): ${why}`);
+      await notify("The microphone recorded nothing. Try again.");
+      return 1;
+    }
+    log(`recorded ${(pcm.length / 2 / RATE).toFixed(1)} s`);
+    return await deliver(wav(normalized(pcm)), word === "send locked");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** How loud the voice is, 0..1, every 50 ms: its level above the noise floor
+ * (the 20th percentile of the last 2 s, past the stream's first 150 ms while
+ * the microphone ramps up, and at least 30 dB), over 20 dB. */
+class LevelMeter {
+  private rest: Uint8Array = new Uint8Array(0);
+  private sum = 0;
+  private count = 0;
+  private blocks = 0;
+  private recent: number[] = [];
+
+  /** The newest reading this chunk completed, if any. */
+  push(chunk: Uint8Array): number | null {
+    const bytes = this.rest.length ? Buffer.concat([this.rest, chunk]) : chunk;
+    const even = bytes.length & ~1;
+    this.rest = bytes.slice(even);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, even);
+    let level: number | null = null;
+    for (let i = 0; i < even; i += 2) {
+      const sample = view.getInt16(i, true);
+      this.sum += sample * sample;
+      if (++this.count < RATE / 20) continue;
+      const db = 10 * Math.log10(this.sum / this.count + 1);
+      this.sum = this.count = 0;
+      if (++this.blocks <= 3) continue;
+      this.recent.push(db);
+      if (this.recent.length > 40) this.recent.shift();
+      const sorted = [...this.recent].sort((a, b) => a - b);
+      const floor = Math.max(30, sorted[Math.floor(sorted.length * 0.2)]);
+      level = Math.max(0, Math.min(1, (db - floor - 2) / 20));
+    }
+    return level;
+  }
+}
+
+/** One `level L` line for Moon; false once Moon stopped reading. */
+function emitLevel(level: number): boolean {
+  try {
+    writeSync(1, `level ${level.toFixed(2)}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The first line on stdin, or "" at end of input. */
+async function firstLine(): Promise<string> {
+  let text = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of Bun.stdin.stream()) {
+    text += decoder.decode(chunk, { stream: true });
+    const end = text.indexOf("\n");
+    if (end >= 0) return text.slice(0, end);
+  }
+  return text;
+}
+
+/** Raised to a peak of -1 dBFS (at most 24 dB): VOICE_RECOGNITION is quiet. */
+function normalized(pcm: Buffer): Int16Array {
+  const samples = new Int16Array(pcm.buffer, pcm.byteOffset, Math.floor(pcm.length / 2));
+  let peak = 1;
+  for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+  const gain = Math.min(16, (0.89 * 32767) / peak);
+  const out = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) out[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * gain)));
+  return out;
+}
+
+function wav(samples: Int16Array): Buffer {
+  const data = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write("WAVEfmt ", 8);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(RATE, 24);
+  header.writeUInt32LE(RATE * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
+
+async function deliver(audio: Buffer, locked: boolean): Promise<number> {
+  const daemon = await Daemon.connect().catch(() => null);
+  if (!daemon) {
+    await notify("Exocortex is not running.");
+    return 1;
+  }
+  try {
+    const started = Date.now();
+    const result = await daemon.request(
+      { type: "transcribe_audio", audioBase64: audio.toString("base64"), mimeType: "audio/wav", filename: "voice.wav" },
+      90_000,
+    );
+    // The daemon reports silence as an error ("returned an empty result").
+    const empty = result.type === "error" && /empty result/i.test(String(result.message));
+    if (result.type !== "transcription_result" && !empty) {
+      log(`transcription failed: ${result.message}`);
+      await notify(`Transcription failed: ${result.message}`);
+      return 1;
+    }
+    const text = empty ? "" : String(result.text ?? "").trim();
+    log(`transcribed in ${Date.now() - started} ms (${text.length} characters)`);
+    if (!text) {
+      await notify("Didn't catch that. Try again.");
+      return 1;
+    }
+    if (locked && !(await unlocked())) {
+      log("not sent: the phone stayed locked");
+      await notify("Not sent: the phone stayed locked.");
+      return 1;
+    }
+    const target = voiceConversation();
+    if (target) {
+      if (await sendTo(daemon, target, text)) {
+        log(`sent to ${target}, the voice conversation`);
+        if ((await conversationInFront()) !== target) open(target);
+        return 0;
+      }
+      log(`the voice conversation ${target} refused it; starting a new one`);
+    } else {
+      const shown = await conversationInFront();
+      if (shown && (await sendTo(daemon, shown, text))) {
+        log(`sent to ${shown}, the conversation in front`);
+        return 0;
+      }
+    }
+    const created = await daemon.request({
+      type: "new_conversation",
+      provider: PROVIDER,
+      ...(MODEL ? { model: MODEL } : {}),
+      initialMessage: { text, startedAt: Date.now() },
+    }, 15_000);
+    if (created.type !== "conversation_created") {
+      log(`new conversation failed: ${created.message}`);
+      await notify(`Could not start a conversation: ${created.message}`);
+      return 1;
+    }
+    log(`started ${created.convId}`);
+    open(created.convId);
+    return 0;
+  } finally {
+    daemon.close();
+  }
+}
+
+/** The voice conversation from TARGET_FILE, if one is set. */
+function voiceConversation(): string | null {
+  try {
+    const id = JSON.parse(readFileSync(TARGET_FILE, "utf8")).conversation;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The Exocortex app opens at a conversation (after unlocking, if locked). */
+function open(convId: string): void {
+  Bun.spawnSync([SHELLCTL, "open", "exocortex", convId], { stdout: "ignore", stderr: "ignore" });
+}
+
+/** Sends to a conversation; joins its turn when it is working. */
+async function sendTo(daemon: Daemon, convId: string, text: string): Promise<boolean> {
+  const sent = await daemon.request({ type: "send_message", convId, text, startedAt: Date.now() }, 3000, event =>
+    (event.type === "streaming_started" || event.type === "user_message") && event.convId === convId);
+  if (sent.type !== "error") return true;
+  if (!/already streaming/i.test(String(sent.message))) {
+    log(`send failed: ${sent.message}`);
+    return false;
+  }
+  const queued = await daemon.request(
+    { type: "queue_message", queueId: `voice-${Date.now()}`, convId, text, timing: "message-end" },
+    3000,
+    event => event.type === "queue_updated",
+  );
+  return queued.type !== "error";
+}
+
+type Event = Record<string, any>;
+
+function shellState(): Event | null {
+  const out = Bun.spawnSync([SHELLCTL, "state"], { stderr: "ignore" });
+  try {
+    const reply = JSON.parse(out.stdout.toString());
+    return reply.result ?? reply;
+  } catch {
+    return null;
+  }
+}
+
+async function unlocked(): Promise<boolean> {
+  const deadline = Date.now() + UNLOCK_WAIT_MS;
+  while (Date.now() < deadline) {
+    const state = shellState();
+    if (state && state.locked === false && state.screen_awake) return true;
+    await Bun.sleep(400);
+  }
+  return false;
+}
+
+/** The conversation the Exocortex app shows, when it is in front on an
+ * awake, unlocked screen (as exocortex-notify decides). */
+async function conversationInFront(): Promise<string | null> {
+  try {
+    const view = JSON.parse(readFileSync(APP_STATE, "utf8"));
+    if (typeof view.conversation !== "string" || !view.conversation) return null;
+    process.kill(view.pid, 0);
+    const state = shellState();
+    if (!state || state.view !== "exocortex" || state.locked || !state.screen_awake) return null;
+    return view.conversation;
+  } catch {
+    return null;
+  }
+}
+
+async function notify(body: string): Promise<void> {
+  Bun.spawnSync([NOTIFYCTL, "notify.post", "app=exocortex", "tag=voice", "title=Voice", `body=${body}`], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+}
+
+/** One connection to the daemon (newline-delimited JSON, docs/daemon-ipc.md). */
+class Daemon {
+  private buffer = "";
+  private waiters = new Set<(event: Event) => boolean>();
+  private next = 0;
+
+  private constructor(private socket: ReturnType<typeof createConnection>) {
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      this.buffer += chunk;
+      let end: number;
+      while ((end = this.buffer.indexOf("\n")) >= 0) {
+        const line = this.buffer.slice(0, end);
+        this.buffer = this.buffer.slice(end + 1);
+        let event: Event;
+        try { event = JSON.parse(line); } catch { continue; }
+        for (const waiter of [...this.waiters]) if (waiter(event)) this.waiters.delete(waiter);
+      }
+    });
+  }
+
+  static connect(): Promise<Daemon> {
+    return new Promise((resolve, reject) => {
+      const socket = createConnection(SOCKET);
+      socket.once("connect", () => resolve(new Daemon(socket)));
+      socket.once("error", reject);
+    });
+  }
+
+  /** Sends a command; answers with its reply (same reqId, past the daemon's
+   * `ack`), an `also` match, or, after `timeoutMs`, {type: "timeout"}. */
+  request(command: Event, timeoutMs: number, also?: (event: Event) => boolean): Promise<Event> {
+    const reqId = `voice-${process.pid}-${++this.next}`;
+    return new Promise(resolve => {
+      const timer = setTimeout(() => {
+        this.waiters.delete(waiter);
+        resolve({ type: "timeout", message: "no answer from the daemon" });
+      }, timeoutMs);
+      const waiter = (event: Event) => {
+        const reply = event.reqId === reqId && event.type !== "ack";
+        if (!reply && !also?.(event)) return false;
+        clearTimeout(timer);
+        resolve(event);
+        return true;
+      };
+      this.waiters.add(waiter);
+      this.socket.write(`${JSON.stringify({ ...command, reqId })}\n`);
+    });
+  }
+
+  close() {
+    this.socket.end();
+  }
+}
+
+process.exit(await main());

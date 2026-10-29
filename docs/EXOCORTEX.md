@@ -163,6 +163,14 @@ waiting on finishes or a goal needs you, unless the app shows that
 conversation; tapping it opens the app there. Details: a26-system
 `docs/exocortex.md`.
 
+## Talking to it: hold the power key
+
+Hold the power key, speak, let go: Moon records, the daemon transcribes, and
+the words go to the conversation the app shows, or to a new conversation with
+Claude that the app opens ([voice.md](voice.md)). On the lock screen they are
+sent only after unlocking. The power menu is then the power key with a volume
+key.
+
 ## What the agent can do
 
 Its tools run as root in the chroot, in the daemon's namespace.

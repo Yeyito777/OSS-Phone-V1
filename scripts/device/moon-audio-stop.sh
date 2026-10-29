@@ -46,8 +46,9 @@ if pid_runs "$BASE/moon-audiod" "$pid"; then
     kill -KILL "$pid" 2>/dev/null || true
 fi
 
-# The native stand-ins ("permission", "audio") must be gone before the Java
-# framework starts, so system_server's own services are the only ones.
+# The native stand-ins ("permission", "audio", "permission_checker",
+# "edmnativehelper") must be gone before the Java framework starts, so
+# system_server's own services are the only ones.
 pid="$(cat "$PERMISSION_PIDFILE" 2>/dev/null || true)"
 if pid_runs "$BASE/moon-permissiond" "$pid"; then
     kill -KILL "$pid" 2>/dev/null || true

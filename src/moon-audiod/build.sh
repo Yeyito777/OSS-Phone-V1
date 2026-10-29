@@ -19,3 +19,4 @@ mkdir -p "$out"
 "$cc++" -O2 -Wall -fno-exceptions -fno-rtti -static-libstdc++ \
     -o "$out/moon-audio-volume" "$here/moon-audio-volume.cpp" "$lib" \
     -Wl,--allow-shlib-undefined
+"$cc" -O2 -Wall -Wextra -o "$out/moon-voice-capture" "$here/moon-voice-capture.c" -laaudio

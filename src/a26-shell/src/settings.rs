@@ -35,6 +35,18 @@ pub struct Settings {
     pub timezone: Option<String>,
     /// 24-hour clock; None keeps config.json's `clock_24h`.
     pub clock_24h: Option<bool>,
+    /// What holding the power key does: talk to Exocortex (`voice`, when
+    /// its hook is installed; the power menu is then the power key with a
+    /// volume key) or open the power menu (`menu`). docs/voice.md.
+    pub power_hold: PowerHold,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PowerHold {
+    #[default]
+    Voice,
+    Menu,
 }
 
 impl Default for Settings {
@@ -49,6 +61,7 @@ impl Default for Settings {
             haptic_ms: [0; 4],
             timezone: None,
             clock_24h: None,
+            power_hold: PowerHold::Voice,
         }
     }
 }
@@ -136,6 +149,13 @@ impl Settings {
                     _ => return Err("clock_24h must be on or off"),
                 });
             }
+            "power_hold" => {
+                self.power_hold = match value {
+                    "voice" => PowerHold::Voice,
+                    "menu" => PowerHold::Menu,
+                    _ => return Err("power_hold must be voice or menu"),
+                };
+            }
             "haptics" => {
                 self.haptics = match value {
                     "on" => true,
@@ -186,6 +206,10 @@ mod tests {
         assert!(settings.set("haptic_light_ms", "18").is_ok());
         assert_eq!(settings.haptic_ms, [0, 18, 0, 0]);
         assert!(settings.set("haptic_error_ms", "500").is_err());
+        assert_eq!(settings.power_hold, PowerHold::Voice);
+        assert!(settings.set("power_hold", "menu").is_ok());
+        assert_eq!(settings.power_hold, PowerHold::Menu);
+        assert!(settings.set("power_hold", "siri").is_err());
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);
         // Unknown keys and a newer field never break loading.

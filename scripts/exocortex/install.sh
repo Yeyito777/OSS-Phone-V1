@@ -5,7 +5,7 @@
 #
 #   1. the keeper (Android side: /data/adb/exocortex, the Magisk service.d
 #      hook) and the chroot commands (exocortexd, exocortex-supervisor,
-#      android-sh)
+#      android-sh, exocortex-voice: Moon's hold-the-power-key hook)
 #   2. inside the chroot (scripts/device/exocortex/phone-setup.sh): Alpine
 #      packages, Bun (pinned), Claude Code, the Exocortex checkout in
 #      /opt/exocortex with its config (system.md, Claude through /proxy whale),
@@ -64,7 +64,7 @@ done
 
 step "keeper and chroot commands"
 adb -s "$SERIAL" shell "rm -rf $STAGE; umask 077; mkdir $STAGE"
-for file in exocortex-keeper.sh exocortex-ns.sh 95-exocortex.sh exocortex-supervisor exocortexd android-sh phone-setup.sh system.md; do
+for file in exocortex-keeper.sh exocortex-ns.sh 95-exocortex.sh exocortex-supervisor exocortexd android-sh exocortex-voice phone-setup.sh system.md; do
     adb -s "$SERIAL" push "$DEVICE/$file" "$STAGE/$file" >/dev/null
 done
 su_run "set -eu
@@ -75,7 +75,7 @@ chmod 0700 /data/adb/exocortex \$root/var/lib/exocortex-keeper
 put exocortex-keeper.sh /data/adb/exocortex/exocortex-keeper.sh 0700
 put exocortex-ns.sh /data/adb/exocortex/exocortex-ns.sh 0700
 put 95-exocortex.sh /data/adb/service.d/95-exocortex.sh 0755
-for name in exocortex-supervisor exocortexd android-sh; do put \$name \$root/usr/local/bin/\$name 0755; done
+for name in exocortex-supervisor exocortexd android-sh exocortex-voice; do put \$name \$root/usr/local/bin/\$name 0755; done
 # Not under /tmp: the daemon namespace mounts its own /tmp.
 mkdir -p \$root/var/lib/exocortex-keeper/install
 cp \$stage/phone-setup.sh \$stage/system.md \$root/var/lib/exocortex-keeper/install/

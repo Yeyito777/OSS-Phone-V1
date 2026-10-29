@@ -16,7 +16,16 @@
  * to audio service failed" every ~20 ms. The stand-in accepts the one-way
  * reports and hands out player/recorder ids for the two synchronous calls.
  *
- * Both services must stop before the framework starts, so system_server
+ * Recording (moon-voice-capture) needs two more. Samsung's AudioPolicyManager
+ * asks its EDM native helper ("edmnativehelper", the enterprise policy)
+ * whether the microphone may record, on every new input: without it the
+ * lookup blocks until audioserver's 15 s TimeCheck aborts audioserver. With
+ * no device policy every answer is "allowed". And AudioPolicyService checks
+ * CAPTURE_AUDIO_HOTWORD through PermissionChecker ("permission_checker"),
+ * which waits 10 s for the service before denying; it is granted to service
+ * UIDs, as above.
+ *
+ * All of them must stop before the framework starts, so system_server
  * registers the real ones.
  *
  *   moon-permissiond [PID_FILE]
@@ -167,6 +176,58 @@ static binder_status_t on_transact_audio(AIBinder *binder, transaction_code_t co
     }
 }
 
+/* android.permission.IPermissionChecker: checkPermission(String permission,
+ * in AttributionSourceState, ...) and checkOp(int op, in
+ * AttributionSourceState, ...) answer PERMISSION_GRANTED (0) or
+ * PERMISSION_HARD_DENIED (2); finishDataDelivery returns nothing. The
+ * attribution source is a non-null parcelable: a marker, its size, then pid
+ * and uid. */
+enum {
+    PC_CHECK_PERMISSION = FIRST_CALL_TRANSACTION,
+    PC_FINISH_DATA_DELIVERY,
+    PC_CHECK_OP,
+};
+#define PERMISSION_GRANTED 0
+#define PERMISSION_HARD_DENIED 2
+
+static binder_status_t on_transact_checker(AIBinder *binder, transaction_code_t code,
+                                           const AParcel *in, AParcel *out) {
+    (void)binder;
+    int32_t op = 0, present = 0, size = 0, pid = -1, uid = -1;
+    char *permission = NULL;
+    if (code < PC_CHECK_PERMISSION || code > PC_CHECK_OP) return STATUS_UNKNOWN_TRANSACTION;
+    if (code == PC_CHECK_PERMISSION)
+        permission = read_string(in);
+    else
+        AParcel_readInt32(in, &op);
+    AParcel_readInt32(in, &present);
+    AParcel_readInt32(in, &size);
+    AParcel_readInt32(in, &pid);
+    AParcel_readInt32(in, &uid);
+    free(permission);
+    AStatus *ok = AStatus_newOk();
+    binder_status_t rc = AParcel_writeStatusHeader(out, ok);
+    AStatus_delete(ok);
+    if (rc == STATUS_OK && code != PC_FINISH_DATA_DELIVERY)
+        rc = AParcel_writeInt32(out, present && trusted_uid(uid) ? PERMISSION_GRANTED
+                                                                 : PERMISSION_HARD_DENIED);
+    return rc;
+}
+
+/* Samsung's IEDMNativeHelperService (libedmnativehelper.so): calls 1-15, each
+ * answered with one int32, no status header. Every query (isMicrophoneEnabled,
+ * isAudioRecordAllowed, isCameraEnabled, ...) is a permission, 1 = allowed;
+ * the audit-log calls ignore the answer. */
+#define EDM_LAST_CALL 15
+
+static binder_status_t on_transact_edm(AIBinder *binder, transaction_code_t code,
+                                       const AParcel *in, AParcel *out) {
+    (void)binder;
+    (void)in;
+    if (code < FIRST_CALL_TRANSACTION || code > EDM_LAST_CALL) return STATUS_UNKNOWN_TRANSACTION;
+    return AParcel_writeInt32(out, 1);
+}
+
 static void *on_create(void *args) { return args; }
 static void on_destroy(void *data) { (void)data; }
 
@@ -203,6 +264,17 @@ int main(int argc, char **argv) {
     AIBinder *audio = AIBinder_new(audio_class, NULL);
     ex = add_service(audio, "audio");
     if (ex != EX_NONE) fprintf(stderr, "moon-permissiond: addService(audio) failed: %d\n", ex);
+    /* Needed to record (moon-voice-capture), not to play. */
+    AIBinder_Class *checker_class = AIBinder_Class_define("android.permission.IPermissionChecker",
+                                                          on_create, on_destroy, on_transact_checker);
+    AIBinder *checker = AIBinder_new(checker_class, NULL);
+    ex = add_service(checker, "permission_checker");
+    if (ex != EX_NONE) fprintf(stderr, "moon-permissiond: addService(permission_checker) failed: %d\n", ex);
+    AIBinder_Class *edm_class = AIBinder_Class_define("mdm.edmnativehelperservice",
+                                                      on_create, on_destroy, on_transact_edm);
+    AIBinder *edm = AIBinder_new(edm_class, NULL);
+    ex = add_service(edm, "edmnativehelper");
+    if (ex != EX_NONE) fprintf(stderr, "moon-permissiond: addService(edmnativehelper) failed: %d\n", ex);
     if (argc >= 2) {
         FILE *f = fopen(argv[1], "w");
         if (f) {

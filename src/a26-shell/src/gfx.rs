@@ -638,11 +638,14 @@ impl Path {
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);
         let length = (dx * dx + dy * dy).sqrt().max(1e-3);
         let (nx, ny) = (-dy / length * width / 2.0, dx / length * width / 2.0);
+        // Clockwise on screen, as the caps (`circle`) are: coverage adds up
+        // where they overlap. Wound the other way the caps cancelled the
+        // body, leaving holes.
         self.polygon(&[
-            (a.0 + nx, a.1 + ny),
-            (b.0 + nx, b.1 + ny),
-            (b.0 - nx, b.1 - ny),
             (a.0 - nx, a.1 - ny),
+            (b.0 - nx, b.1 - ny),
+            (b.0 + nx, b.1 + ny),
+            (a.0 + nx, a.1 + ny),
         ]);
         for (x, y) in [a, b] {
             self.circle(x, y, width / 2.0);
@@ -835,6 +838,34 @@ mod tests {
         assert_eq!(mask[(5 * w + 7) as usize], 255);
         assert_eq!(mask[(5 * w + 2) as usize], 255);
         assert_eq!(mask[(5 * w + 16) as usize], 0);
+    }
+
+    #[test]
+    fn strokes_are_solid_where_their_caps_and_joins_overlap() {
+        // A ⊥: a vertical stroke ending on a horizontal one, both with round
+        // caps, drawn in every direction.
+        for (stem, base) in [
+            (((20.0, 4.0), (20.0, 30.0)), ((8.0, 30.0), (32.0, 30.0))),
+            (((20.0, 30.0), (20.0, 4.0)), ((32.0, 30.0), (8.0, 30.0))),
+        ] {
+            let mut path = Path::new();
+            path.stroke_segment(stem.0, stem.1, 6.0);
+            path.stroke_segment(base.0, base.1, 6.0);
+            let (x, y, w, _h, mask) = path.rasterize().unwrap();
+            let at = |px: i32, py: i32| mask[((py - y) * w + (px - x)) as usize];
+            // The caps' inner halves, the join, and the caps' outer halves.
+            for (px, py) in [
+                (20, 5),
+                (9, 30),
+                (31, 30),
+                (20, 30),
+                (19, 31),
+                (7, 30),
+                (32, 30),
+            ] {
+                assert_eq!(at(px, py), 255, "({px}, {py})");
+            }
+        }
     }
 
     #[test]

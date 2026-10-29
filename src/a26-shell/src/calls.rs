@@ -826,7 +826,7 @@ fn draw_buttons(canvas: &mut Canvas, key: &CallKey, view: &CallView, alpha: f32)
                 };
                 canvas.fill_circle(cx, cy, BUTTON_RADIUS, fill, fill_alpha * alpha);
                 match button {
-                    CallButton::Mute => draw_microphone(canvas, cx, cy, ink),
+                    CallButton::Mute => draw_microphone(canvas, cx, cy, 1.0, ink),
                     CallButton::Keypad => draw_keypad_glyph(canvas, cx, cy, ink),
                     CallButton::Speaker => crate::ui::draw_speaker(canvas, cx - 6.0, cy, 70, ink),
                     _ => draw_swap(canvas, cx, cy, ink),
@@ -994,13 +994,39 @@ pub fn draw_handset(canvas: &mut Canvas, cx: f32, cy: f32, scale: f32, down: boo
     canvas.fill_path(&path, color, 1.0);
 }
 
-fn draw_microphone(canvas: &mut Canvas, cx: f32, cy: f32, ink: u32) {
-    canvas.fill_rrect(RectF::new(cx - 17.0, cy - 50.0, 34.0, 62.0), 17.0, ink, 1.0);
-    canvas.ring_arc(cx, cy - 4.0, 32.0, 6.0, 0.0, std::f32::consts::PI, ink, 1.0);
-    let mut stem = Path::new();
-    stem.stroke_segment((cx, cy + 28.0), (cx, cy + 46.0), 6.0);
-    stem.stroke_segment((cx - 18.0, cy + 46.0), (cx + 18.0, cy + 46.0), 6.0);
-    canvas.fill_path(&stem, ink, 1.0);
+/// A microphone (as SF Symbols' mic.fill): a capsule in a U-shaped holder on
+/// a stand, about 90 x 70 px at `scale` 1, centered on (cx, cy).
+pub fn draw_microphone(canvas: &mut Canvas, cx: f32, cy: f32, scale: f32, ink: u32) {
+    let s = scale;
+    let stroke = 6.0 * s;
+    canvas.fill_rrect(
+        RectF::new(cx - 17.0 * s, cy - 46.0 * s, 34.0 * s, 60.0 * s),
+        17.0 * s,
+        ink,
+        1.0,
+    );
+    // The holder: the lower half of a ring around the capsule's foot (ring
+    // angles run clockwise from 12 o'clock: 3 through 6 to 9), its ends
+    // rising a little.
+    let (holder_y, r) = (cy - 6.0 * s, 28.0 * s);
+    let half_turn = std::f32::consts::FRAC_PI_2;
+    canvas.ring_arc(
+        cx,
+        holder_y,
+        r,
+        stroke,
+        half_turn,
+        3.0 * half_turn,
+        ink,
+        1.0,
+    );
+    let base_y = cy + 40.0 * s;
+    let mut stand = Path::new();
+    stand.stroke_segment((cx - r, holder_y - 8.0 * s), (cx - r, holder_y), stroke);
+    stand.stroke_segment((cx + r, holder_y - 8.0 * s), (cx + r, holder_y), stroke);
+    stand.stroke_segment((cx, holder_y + r), (cx, base_y), stroke);
+    stand.stroke_segment((cx - 16.0 * s, base_y), (cx + 16.0 * s, base_y), stroke);
+    canvas.fill_path(&stand, ink, 1.0);
 }
 
 fn draw_keypad_glyph(canvas: &mut Canvas, cx: f32, cy: f32, ink: u32) {

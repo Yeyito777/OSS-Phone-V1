@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Builds and atomically replaces only the Moon binaries on the phone, keeping
-# its config.json (PIN) and audio bridge. Moon picks them up on its next start;
-# pass --reboot to restart through the normal autonomous boot path.
+# its config.json (PIN) and audio bridge, then has Moon run the new binary in
+# place (`a26-shellctl restart`: same process, session and supervisor; apps
+# close and the phone locks). Pass --reboot to restart the phone through the
+# normal autonomous boot path instead.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -46,4 +48,10 @@ echo "Deployed Moon binaries to $SERIAL."
 if [[ "${1:-}" == --reboot ]]; then
     adb -s "$SERIAL" reboot
     echo "Rebooting; Moon takes over about 90 seconds after Android boots."
+elif adb -s "$SERIAL" shell "/data/local/tmp/su -c '$BIN/a26-shellctl --socket /data/local/a26-linux/run/a26-shell/control.sock restart'" |
+    grep -q '"ok":true'; then
+    echo "Moon restarted on the new build."
+else
+    # A Moon older than `restart`: it runs the new binary from its next start.
+    echo "Moon did not restart; it runs the new build after its next start (or --reboot)."
 fi

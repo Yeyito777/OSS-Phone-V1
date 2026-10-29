@@ -1,5 +1,5 @@
-//! Power: the power menu (hold the power key: slide to power off, Restart,
-//! Cancel, as on iPhone), the clean power-off and restart through the
+//! Power: the power menu (hold the power key, or with voice on, the power
+//! key and a volume key: slide to power off, Restart, Cancel, as on iPhone), the clean power-off and restart through the
 //! supervisor's `moon-power` helper, the critical-battery countdown sheet,
 //! and the charging card shown on the lock screen when plugged in. The
 //! battery policy is the supervisor's (docs/power.md): it posts the
@@ -17,7 +17,8 @@ use crate::ui::{GREEN, RED, SECONDARY, SECONDARY_ALPHA, WHITE};
 
 pub const SCREEN_W: f32 = 1080.0;
 pub const SCREEN_H: f32 = 2340.0;
-/// Holding the power key this long opens the menu.
+/// Holding the power key this long opens the menu (when it does not listen:
+/// voice.rs).
 pub const HOLD_FOR_MENU: Duration = Duration::from_millis(900);
 
 /// The slider: its track and knob.
@@ -199,12 +200,45 @@ impl ShellState {
         self.power.held_open = false;
     }
 
-    /// The power key came up: a short press is the usual sleep/wake.
+    /// The power key went down with the screen off: it wakes the screen,
+    /// and held on, Moon listens (voice.rs).
+    pub fn power_key_wake(&mut self, now: Instant) {
+        self.power_key();
+        if self.voice_on_hold() {
+            self.power.key_down = Some(now);
+            // Its release does not put the screen back to sleep.
+            self.power.held_open = true;
+        }
+    }
+
+    /// The power key came up: a short press is the usual sleep/wake; after
+    /// a hold that listens, what was said is sent.
     pub fn power_key_up(&mut self) {
         let held_open = std::mem::take(&mut self.power.held_open);
+        if self.voice_listening() {
+            self.power.key_down = None;
+            self.voice_stop(true, Instant::now());
+            return;
+        }
         if self.power.key_down.take().is_some() && !held_open {
             self.power_key();
         }
+    }
+
+    /// A volume key while the power key is held: the power menu, as on
+    /// iPhone (holding the key alone listens when voice is on). Drops a
+    /// recording. Returns true when it took the volume key.
+    pub fn power_chord(&mut self) -> bool {
+        let holding =
+            self.power.key_down.is_some() || (self.voice_listening() && self.power.held_open);
+        if !holding || !self.screen_awake || self.power_takes_over() {
+            return false;
+        }
+        self.voice_stop(false, Instant::now());
+        self.power.key_down = None;
+        self.power.held_open = true;
+        self.open_power_menu(PowerAction::PowerOff);
+        true
     }
 
     pub fn open_power_menu(&mut self, action: PowerAction) {
@@ -274,7 +308,12 @@ impl ShellState {
     }
 
     pub fn power_deadline(&self, now: Instant) -> Option<Instant> {
-        let hold = self.power.key_down.map(|at| at + HOLD_FOR_MENU);
+        let hold_for = if self.voice_on_hold() {
+            crate::voice::HOLD_FOR_VOICE
+        } else {
+            HOLD_FOR_MENU
+        };
+        let hold = self.power.key_down.map(|at| at + hold_for);
         // The countdown's next second.
         let countdown = self.critical_battery().map(|_| {
             let unix = std::time::SystemTime::now()
@@ -294,12 +333,19 @@ impl ShellState {
     }
 
     pub fn power_tick(&mut self, now: Instant) {
-        if let Some(down) = self.power.key_down
-            && now.saturating_duration_since(down) >= HOLD_FOR_MENU
-        {
-            self.power.key_down = None;
-            self.power.held_open = true;
-            self.open_power_menu(PowerAction::PowerOff);
+        if let Some(down) = self.power.key_down {
+            let held = now.saturating_duration_since(down);
+            if self.voice_on_hold() {
+                if held >= crate::voice::HOLD_FOR_VOICE {
+                    self.power.key_down = None;
+                    self.power.held_open = true;
+                    self.voice_start(now);
+                }
+            } else if held >= HOLD_FOR_MENU {
+                self.power.key_down = None;
+                self.power.held_open = true;
+                self.open_power_menu(PowerAction::PowerOff);
+            }
         }
         if let Some(menu) = &self.power.menu
             && !menu.open

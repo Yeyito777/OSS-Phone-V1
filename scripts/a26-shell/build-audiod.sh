@@ -44,4 +44,4 @@ else
         AUDIOCLIENT=\$PWD/libaudioclient.so sh src/build.sh out"
     rsync -a "$HOST:$remote_dir/out/" "$OUTPUT/"
 fi
-echo "Built $OUTPUT/moon-audiod, moon-permissiond, moon-audio-volume"
+echo "Built $OUTPUT/moon-audiod, moon-permissiond, moon-audio-volume, moon-voice-capture"

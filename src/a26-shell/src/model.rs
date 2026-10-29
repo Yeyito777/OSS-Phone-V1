@@ -321,6 +321,8 @@ pub struct ShellState {
     pub last_action: String,
     pub redraw: bool,
     pub should_exit: bool,
+    /// Exit to run the binary on disk again (`restart`).
+    pub restart: bool,
     pub managed_windows: Vec<u32>,
     /// Managed windows that are proxies of Wayland toplevels: keys for them
     /// go to the Wayland server (`wayland_keys`) instead of XTEST.
@@ -363,6 +365,8 @@ pub struct ShellState {
     pub control: crate::control_centre::ControlCentre,
     /// The power menu, shutdown and battery screens (power.rs).
     pub power: crate::power::PowerUi,
+    /// Holding the power key to talk to Exocortex (voice.rs).
+    pub voice: crate::voice::VoiceUi,
     /// Telephony status and the call screens (calls.rs).
     pub calls: crate::calls::CallUi,
     /// Wallpaper and Auto-Lock (settings.rs); `settings_changed` asks the
@@ -419,6 +423,8 @@ pub struct PublicState {
     pub telephony: crate::calls::PublicCalls,
     /// The power menu is open; the screen says it is powering off.
     pub power_menu_open: bool,
+    /// Holding the power key: Moon listens (voice.rs).
+    pub voice_listening: bool,
     pub shutting_down: Option<&'static str>,
     pub critical_battery_s: Option<u64>,
     /// The last notification target for an app (see `OpenTarget`).
@@ -459,6 +465,7 @@ impl ShellState {
             last_action: "startup".into(),
             redraw: true,
             should_exit: false,
+            restart: false,
             managed_windows: Vec::new(),
             wayland_windows: Vec::new(),
             wayland_keys: Vec::new(),
@@ -486,6 +493,7 @@ impl ShellState {
             control: Default::default(),
             calls: Default::default(),
             power: Default::default(),
+            voice: Default::default(),
             settings: Default::default(),
             settings_changed: false,
             last_input: Instant::now(),
@@ -538,6 +546,7 @@ impl ShellState {
             control_centre_open: self.control.open,
             telephony: self.calls_public(),
             power_menu_open: self.power.menu.as_ref().is_some_and(|menu| menu.open),
+            voice_listening: self.voice_listening(),
             shutting_down: self
                 .power
                 .shutting_down
@@ -582,6 +591,7 @@ impl ShellState {
     }
 
     pub fn screen_off(&mut self) {
+        self.voice_stop(false, Instant::now());
         self.lock();
         // Auto-Lock with the power menu open: it is gone when the screen
         // comes back, as on iPhone.
@@ -1062,6 +1072,7 @@ impl ShellState {
             self.lockout_until = None;
             self.last_action = "unlock".into();
             self.alerts_unlocked();
+            self.voice_unlocked();
         } else {
             self.failed_attempts = self.failed_attempts.saturating_add(1);
             self.pin_error_at = Some(Instant::now());
@@ -1264,6 +1275,7 @@ impl ShellState {
             || self.control.animating(now)
             || self.calls_animating(now)
             || self.power_animating(now)
+            || self.voice.visible(now)
             || self.page_transition.is_some()
     }
 
@@ -1284,6 +1296,7 @@ impl ShellState {
         self.control_tick(now);
         self.calls_tick(now);
         self.power_tick(now);
+        self.voice_tick(now);
         if let Some(transition) = self.page_transition.as_mut()
             && transition.waiting
             && now.saturating_duration_since(transition.started) >= PAGE_READY_WAIT

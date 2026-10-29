@@ -34,6 +34,12 @@ pub enum Command {
     /// Diagnostics: log every composed frame's nodes.
     ProfileFrames(bool),
     Launch(AppId),
+    /// `open APP TARGET`: the app opens at a target, as when a notification
+    /// is tapped (after unlocking, when locked).
+    Open(AppId, String),
+    /// `voice start|send|cancel`: as holding and releasing the power key
+    /// (voice.rs).
+    Voice(crate::voice::VoiceRequest),
     KeyboardShow(KeyboardPurpose),
     KeyboardHide,
     SwipeUp,
@@ -67,6 +73,10 @@ pub enum Command {
     /// (`haptic STYLE MS` plays that length once, for tuning.)
     Haptic(crate::notify_client::Haptic, Option<u32>),
     Quit,
+    /// `restart`: quit cleanly, then run the binary on disk again in the
+    /// same process. An update goes live; the session, its mounts and the
+    /// supervisor carry on.
+    Restart,
 }
 
 impl Command {
@@ -89,6 +99,7 @@ impl Command {
                 | Command::VolumeUp
                 | Command::VolumeDown
                 | Command::Power
+                | Command::Voice(_)
         )
     }
 }
@@ -236,6 +247,7 @@ fn parse_command(line: &str) -> Result<Command, String> {
             _ => return Err("system requires poweroff or reboot".into()),
         },
         "quit" => Command::Quit,
+        "restart" => Command::Restart,
         "digit" => {
             let digit = parts
                 .next()
@@ -266,6 +278,19 @@ fn parse_command(line: &str) -> Result<Command, String> {
             },
             None => return Err("missing app noun".into()),
         },
+        "open" => match (parts.next().map(str::to_ascii_lowercase), parts.next()) {
+            (Some(app), Some(target)) => match AppId::parse(&app) {
+                Some(app) => Command::Open(app, target.to_owned()),
+                None => return Err("unknown app".into()),
+            },
+            _ => return Err("open requires APP TARGET".into()),
+        },
+        "voice" => Command::Voice(match parts.next() {
+            Some("start") => crate::voice::VoiceRequest::Start,
+            Some("send") => crate::voice::VoiceRequest::Send,
+            Some("cancel") => crate::voice::VoiceRequest::Cancel,
+            _ => return Err("voice requires start, send or cancel".into()),
+        }),
         "keyboard" => match parts.next() {
             Some("show") => {
                 let purpose = parts
@@ -459,6 +484,25 @@ mod tests {
         ));
         assert!(parse_command("lease acquire browser arbitrary 5").is_err());
         assert!(parse_command("lease release browser media extra").is_err());
+    }
+
+    #[test]
+    fn parses_open_and_voice() {
+        assert!(matches!(
+            parse_command("open exocortex 1793229556873-5bebb9"),
+            Ok(Command::Open(AppId::Exocortex, target)) if target == "1793229556873-5bebb9"
+        ));
+        assert!(parse_command("open exocortex").is_err());
+        assert!(parse_command("open nowhere x").is_err());
+        assert!(parse_command("open exocortex a b").is_err());
+        assert!(matches!(
+            parse_command("voice start"),
+            Ok(Command::Voice(crate::voice::VoiceRequest::Start))
+        ));
+        assert!(parse_command("voice").is_err());
+        assert!(parse_command("voice send now").is_err());
+        assert!(matches!(parse_command("restart"), Ok(Command::Restart)));
+        assert!(parse_command("restart now").is_err());
     }
 
     #[test]
