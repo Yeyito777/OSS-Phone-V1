@@ -14,7 +14,8 @@
 # 8c0461ee), changes only its ramdisk, and wraps the result into a recovery-slot
 # image with build-recovery-slot.sh. There is deliberately no BOOT output: an
 # image whose /init is oss-init may only be tried once from the recovery slot
-# (flash-boot-inplace.sh refuses any BOOT whose /init differs anyway).
+# (flash-boot-inplace.sh stops on a BOOT whose /init differs unless given
+# --allow-init-change).
 #
 # Ramdisk changes (everything else byte-identical):
 #   /init            oss-init v4 or oss-pid1 (static aarch64)

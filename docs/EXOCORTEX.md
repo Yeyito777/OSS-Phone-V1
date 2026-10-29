@@ -27,7 +27,7 @@ From the Mac, with the phone on adb:
 
 ```sh
 scripts/exocortex/install.sh --openai-key      # first install: also logs in to OpenAI
-scripts/exocortex/authorize-whale.sh           # once: whale lends Claude to this phone only
+scripts/exocortex/authorize-whale.sh           # once: the phone gets full access to whale
 scripts/exocortex/install.sh                   # update (also step 7 of scripts/install-all.sh)
 ```
 
@@ -51,6 +51,9 @@ then starts the keeper, or restarts the daemon when it runs. The phone can
 also update itself: `git pull --ff-only && bun install` in `/opt/exocortex`,
 then `exocortexd restart` (or the agent's own restart action).
 
+SSH into the phone (`ssh oss-phone` from the Mac or whale) is the keeper's
+too: [SSH.md](SSH.md).
+
 ## Credentials
 
 - **OpenAI: an API key.** Exocortex's API-key login (`exocortexd login
@@ -66,20 +69,18 @@ then `exocortexd restart` (or the agent's own restart action).
   exocortexd proxy` to whale's daemon, which adds its own Claude login
   (Exocortex `docs/provider-proxy.md`). The phone made its own key
   (`/root/.ssh/exocortex_whale_ed25519`, never copied off the phone).
-  `authorize-whale.sh` adds it to whale's `authorized_keys` as
-  ```
-  restrict,command="env EXOCORTEX_CONFIG_DIR=… …/exocortex-link-only/bin/exocortexd proxy --link-only=anthropic" ssh-ed25519 … oss-phone-exocortex
-  ```
-  `restrict` turns off the pty and all forwarding; `command=` runs the
-  link-only bridge whatever the phone asks for. The bridge passes only the
-  model link for Claude: no conversations, no `remote_bash`, no OpenAI, and it
-  never registers the phone as a `client_bash` machine on whale. It runs from
-  its own clone on whale (`~/.local/share/exocortex-link-only`, updated by the
-  script), never whale's working checkout. The script then checks all of
-  this from the phone (`check-whale-link.sh`): the link answers, everything
-  else is refused, and commands, a pty, sftp and -L/-R/-D forwards fail.
-  `authorize-whale.sh --check` repeats only the checks. To revoke, delete
-  the line ending in `oss-phone-exocortex` from whale's `authorized_keys`.
+  `authorize-whale.sh` adds it to whale's `authorized_keys` as a plain
+  entry (`ssh-ed25519 … oss-phone-exocortex`), with no forced command or
+  restrictions: the phone has the same access to whale as the user's Mac.
+  The phone's daemon uses the ordinary /proxy bridge, so it also has
+  `remote_bash` on whale, and the phone's agent can `ssh whale`. The script
+  then checks from the phone (`check-whale-link.sh`) that the link answers
+  with the full protocol, whale is logged in to Claude, and a command runs
+  on whale; `authorize-whale.sh --check` repeats only the checks. To revoke,
+  delete the line ending in `oss-phone-exocortex` from whale's
+  `authorized_keys`. (Exocortex also has `exocortexd proxy --link-only` for a
+  key that may only borrow the login; this phone deliberately does not use
+  it.)
 
 ## Supervision
 
@@ -125,6 +126,9 @@ session dies with the `moon-session` init service's cgroup.
 - **Logs.** `/var/log/exocortex/` in the chroot (`keeper.log`, `daemon.out`,
   `notify.out`) and the daemon's own `/opt/exocortex/config/runtime/exocortex.log`.
 
+The keeper also keeps the phone's SSH server and its reverse tunnel to whale
+running, each in its own namespace the same way ([SSH.md](SSH.md)).
+
 | What dies | What happens |
 | --- | --- |
 | Moon, Xorg, the compositor, Moon's chroot session | nothing (own cgroup, session and mounts) |
@@ -148,7 +152,7 @@ started at `post-fs-data` in every boot mode. On shutdown the keeper stops
 the daemon gracefully as now and then idles (an exit would be restarted)
 until init's own shutdown terminates the service. `95-exocortex.sh` does
 nothing while `init.svc.exocortex` is running. Only overlay files change; the ramdisk
-`/init` stays byte-identical (RESCUE.md's hard rule), and it would be flashed
+`/init` stays byte-identical (no `--allow-init-change` needed; RESCUE.md), and it would be flashed
 with `flash-boot-inplace.sh` like the direct-boot image, attended. Until
 then the keeper pair above does the same job from `/data`.
 

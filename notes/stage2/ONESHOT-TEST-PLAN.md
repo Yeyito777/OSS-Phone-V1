@@ -1,5 +1,9 @@
 # One-shot, brick-proof test path for boot-chain changes
 
+> Superseded 2026-10-28 by the owner: no flash rule is a wall; the flash
+> scripts take `--allow-init-change` / `--force` (notes/direct-boot/RESCUE.md).
+> The one-shot path below remains the way to test without risking a rescue.
+
 Hard rule (user, 2026-10-26): **nothing that changes the boot chain may be
 flashed to BOOT until a failed boot provably returns to the working setup on its
 own.** Three stage-2 BOOT images have now reset-looped and needed physical

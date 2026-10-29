@@ -64,18 +64,23 @@ done
 
 step "keeper and chroot commands"
 adb -s "$SERIAL" shell "rm -rf $STAGE; umask 077; mkdir $STAGE"
-for file in exocortex-keeper.sh exocortex-ns.sh 95-exocortex.sh exocortex-supervisor exocortexd android-sh exocortex-voice phone-setup.sh system.md; do
+for file in exocortex-keeper.sh exocortex-ns.sh 95-exocortex.sh exocortex-supervisor exocortexd android-sh \
+    exocortex-voice oss-phone-tunnel oss-phone-sshd.conf phone-setup.sh system.md; do
     adb -s "$SERIAL" push "$DEVICE/$file" "$STAGE/$file" >/dev/null
 done
 su_run "set -eu
 stage=$STAGE root=$ROOT
 put() { cp \"\$stage/\$1\" \"\$2.new\"; chown 0:0 \"\$2.new\"; chmod \"\$3\" \"\$2.new\"; mv -f \"\$2.new\" \"\$2\"; }
-mkdir -p /data/adb/exocortex \$root/var/lib/exocortex-keeper \$root/var/log/exocortex \$root/usr/local/bin
+mkdir -p /data/adb/exocortex \$root/var/lib/exocortex-keeper \$root/var/log/exocortex \$root/usr/local/bin \$root/etc/ssh \$root/etc/oss-phone
 chmod 0700 /data/adb/exocortex \$root/var/lib/exocortex-keeper
 put exocortex-keeper.sh /data/adb/exocortex/exocortex-keeper.sh 0700
 put exocortex-ns.sh /data/adb/exocortex/exocortex-ns.sh 0700
 put 95-exocortex.sh /data/adb/service.d/95-exocortex.sh 0755
-for name in exocortex-supervisor exocortexd android-sh exocortex-voice; do put \$name \$root/usr/local/bin/\$name 0755; done
+for name in exocortex-supervisor exocortexd android-sh exocortex-voice oss-phone-tunnel; do put \$name \$root/usr/local/bin/\$name 0755; done
+# SSH (docs/SSH.md): the server, and the reverse tunnel to whale unless the
+# phone already has its own tunnel settings.
+put oss-phone-sshd.conf \$root/etc/ssh/oss-phone-sshd.conf 0644
+[ -s \$root/etc/oss-phone/tunnel.conf ] || printf \"TUNNEL_HOST=whale\\nTUNNEL_PORT=2290\\nSSHD_PORT=2222\\n\" >\$root/etc/oss-phone/tunnel.conf
 # Not under /tmp: the daemon namespace mounts its own /tmp.
 mkdir -p \$root/var/lib/exocortex-keeper/install
 cp \$stage/phone-setup.sh \$stage/system.md \$root/var/lib/exocortex-keeper/install/
@@ -103,6 +108,9 @@ fi
 
 if [[ "$START" == 1 ]]; then
     step "start"
+    # Reload the keeper's loops with the scripts just installed; the daemon
+    # and its other children keep running and are adopted.
+    su_run "S=$ROOT/var/lib/exocortex-keeper; for r in watchdog keeper; do p=\$(cat \$S/\$r.pid 2>/dev/null); [ -n \"\$p\" ] && grep -q exocortex-keeper /proc/\$p/cmdline 2>/dev/null && kill \$p; done; sleep 1; sh /data/adb/exocortex/exocortex-keeper.sh start"
     if [[ "$(su_run "sh /data/adb/exocortex/exocortex-keeper.sh status" | grep -c '^daemon: running')" == 1 ]]; then
         in_ns "/usr/local/bin/exocortex-supervisor restart"
     else
@@ -117,4 +125,4 @@ fi
 
 step "the phone's key for whale"
 su_run "cat $ROOT/root/.ssh/exocortex_whale_ed25519.pub"
-echo "authorize it on whale (restricted to the /proxy link): scripts/exocortex/authorize-whale.sh"
+echo "authorize it on whale: scripts/exocortex/authorize-whale.sh; SSH into the phone: scripts/exocortex/ssh-access.sh"

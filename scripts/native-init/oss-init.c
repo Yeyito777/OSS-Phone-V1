@@ -4,7 +4,8 @@
  * canary/build-recovery-slot.sh). Its first action loads oss-rebootmode-clear.ko
  * (rebootmode-clear.h); if that fails it does not contain and execs stock init.
  * and tried once from the RECOVERY partition (CANARY-RUNBOOK.md). Never on BOOT:
- * flash-boot-inplace.sh refuses any image whose ramdisk /init differs.
+ * flash-boot-inplace.sh stops on an image whose ramdisk /init differs unless
+ * given --allow-init-change.
  *
  * The kernel execs this as the real PID 1. It clones Android's whole init into
  * a new PID + mount namespace with a PRIVATE copy of the ramdisk in the normal

@@ -2,7 +2,8 @@
 
 > **SUPERSEDED — DO NOT USE THIS PLAN. DO NOT FLASH `4d27b69b` OR `eaeb4494` TO
 > BOOT.** Both boot-looped on the device and needed physical rescue. Per the
-> user's hard rule (2026-10-26), nothing that changes the boot chain may be
+> user's hard rule (2026-10-26, since superseded: the flash scripts take
+> override flags, notes/direct-boot/RESCUE.md), nothing that changes the boot chain may be
 > flashed to BOOT until a failed boot provably self-recovers. All stage-2
 > testing now goes through `notes/stage2/ONESHOT-TEST-PLAN.md` (recovery
 > partition, one-shot, BOOT untouched), and only after the corrected

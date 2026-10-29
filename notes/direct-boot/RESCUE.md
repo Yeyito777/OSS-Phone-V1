@@ -23,11 +23,17 @@ stage2-failure/                          last_kmsg of the stage-2 v2 boot loop
 stage2-v3-failure/                       last_kmsg of the stage-2 v3 boot loop
 ```
 
-## Hard rule: never flash a different ramdisk `/init`
+## Risk: a different ramdisk `/init`
 
-No image whose ramdisk `/init` differs from the installed image's is flashed,
-with no override. Such an image may only be tried from a one-shot boot slot,
-and this non-A/B phone has none. A new PID 1 is the one change whose failure
+> **2026-10-28, the owner's decision:** no flash rule is a wall any more.
+> Every stop in the flash scripts names the flag that overrides it
+> (`--allow-init-change`, `--allow-kernel-change`, `--force`). The risks below
+> are why the flags exist and what they cost; the phone's owner decides.
+
+An image whose ramdisk `/init` differs from the installed image's is flashed
+only with `--allow-init-change`, which prints this risk first. The safe way to
+try one is a one-shot boot slot (the recovery-slot path,
+`scripts/native-init/canary/`); this non-A/B phone has no other. A new PID 1 is the one change whose failure
 no userspace fallback can catch: both stage-2 images (`/init` = oss-init)
 reset before adb came up and needed a physical Download-mode rescue on
 2026-10-25:
@@ -37,9 +43,10 @@ reset before adb came up and needed a physical Download-mode rescue on
 - `eaeb4494…` (v3): no adb within 4 minutes, reset loop
   (`stage2-v3-failure/last_kmsg.txt`).
 
-`flash-boot-inplace.sh` refuses any changed `/init` and both images by hash
-(`KNOWN_BAD`); its old `--allow-init-change` override is gone. Kernel-only
-changes on the same ramdisk (`--allow-kernel-change`) remain possible, attended.
+`flash-boot-inplace.sh` stops on any changed `/init` unless
+`--allow-init-change` is given, and on both images by hash (`KNOWN_BAD`)
+unless `--force` is. Kernel-only changes on the same ramdisk need
+`--allow-kernel-change`.
 
 The research host holds the same images and its own samloader.
 
@@ -75,12 +82,13 @@ adb reboot
 
 It refuses an image that is not exactly the partition's size (64 MiB), not a
 boot v4 image with an AVB footer, or whose kernel or Magisk `/init` differ
-from the installed image. `--allow-kernel-change` overrides the kernel check
-(never unattended); a changed `/init` has no override at all (hard rule
-above). Images it knows (the `KNOWN_GOOD` table
-at its top: the two `known-good/` images) may change the kernel without an
-override, so rolling back never needs one; known non-booting images
-(`KNOWN_BAD`: both stage-2 builds) are refused. Before writing it reads the installed
+from the installed image. `--allow-kernel-change` overrides the kernel check,
+`--allow-init-change` the `/init` check (risk above), and `--force` the format
+checks and the known non-booting images (`KNOWN_BAD`: both stage-2 builds);
+only an image larger than the partition cannot be written at all. Images it
+knows (the `KNOWN_GOOD` table at its top: the two `known-good/` images) may
+change the kernel without an override, so rolling back never needs one.
+Before writing it reads the installed
 image back into `/data/adb/moon/boot-backups/` (newest three) and
 `~/Desktop/a26-rescue/inplace-backups/` on the Mac. It writes with root `dd`
 (`conv=fsync`), syncs, drops caches and re-reads the partition with O_DIRECT;
