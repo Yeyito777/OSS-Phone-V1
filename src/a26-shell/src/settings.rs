@@ -39,6 +39,10 @@ pub struct Settings {
     /// its hook is installed; the power menu is then the power key with a
     /// volume key) or open the power menu (`menu`). docs/voice.md.
     pub power_hold: PowerHold,
+    /// The home screen: the dock's apps, the grid's, and those taken off
+    /// it (still in the App Library). Read leniently (home.rs); changed by
+    /// editing the home screen or `layout ...` (docs/home-screen.md).
+    pub home: crate::home::HomeLayout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -62,6 +66,7 @@ impl Default for Settings {
             timezone: None,
             clock_24h: None,
             power_hold: PowerHold::Voice,
+            home: crate::home::HomeLayout::default(),
         }
     }
 }
@@ -217,6 +222,16 @@ mod tests {
         let loaded = Settings::load(&path);
         assert_eq!(loaded.wallpaper, "black");
         assert_eq!(loaded.auto_lock_s, 30);
+        // The home screen's layout round-trips; a damaged one falls back
+        // alone, without costing the other settings.
+        let mut settings = Settings::default();
+        settings.home.remove(crate::model::AppId::Browser);
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).home, settings.home);
+        fs::write(&path, r#"{"wallpaper":"black","home":{"dock":"phone"}}"#).unwrap();
+        let loaded = Settings::load(&path);
+        assert_eq!(loaded.wallpaper, "black");
+        assert_eq!(loaded.home, crate::home::HomeLayout::default());
         let _ = fs::remove_dir_all(&dir);
     }
 }

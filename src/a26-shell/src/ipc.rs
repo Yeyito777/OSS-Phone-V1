@@ -64,6 +64,9 @@ pub enum Command {
     SuspendTest(u64),
     /// `settings set KEY VALUE` (docs/settings.md).
     SettingsSet(String, String),
+    /// `layout ...`: the home screen's layout and edit mode
+    /// (docs/home-screen.md).
+    Layout(crate::home::LayoutCommand),
     /// `transition push|pop`: an app is about to show another page (the
     /// reply comes once its current page is snapshotted).
     Transition(bool),
@@ -340,6 +343,7 @@ fn parse_command(line: &str) -> Result<Command, String> {
             }
             _ => return Err("settings requires set KEY VALUE".into()),
         },
+        "layout" => return crate::home::LayoutCommand::parse(parts).map(Command::Layout),
         "transition" => match parts.next() {
             Some("push") => Command::Transition(true),
             Some("pop") => Command::Transition(false),
@@ -503,6 +507,23 @@ mod tests {
         assert!(parse_command("voice send now").is_err());
         assert!(matches!(parse_command("restart"), Ok(Command::Restart)));
         assert!(parse_command("restart now").is_err());
+    }
+
+    #[test]
+    fn parses_layout_commands() {
+        assert!(matches!(
+            parse_command("layout reset"),
+            Ok(Command::Layout(crate::home::LayoutCommand::Reset))
+        ));
+        assert!(matches!(
+            parse_command("layout add browser"),
+            Ok(Command::Layout(crate::home::LayoutCommand::Add(
+                AppId::Browser
+            )))
+        ));
+        assert!(parse_command("layout").is_err());
+        assert!(parse_command("layout reset all").is_err());
+        assert!(!Command::Layout(crate::home::LayoutCommand::Reset).is_user_input());
     }
 
     #[test]

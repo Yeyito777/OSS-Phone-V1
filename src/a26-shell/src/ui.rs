@@ -18,6 +18,7 @@ use crate::calls;
 use crate::clock::LocalTime;
 use crate::compositor::{Compositor, Frame, Node, SurfaceId};
 use crate::gfx::{self, Canvas, Image, Path, RectF, Rgb};
+use crate::home::{self, DOCK, DOCK_RADIUS, HomeLayout, IconView, Slot};
 use crate::interaction::{CARD_RADIUS, SCREEN, SCREEN_H, SCREEN_W, SWITCHER_DIM};
 use crate::model::{AppId, Press, SHAKE_ANIMATION, ShellState, UNLOCK_ANIMATION, View};
 use crate::power;
@@ -48,26 +49,27 @@ const BROWSER_ICON_PATH: &str = "/opt/vimbrowser-a26/share/browser-app.bgrx";
 pub const ICON_SIZE: i32 = 168;
 pub const ICON_RADIUS: f32 = 38.0;
 const SPLASH_ICON_SIZE: f32 = 236.0;
-const GRID_MARGIN: f32 = 75.0;
-const GRID_PITCH: f32 = 254.0;
-const WIDGET_TOP: f32 = 186.0;
-const WIDGET_SIZE: f32 = 422.0;
+/// The two widgets at the top of the home page (the icon grid and the dock
+/// are home.rs's).
+pub const WIDGET_TOP: f32 = 186.0;
+pub const WIDGET_SIZE: f32 = 422.0;
 const WIDGET_RADIUS: f32 = 62.0;
-/// The dock: a frosted shelf above the bottom edge holding the apps.
-const DOCK: RectF = RectF::new(30.0, 2046.0, 1020.0, 264.0);
-const DOCK_RADIUS: f32 = 98.0;
-/// Center-to-center spacing of dock icons.
-const DOCK_PITCH: f32 = 254.0;
-/// The order of apps in the dock.
-pub const LAUNCHER_APPS: [AppId; 4] =
-    [AppId::Phone, AppId::Browser, AppId::Messages, AppId::System];
-/// Apps on the home screen itself, in the icon grid under the widgets, each
-/// with its name below it (as on iOS; the dock's icons have none).
-pub const HOME_APPS: [AppId; 1] = [AppId::Exocortex];
-/// The grid row under the widgets, and the labels' size.
-const HOME_ROW_TOP: f32 = WIDGET_TOP + WIDGET_SIZE + 66.0;
-const HOME_ROW_PITCH: f32 = 290.0;
+/// Grid icons' names (as on iOS; the dock's icons have none).
 const HOME_LABEL_SIZE: f32 = 33.0;
+/// A layer with one name, and where its baseline is.
+const NAME_W: i32 = 320;
+const NAME_H: i32 = 72;
+const NAME_BASELINE: f32 = 50.0;
+/// Jiggle sprites: an icon and its shadow, turned (home::JIGGLE_FRAMES
+/// ways) side by side, each frame the icon plus this margin.
+const SPRITE_PAD: i32 = 16;
+const SPRITE: i32 = ICON_SIZE + 2 * SPRITE_PAD;
+/// The removal badge's layer (its shadow around it).
+const BADGE_LAYER: i32 = 80;
+/// The widgets' layer (with their shadows) for the edit and paging frames.
+const WIDGETS_H: i32 = 680;
+/// How much the App Library darkens the wallpaper.
+const LIBRARY_DIM: f32 = 0.38;
 
 // Lock screen and passcode geometry.
 const PASSCODE_TITLE_BASELINE: f32 = 612.0;
@@ -260,6 +262,7 @@ struct HomeKey {
     status: StatusInfo,
     date: (u8, u8, u8),
     wallpaper: String,
+    layout: HomeLayout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -396,6 +399,21 @@ pub struct Renderer {
     voice_halo: Layer<()>,
     voice_core: Layer<()>,
     voice_label: Layer<bool>,
+    /// The home screen while live (editing, the App Library; home.rs),
+    /// in parts: the widgets, the dock's shelf, the status bar, the App
+    /// Library, edit mode's Done button and badge, the removal alert, the
+    /// App Library's menu; and each app's jiggle sprite and name.
+    widgets: Layer<u64>,
+    dock: Layer<()>,
+    home_status: Layer<StatusInfo>,
+    library: Layer<()>,
+    done: Layer<()>,
+    badge: Layer<()>,
+    alert: Layer<u64>,
+    menu: Layer<u64>,
+    /// (Drawn in idle time after startup, or when first needed.)
+    sprites: [Option<SurfaceId>; AppId::COUNT],
+    names: [SurfaceId; AppId::COUNT],
 }
 
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
@@ -449,6 +467,7 @@ impl Renderer {
         let icons = AppId::ALL.map(AppIcon::new);
         let mut icon_layers = [wall; AppId::COUNT];
         let mut labels = [wall; AppId::COUNT];
+        let mut names = [wall; AppId::COUNT];
         for app in AppId::ALL {
             let icon = &icons[app.index()];
             let id = compositor.create_layer(
@@ -478,6 +497,17 @@ impl Renderer {
             );
             compositor.upload(conn, label, &canvas)?;
             labels[app.index()] = label;
+
+            let mut canvas = Canvas::new(NAME_W, NAME_H);
+            draw_app_name(
+                &mut canvas,
+                app.display_name(),
+                NAME_W as f32 / 2.0,
+                NAME_BASELINE,
+            );
+            let id = compositor.create_layer(conn, NAME_W as u16, NAME_H as u16, true)?;
+            compositor.upload(conn, id, &canvas)?;
+            names[app.index()] = id;
         }
         let mut renderer = Self {
             twenty_four_hour,
@@ -581,6 +611,40 @@ impl Renderer {
                     true,
                 )?,
             ],
+            widgets: Layer::new(conn, &mut compositor, w, WIDGETS_H, true)?,
+            dock: Layer::new(conn, &mut compositor, DOCK.w as i32, DOCK.h as i32, true)?,
+            home_status: Layer::new(
+                conn,
+                &mut compositor,
+                w,
+                i32::from(status_bar::HEIGHT),
+                true,
+            )?,
+            library: Layer::new(conn, &mut compositor, w, LIBRARY_H as i32, true)?,
+            done: Layer::new(
+                conn,
+                &mut compositor,
+                home::DONE.w as i32,
+                home::DONE.h as i32,
+                true,
+            )?,
+            badge: Layer::new(conn, &mut compositor, BADGE_LAYER, BADGE_LAYER, true)?,
+            alert: Layer::new(
+                conn,
+                &mut compositor,
+                home::ALERT_W as i32,
+                home::alert_rect().h as i32,
+                true,
+            )?,
+            menu: Layer::new(
+                conn,
+                &mut compositor,
+                home::MENU_W as i32,
+                home::MENU_H as i32,
+                true,
+            )?,
+            sprites: [None; AppId::COUNT],
+            names,
             compositor,
             wallpaper,
             wallpaper_id: "moon".into(),
@@ -792,12 +856,16 @@ impl Renderer {
             return Ok(());
         }
         // The home screen stays current while locked too, so unlocking never
-        // waits for it (or for its darkened copies) to be drawn.
-        {
+        // waits for it (or for its darkened copies) to be drawn. While the
+        // home screen is live (editing, the App Library) its frames are
+        // composed from the parts below instead, and it catches up after.
+        let live = state.home.live(now);
+        if !live {
             let key = HomeKey {
                 status: status.clone(),
                 date: (time.weekday, time.day, time.month),
                 wallpaper: self.wallpaper_id.clone(),
+                layout: state.settings.home.clone(),
             };
             let wallpaper = &self.wallpaper;
             let icons = &self.icons;
@@ -806,35 +874,19 @@ impl Renderer {
                 draw_calendar_widget(canvas, widget_rect(0), time);
                 draw_battery_widget(canvas, widget_rect(1), state);
                 canvas.fill_rrect(DOCK, DOCK_RADIUS, WHITE, 0.14);
-                for (app, rect) in launcher_slots() {
-                    canvas.shadow_rrect(rect.inset(6.0), ICON_RADIUS, 20.0, BLACK, 0.18);
+                let layout = &state.settings.home;
+                for (app, slot) in layout.slots() {
+                    let rect = layout.rect(slot);
+                    draw_icon_shadow(canvas, rect);
                     canvas.draw_image(&icons[app.index()].home, rect.x as i32, rect.y as i32, 1.0);
-                }
-                for (index, app) in HOME_APPS.iter().enumerate() {
-                    let rect = home_icon_rect(index);
-                    let (cx, baseline) = (rect.center().0, rect.y + rect.h + 50.0);
-                    let name = app.display_name();
-                    // A soft shadow keeps the name legible on any wallpaper.
-                    text::draw_centered(
-                        canvas,
-                        name,
-                        cx + 1.5,
-                        baseline + 2.0,
-                        Weight::Medium,
-                        HOME_LABEL_SIZE,
-                        BLACK,
-                        0.45,
-                    );
-                    text::draw_centered(
-                        canvas,
-                        name,
-                        cx,
-                        baseline,
-                        Weight::Medium,
-                        HOME_LABEL_SIZE,
-                        WHITE,
-                        1.0,
-                    );
+                    if let Slot::Grid(_) = slot {
+                        draw_app_name(
+                            canvas,
+                            app.display_name(),
+                            rect.center().0,
+                            rect.y + rect.h + home::LABEL_DROP,
+                        );
+                    }
                 }
                 draw_status_bar(canvas, &status, None);
             })?;
@@ -988,6 +1040,9 @@ impl Renderer {
                 }
             })?;
         }
+        if live {
+            self.refresh_live_layers(conn, state, &status, time)?;
+        }
         self.refresh_alert_layers(conn, state, &status)?;
         let compositor = &mut self.compositor;
         let volume = state.volume;
@@ -1006,6 +1061,63 @@ impl Renderer {
                 let c = SPINNER_SIZE as f32 / 2.0;
                 draw_spinner(canvas, c, c, step, 1.0);
             })?;
+        }
+        Ok(())
+    }
+
+    /// The live home screen's parts (see `live_home_nodes`).
+    fn refresh_live_layers<C: Connection>(
+        &mut self,
+        conn: &C,
+        state: &ShellState,
+        status: &StatusInfo,
+        time: LocalTime,
+    ) -> Result<(), Box<dyn Error>> {
+        for app in AppId::ALL {
+            self.sprite(conn, app)?;
+        }
+        let compositor = &mut self.compositor;
+        let key = key_of(&(
+            (time.weekday, time.day, time.month),
+            state.battery_percent,
+            state.battery_charging,
+        ));
+        self.widgets.update(conn, compositor, key, |canvas| {
+            canvas.clear(0);
+            draw_calendar_widget(canvas, widget_rect(0), time);
+            draw_battery_widget(canvas, widget_rect(1), state);
+        })?;
+        self.dock.update(conn, compositor, (), |canvas| {
+            canvas.clear(0);
+            let shelf = RectF::new(0.0, 0.0, DOCK.w, DOCK.h);
+            canvas.fill_rrect(shelf, DOCK_RADIUS, WHITE, 0.14);
+        })?;
+        let drawn = status.clone();
+        self.home_status
+            .update(conn, compositor, status.clone(), |canvas| {
+                canvas.clear(0);
+                draw_status_bar(canvas, &drawn, None);
+            })?;
+        self.done.update(conn, compositor, (), draw_done_button)?;
+        self.badge.update(conn, compositor, (), draw_badge)?;
+        let icons = &self.icons;
+        self.library.update(conn, compositor, (), |canvas| {
+            draw_library(canvas, icons);
+        })?;
+        if let Some(alert) = state.home.alert {
+            self.alert.update(
+                conn,
+                compositor,
+                key_of(&(alert.app, alert.pressed)),
+                |canvas| draw_remove_alert(canvas, alert.app, alert.pressed),
+            )?;
+        }
+        if let Some(menu) = state.home.menu {
+            let pressed = menu.pressed.is_some();
+            self.menu
+                .update(conn, compositor, key_of(&pressed), |canvas| {
+                    draw_library_menu(canvas, pressed);
+                })?;
         }
         Ok(())
     }
@@ -1559,24 +1671,49 @@ impl Renderer {
     pub fn prepare_idle<C: Connection>(
         &mut self,
         conn: &C,
+        state: &ShellState,
         now: Instant,
     ) -> Result<Option<Instant>, Box<dyn Error>> {
         if now < self.next_idle_copy {
             return Ok(Some(self.next_idle_copy));
         }
         // Only copies that do not exist yet (after startup); changed ones
-        // are redrawn when a fade next shows them.
-        let levels = if self.wall_levels.missing() {
-            &mut self.wall_levels
+        // are redrawn when a fade next shows them. Then the live home
+        // screen's parts, so holding an icon never waits for them: each
+        // jiggle sprite, and the other layers.
+        let sprite = AppId::ALL
+            .into_iter()
+            .find(|app| self.sprites[app.index()].is_none());
+        if self.wall_levels.missing() {
+            self.wall_levels
+                .create_some(conn, &mut self.compositor, 1)?;
         } else if self.home_levels.missing() {
-            &mut self.home_levels
+            self.home_levels
+                .create_some(conn, &mut self.compositor, 1)?;
+        } else if let Some(app) = sprite {
+            self.sprite(conn, app)?;
+        } else if self.library.key.is_none() && state.screen_awake {
+            let status = self.status(state);
+            self.refresh_live_layers(conn, state, &status, LocalTime::now())?;
         } else {
             return Ok(None);
-        };
-        levels.create_some(conn, &mut self.compositor, 1)?;
+        }
         self.next_idle_copy = now + IDLE_COPY_INTERVAL;
-        Ok((self.wall_levels.missing() || self.home_levels.missing())
-            .then_some(self.next_idle_copy))
+        Ok(Some(self.next_idle_copy))
+    }
+
+    /// An app's jiggle sprite, drawn and uploaded if it is not yet.
+    fn sprite<C: Connection>(&mut self, conn: &C, app: AppId) -> Result<SurfaceId, Box<dyn Error>> {
+        if let Some(id) = self.sprites[app.index()] {
+            return Ok(id);
+        }
+        let sprite = jiggle_sprite(&self.icons[app.index()].home);
+        let id =
+            self.compositor
+                .create_layer(conn, sprite.width as u16, sprite.height as u16, true)?;
+        self.compositor.upload(conn, id, &sprite)?;
+        self.sprites[app.index()] = Some(id);
+        Ok(id)
     }
 
     /// Moves the visible background's rows toward its dim for this frame
@@ -1838,27 +1975,41 @@ impl Renderer {
         nodes: &mut Vec<Node>,
     ) -> Option<SurfaceId> {
         // The home screen, darkened (row by row from copies) for unlock,
-        // the switcher, and the held home gesture.
-        nodes.push(match self.gpu_backdrops[0] {
-            Some(id) if self.compositor.gpu() => backdrop_node(id),
-            _ => Self::background_node(&mut self.compositor, &self.home_levels, &self.home_fade),
-        });
+        // the switcher, and the held home gesture; or, while it is live
+        // (editing, the App Library), composed from its parts.
+        let live = state.home.live(t);
+        if live {
+            self.live_home_nodes(state, t, nodes);
+        } else {
+            nodes.push(match self.gpu_backdrops[0] {
+                Some(id) if self.compositor.gpu() => backdrop_node(id),
+                _ => {
+                    Self::background_node(&mut self.compositor, &self.home_levels, &self.home_fade)
+                }
+            });
+        }
         // Unlock: the keypad cascades away over the home screen, bottom row
         // first (the lock swipe's cascade in reverse).
         let unlock = unlock_progress(state, t);
         self.keypad_nodes(unlock, 0.0, nodes);
 
-        let pressed = match state.pressed {
-            Some(Press::App(app)) => Some(app),
-            _ => None,
-        };
-        for (app, rect) in launcher_slots() {
-            nodes.push(Node::Fill {
-                dst: rect,
-                color: BLACK,
-                alpha: if pressed == Some(app) { 0.38 } else { 0.0 },
-                radius: ICON_RADIUS,
-            });
+        if !live {
+            // A finger on an icon darkens it.
+            let layout = &state.settings.home;
+            let pressed = state.home.pressed();
+            for app in AppId::ALL {
+                let rect = layout.icon_rect(app);
+                nodes.push(Node::Fill {
+                    dst: rect.unwrap_or(RectF::new(0.0, 0.0, 0.0, 0.0)),
+                    color: BLACK,
+                    alpha: if rect.is_some() && pressed == Some(app) {
+                        0.38
+                    } else {
+                        0.0
+                    },
+                    radius: ICON_RADIUS,
+                });
+            }
         }
 
         if let Some(switcher) = &state.switcher {
@@ -1972,78 +2123,515 @@ impl Renderer {
         base
     }
 
+    /// The home screen composed from its parts (while live; home.rs): the
+    /// wallpaper stays put while the widgets and the grid go with their
+    /// page, the App Library comes in beside them and the dock leaves for
+    /// it; every icon is its own node, a pre-turned sprite frame (the
+    /// jiggle), with its name and badge. Always the same nodes, so nothing
+    /// restructures a frame.
+    fn live_home_nodes(&self, state: &ShellState, t: Instant, nodes: &mut Vec<Node>) {
+        let home = &state.home;
+        let page = home.page(t);
+        let shown = page.clamp(0.0, 1.0);
+        let shift = (page * SCREEN_W).round();
+        nodes.push(backdrop_node(self.wall));
+        nodes.push(Self::full(
+            self.widgets.id,
+            SCREEN_W,
+            WIDGETS_H as f32,
+            -shift,
+            0.0,
+            1.0,
+        ));
+        nodes.push(Self::full(
+            self.dock.id,
+            DOCK.w,
+            DOCK.h,
+            DOCK.x,
+            DOCK.y + 80.0 * shown,
+            quantized(1.0 - shown),
+        ));
+        nodes.push(Node::Fill {
+            dst: SCREEN,
+            color: BLACK,
+            alpha: quantized(LIBRARY_DIM * shown),
+            radius: 0.0,
+        });
+        nodes.push(Self::full(
+            self.library.id,
+            SCREEN_W,
+            LIBRARY_H,
+            SCREEN_W - shift,
+            0.0,
+            if page > 0.0 { 1.0 } else { 0.0 },
+        ));
+        // A finger on an App Library app darkens its icon.
+        let pressed = home.pressed();
+        let library_pressed = pressed.filter(|_| page >= 0.5);
+        let mut held = RectF::new(0.0, 0.0, 0.0, 0.0);
+        if let Some(app) = library_pressed {
+            held = library_icon(app);
+            held.x += SCREEN_W - shift;
+        }
+        nodes.push(Node::Fill {
+            dst: held,
+            color: BLACK,
+            alpha: if library_pressed.is_some() { 0.38 } else { 0.0 },
+            radius: ICON_RADIUS * home::LIBRARY_ICON / ICON_SIZE as f32,
+        });
+        let views = home.icon_views(&state.settings.home, t);
+        let pressed = pressed.filter(|_| page < 0.5);
+        for index in 0..AppId::COUNT {
+            self.icon_nodes(views.get(index), pressed, nodes);
+        }
+        nodes.push(Self::full(
+            self.done.id,
+            home::DONE.w,
+            home::DONE.h,
+            home::DONE.x,
+            home::DONE.y,
+            quantized(home.edit_amount(t)),
+        ));
+        nodes.push(Self::full(
+            self.home_status.id,
+            SCREEN_W,
+            f32::from(status_bar::HEIGHT),
+            0.0,
+            0.0,
+            1.0,
+        ));
+        // The App Library's menu: the page dims, the held app's icon rises
+        // a little over it, and the menu shows under its row.
+        let menu = home.menu;
+        let alpha = quantized(menu.map_or(0.0, |menu| menu.alpha(t)));
+        nodes.push(Node::Fill {
+            dst: SCREEN,
+            color: BLACK,
+            alpha: 0.35 * alpha,
+            radius: 0.0,
+        });
+        let app = menu.map_or(AppId::System, |menu| menu.app);
+        let (cx, cy) = library_icon(app).center();
+        let size = SPRITE as f32 * home::LIBRARY_ICON * 1.08 / ICON_SIZE as f32;
+        nodes.push(Node::Image {
+            surface: self.sprites[app.index()].unwrap_or(self.wall),
+            src: sprite_frame(home::JIGGLE_FRAMES / 2),
+            dst: RectF::new(
+                cx + SCREEN_W - shift - size / 2.0,
+                cy - size / 2.0,
+                size,
+                size,
+            ),
+            alpha,
+            radius: 0.0,
+            smooth: true,
+        });
+        let rect = home::menu_rect(app);
+        nodes.push(Self::full(
+            self.menu.id,
+            rect.w,
+            rect.h,
+            rect.x + SCREEN_W - shift,
+            rect.y,
+            alpha,
+        ));
+        // The removal alert pops in over a dimmed screen.
+        let alert = home.alert;
+        let alpha = quantized(alert.map_or(0.0, |alert| alert.alpha(t)));
+        nodes.push(Node::Fill {
+            dst: SCREEN,
+            color: BLACK,
+            alpha: 0.4 * alpha,
+            radius: 0.0,
+        });
+        let card = home::alert_rect();
+        let scale = alert.map_or(1.0, |alert| alert.scale(t));
+        let (cx, cy) = card.center();
+        let (w, h) = (card.w * scale, card.h * scale);
+        let still = (scale - 1.0).abs() < 1e-3;
+        nodes.push(Node::Image {
+            surface: self.alert.id,
+            src: RectF::new(0.0, 0.0, card.w, card.h),
+            dst: if still {
+                card
+            } else {
+                RectF::new(cx - w / 2.0, cy - h / 2.0, w, h)
+            },
+            alpha,
+            radius: 0.0,
+            smooth: !still,
+        });
+        // The switcher's (or the home gesture's) dim over all of it.
+        nodes.push(Node::Fill {
+            dst: SCREEN,
+            color: BLACK,
+            alpha: quantized(home_dim(state, t)),
+            radius: 0.0,
+        });
+    }
+
+    /// An icon's name, its sprite frame, its pressed shade and its badge
+    /// (all invisible without a `view`).
+    fn icon_nodes(&self, view: Option<&IconView>, pressed: Option<AppId>, nodes: &mut Vec<Node>) {
+        let hidden = |surface| Node::Image {
+            surface,
+            src: RectF::new(0.0, 0.0, 1.0, 1.0),
+            dst: RectF::new(0.0, 0.0, 1.0, 1.0),
+            alpha: 0.0,
+            radius: 0.0,
+            smooth: false,
+        };
+        let Some(view) = view else {
+            nodes.push(hidden(self.names[0]));
+            nodes.push(hidden(self.wall));
+            nodes.push(Node::Fill {
+                dst: RectF::new(0.0, 0.0, 0.0, 0.0),
+                color: BLACK,
+                alpha: 0.0,
+                radius: 0.0,
+            });
+            nodes.push(hidden(self.badge.id));
+            return;
+        };
+        let index = view.app.index();
+        let icon = ICON_SIZE as f32;
+        let scale = view.rect.w / icon;
+        let (cx, cy) = view.rect.center();
+        let name_x = cx - NAME_W as f32 / 2.0 + view.label_shift();
+        let name_y = cy + (icon / 2.0 + home::LABEL_DROP) * scale - NAME_BASELINE;
+        nodes.push(Node::Image {
+            surface: self.names[index],
+            src: RectF::new(0.0, 0.0, NAME_W as f32, NAME_H as f32),
+            dst: RectF::new(name_x.round(), name_y.round(), NAME_W as f32, NAME_H as f32),
+            alpha: quantized(view.label * view.alpha),
+            radius: 0.0,
+            smooth: false,
+        });
+        // At rest size the frame lands on whole pixels, as the drawn home
+        // screen has it; lifted or shrinking, it is scaled smoothly.
+        let size = SPRITE as f32 * scale;
+        let still = (scale - 1.0).abs() < 1e-3;
+        let (x, y) = (cx - size / 2.0, cy - size / 2.0);
+        nodes.push(Node::Image {
+            surface: self.sprites[index].unwrap_or(self.wall),
+            src: sprite_frame(home::jiggle_frame(view.angle)),
+            dst: if still {
+                RectF::new(x.round(), y.round(), size, size)
+            } else {
+                RectF::new(x, y, size, size)
+            },
+            alpha: quantized(view.alpha),
+            radius: 0.0,
+            smooth: !still,
+        });
+        let shade = pressed == Some(view.app) && !view.lifted;
+        nodes.push(Node::Fill {
+            dst: RectF::new(
+                view.rect.x.round(),
+                view.rect.y.round(),
+                view.rect.w,
+                view.rect.h,
+            ),
+            color: BLACK,
+            alpha: if shade { 0.38 } else { 0.0 },
+            radius: ICON_RADIUS * scale,
+        });
+        let (bx, by) = view.badge_center();
+        let half = BADGE_LAYER as f32 / 2.0;
+        nodes.push(Self::full(
+            self.badge.id,
+            BADGE_LAYER as f32,
+            BADGE_LAYER as f32,
+            bx - half,
+            by - half,
+            quantized(view.badge * view.alpha),
+        ));
+    }
+
     pub fn destroy<C: Connection>(&mut self, conn: &C) {
         self.compositor.destroy(conn);
     }
 }
 
+/// Opacity in the compositor's 8-bit steps, so a settling fade stops
+/// redrawing once its change is invisible.
+fn quantized(alpha: f32) -> f32 {
+    (alpha.clamp(0.0, 1.0) * 255.0).round() / 255.0
+}
+
+/// The App Library's height (its search field and rows).
+const LIBRARY_H: f32 = 1200.0;
+
+/// An app's icon in the App Library, on its page.
+fn library_icon(app: AppId) -> RectF {
+    let index = home::library_apps()
+        .iter()
+        .position(|a| *a == app)
+        .unwrap_or_default();
+    home::library_icon_rect(index)
+}
+
+/// Jiggle sprite frame `frame`, in its layer.
+fn sprite_frame(frame: usize) -> RectF {
+    RectF::new(
+        (frame as i32 * SPRITE) as f32,
+        0.0,
+        SPRITE as f32,
+        SPRITE as f32,
+    )
+}
+
+/// An icon's soft shadow, on the home screen and in its sprite.
+fn draw_icon_shadow(canvas: &mut Canvas, rect: RectF) {
+    canvas.shadow_rrect(rect.inset(6.0), ICON_RADIUS, 20.0, BLACK, 0.18);
+}
+
+/// A grid icon's name, centered on `cx`; a soft shadow keeps it legible
+/// on any wallpaper.
+fn draw_app_name(canvas: &mut Canvas, name: &str, cx: f32, baseline: f32) {
+    text::draw_centered(
+        canvas,
+        name,
+        cx + 1.5,
+        baseline + 2.0,
+        Weight::Medium,
+        HOME_LABEL_SIZE,
+        BLACK,
+        0.45,
+    );
+    text::draw_centered(
+        canvas,
+        name,
+        cx,
+        baseline,
+        Weight::Medium,
+        HOME_LABEL_SIZE,
+        WHITE,
+        1.0,
+    );
+}
+
+/// An icon and its shadow turned each of the jiggle's ways, side by side.
+/// The middle frame is drawn exactly as the home screen draws the icon, so
+/// edit mode starts and ends without a visible step.
+fn jiggle_sprite(icon: &Image) -> Canvas {
+    // The shadow stays put (soft enough not to show the turn): drawn once.
+    let at = SPRITE_PAD as f32;
+    let (w, h) = (icon.width as f32, icon.height as f32);
+    let mut shadow = Canvas::new(SPRITE, SPRITE);
+    draw_icon_shadow(&mut shadow, RectF::new(at, at, w, h));
+    let width = SPRITE * home::JIGGLE_FRAMES as i32;
+    let mut canvas = Canvas::new(width, SPRITE);
+    for (y, row) in shadow.pixels.chunks_exact(SPRITE as usize).enumerate() {
+        for frame in 0..home::JIGGLE_FRAMES {
+            let start = y * width as usize + frame * SPRITE as usize;
+            canvas.pixels[start..start + SPRITE as usize].copy_from_slice(row);
+        }
+    }
+    for frame in 0..home::JIGGLE_FRAMES {
+        let x = frame as i32 * SPRITE + SPRITE_PAD;
+        let angle = home::frame_angle(frame);
+        if angle == 0.0 {
+            canvas.draw_image(icon, x, SPRITE_PAD, 1.0);
+        } else {
+            let (cx, cy) = RectF::new(x as f32, at, w, h).center();
+            canvas.draw_image_rotated(icon, cx, cy, angle, 1.0);
+        }
+    }
+    canvas
+}
+
+/// Edit mode's "−" badge: a light disc with a dark bar, centered.
+fn draw_badge(canvas: &mut Canvas) {
+    canvas.clear(0);
+    let c = BADGE_LAYER as f32 / 2.0;
+    let r = home::BADGE_RADIUS;
+    canvas.shadow_rrect(
+        RectF::new(c - r, c - r + 2.0, 2.0 * r, 2.0 * r),
+        r,
+        8.0,
+        BLACK,
+        0.28,
+    );
+    canvas.fill_circle(c, c, r, 0xe5e5ea, 0.96);
+    canvas.fill_rrect(RectF::new(c - 13.0, c - 3.0, 26.0, 6.0), 3.0, 0x1c1c1e, 1.0);
+}
+
+/// Edit mode's Done button: a light capsule.
+fn draw_done_button(canvas: &mut Canvas) {
+    canvas.clear(0);
+    let rect = RectF::new(0.0, 0.0, home::DONE.w, home::DONE.h);
+    canvas.fill_rrect(rect, rect.h / 2.0, 0xe5e5ea, 0.92);
+    let baseline = text::centered_baseline(rect.h / 2.0, Weight::SemiBold, 34.0);
+    text::draw_centered(
+        canvas,
+        "Done",
+        rect.w / 2.0,
+        baseline,
+        Weight::SemiBold,
+        34.0,
+        BLACK,
+        1.0,
+    );
+}
+
+/// The App Library: a search field, then every app by name, each with its
+/// icon, as iOS lists them.
+fn draw_library(canvas: &mut Canvas, icons: &[AppIcon; AppId::COUNT]) {
+    canvas.clear(0);
+    let field = home::LIBRARY_SEARCH;
+    canvas.fill_rrect(field, 30.0, 0x767680, 0.36);
+    let label = "App Library";
+    let size = 44.0;
+    let width = text::measure(label, Weight::Regular, size);
+    let (cx, cy) = field.center();
+    let glass = cx - width / 2.0 - 26.0;
+    canvas.stroke_circle(glass - 4.0, cy - 4.0, 13.0, 4.0, SECONDARY, SECONDARY_ALPHA);
+    let mut handle = Path::new();
+    handle.stroke_segment((glass + 6.0, cy + 6.0), (glass + 15.0, cy + 15.0), 4.5);
+    canvas.fill_path(&handle, SECONDARY, SECONDARY_ALPHA);
+    text::draw(
+        canvas,
+        label,
+        cx - width / 2.0 + 14.0,
+        text::centered_baseline(cy, Weight::Regular, size),
+        Weight::Regular,
+        size,
+        SECONDARY,
+        SECONDARY_ALPHA,
+    );
+    let apps = home::library_apps();
+    for (index, app) in apps.iter().enumerate() {
+        let row = home::library_row(index);
+        let icon = home::library_icon_rect(index);
+        canvas.draw_image_scaled(&icons[app.index()].large, icon, 1.0);
+        let x = icon.x + icon.w + 40.0;
+        text::draw(
+            canvas,
+            app.display_name(),
+            x,
+            text::centered_baseline(row.y + row.h / 2.0, Weight::Regular, 48.0),
+            Weight::Regular,
+            48.0,
+            WHITE,
+            1.0,
+        );
+        if index + 1 < apps.len() {
+            let y = (row.y + row.h).round() as i32;
+            canvas.fill_rect(x as i32, y, (SCREEN_W - 48.0 - x) as i32, 2, WHITE, 0.14);
+        }
+    }
+}
+
+/// The removal alert: `Remove “App”?`, what that means, and its buttons
+/// (0 removes, 1 cancels; `pressed` is lit).
+fn draw_remove_alert(canvas: &mut Canvas, app: AppId, pressed: Option<usize>) {
+    canvas.clear(0);
+    let card = RectF::new(0.0, 0.0, home::ALERT_W, home::alert_rect().h);
+    let radius = 38.0;
+    canvas.fill_rrect(card, radius, 0x252527, 0.97);
+    let cx = card.w / 2.0;
+    let title = format!("Remove \u{201c}{}\u{201d}?", app.display_name());
+    text::draw_centered(
+        canvas,
+        &title,
+        cx,
+        104.0,
+        Weight::SemiBold,
+        47.0,
+        WHITE,
+        1.0,
+    );
+    let message = "Removing from Home Screen will keep the app in your App Library.";
+    for (line, text) in wrap(message, Weight::Regular, 37.0, card.w - 110.0)
+        .iter()
+        .enumerate()
+    {
+        let baseline = 176.0 + line as f32 * 50.0;
+        text::draw_centered(
+            canvas,
+            text,
+            cx,
+            baseline,
+            Weight::Regular,
+            37.0,
+            WHITE,
+            0.86,
+        );
+    }
+    let buttons = [
+        ("Remove from Home Screen", Weight::Regular),
+        ("Cancel", Weight::SemiBold),
+    ];
+    for (index, (label, weight)) in buttons.into_iter().enumerate() {
+        let top = home::ALERT_TEXT_H + index as f32 * home::ALERT_BUTTON_H;
+        if pressed == Some(index) {
+            canvas.set_clip(
+                0,
+                top as i32,
+                card.w as i32,
+                (top + home::ALERT_BUTTON_H) as i32,
+            );
+            canvas.fill_rrect(card, radius, WHITE, 0.1);
+            canvas.reset_clip();
+        }
+        canvas.fill_rect(0, top as i32, card.w as i32, 2, WHITE, 0.16);
+        let baseline = text::centered_baseline(top + home::ALERT_BUTTON_H / 2.0, weight, 47.0);
+        text::draw_centered(canvas, label, cx, baseline, weight, 47.0, BLUE, 1.0);
+    }
+}
+
+/// Words of `text` in lines no wider than `width`.
+fn wrap(text: &str, weight: Weight, size: f32, width: f32) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        match lines.last_mut() {
+            Some(line) if text::measure(&format!("{line} {word}"), weight, size) <= width => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => lines.push(word.to_owned()),
+        }
+    }
+    lines
+}
+
+/// The App Library's menu for a removed app: "Add to Home Screen", with
+/// iOS's plus-in-a-square glyph.
+fn draw_library_menu(canvas: &mut Canvas, pressed: bool) {
+    canvas.clear(0);
+    let rect = RectF::new(0.0, 0.0, home::MENU_W, home::MENU_H);
+    canvas.fill_rrect(rect, 36.0, 0x343436, 0.98);
+    if pressed {
+        canvas.fill_rrect(rect, 36.0, WHITE, 0.1);
+    }
+    let cy = rect.h / 2.0;
+    text::draw(
+        canvas,
+        "Add to Home Screen",
+        48.0,
+        text::centered_baseline(cy, Weight::Regular, 47.0),
+        Weight::Regular,
+        47.0,
+        WHITE,
+        1.0,
+    );
+    let glyph = RectF::new(rect.w - 96.0, cy - 24.0, 48.0, 48.0);
+    canvas.stroke_rrect(glyph, 12.0, 4.0, WHITE, 1.0);
+    let mut plus = Path::new();
+    let (gx, gy) = glyph.center();
+    plus.stroke_segment((gx - 11.0, gy), (gx + 11.0, gy), 4.0);
+    plus.stroke_segment((gx, gy - 11.0), (gx, gy + 11.0), 4.0);
+    canvas.fill_path(&plus, WHITE, 1.0);
+}
+
 fn widget_rect(column: usize) -> RectF {
     RectF::new(
-        GRID_MARGIN + column as f32 * 2.0 * GRID_PITCH,
+        home::GRID_MARGIN + column as f32 * 2.0 * home::GRID_PITCH,
         WIDGET_TOP,
         WIDGET_SIZE,
         WIDGET_SIZE,
     )
-}
-
-fn app_icon_rect(index: usize) -> RectF {
-    let count = LAUNCHER_APPS.len() as f32;
-    let (dock_cx, dock_cy) = DOCK.center();
-    let cx = dock_cx + (index as f32 - (count - 1.0) / 2.0) * DOCK_PITCH;
-    let size = ICON_SIZE as f32;
-    RectF::new(cx - size / 2.0, dock_cy - size / 2.0, size, size)
-}
-
-/// A home-screen grid icon, by its place in `HOME_APPS`: the iOS grid's
-/// columns, which the widgets above span two at a time.
-fn home_icon_rect(index: usize) -> RectF {
-    let size = ICON_SIZE as f32;
-    let column = (index % 4) as f32;
-    let row = (index / 4) as f32;
-    RectF::new(
-        GRID_MARGIN + column * GRID_PITCH,
-        HOME_ROW_TOP + row * HOME_ROW_PITCH,
-        size,
-        size,
-    )
-}
-
-/// Every launcher icon with where it is: the dock's, then the grid's.
-fn launcher_slots() -> impl Iterator<Item = (AppId, RectF)> {
-    LAUNCHER_APPS
-        .iter()
-        .enumerate()
-        .map(|(index, app)| (*app, app_icon_rect(index)))
-        .chain(
-            HOME_APPS
-                .iter()
-                .enumerate()
-                .map(|(index, app)| (*app, home_icon_rect(index))),
-        )
-}
-
-pub fn launcher_icon_rect(app: AppId) -> RectF {
-    launcher_slots()
-        .find(|(a, _)| *a == app)
-        .map(|(_, rect)| rect)
-        .unwrap_or(RectF::new(
-            456.0,
-            1086.0,
-            ICON_SIZE as f32,
-            ICON_SIZE as f32,
-        ))
-}
-
-/// The home-screen app under a touch, including its label.
-pub fn launcher_app_at(x: i16, y: i16) -> Option<AppId> {
-    launcher_slots().find_map(|(app, rect)| {
-        // A grid icon's name below it is part of its target.
-        let mut target = rect.inset(-40.0);
-        if HOME_APPS.contains(&app) {
-            target.h += 40.0;
-        }
-        target.contains(f32::from(x), f32::from(y)).then_some(app)
-    })
 }
 
 fn draw_widget_card(canvas: &mut Canvas, rect: RectF) {
@@ -2607,30 +3195,93 @@ pub(crate) fn draw_speaker(canvas: &mut Canvas, cx: f32, cy: f32, volume: u8, co
 mod tests {
     use super::*;
 
-    #[test]
-    fn launcher_tiles_have_separate_hit_regions() {
-        for (index, app) in LAUNCHER_APPS.into_iter().enumerate() {
-            let (x, y) = app_icon_rect(index).center();
-            assert_eq!(launcher_app_at(x as i16, y as i16), Some(app));
+    /// The largest channel difference between two canvases.
+    fn difference(a: &Canvas, b: &Canvas) -> u32 {
+        a.pixels
+            .iter()
+            .zip(&b.pixels)
+            .map(|(p, q)| {
+                (0..3)
+                    .map(|c| {
+                        ((p >> (c * 8) & 0xff) as i32 - (q >> (c * 8) & 0xff) as i32).unsigned_abs()
+                    })
+                    .max()
+                    .unwrap_or(0)
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// A region of a transparent canvas as an image.
+    fn crop(canvas: &Canvas, x: i32, y: i32, w: i32, h: i32) -> Image {
+        let pixels = (y..y + h)
+            .flat_map(|row| {
+                let start = (row * canvas.width + x) as usize;
+                canvas.pixels[start..start + w as usize].to_vec()
+            })
+            .collect();
+        Image {
+            width: w,
+            height: h,
+            pixels,
         }
-        let (_, by) = app_icon_rect(0).center();
-        assert_eq!(launcher_app_at(540, 1200), None);
-        // Between the middle two icons, and past the dock's ends.
-        assert_eq!(launcher_app_at(540, by as i16), None);
-        assert_eq!(launcher_app_at(1070, by as i16), None);
-        assert_eq!(launcher_app_at(10, by as i16), None);
-        // The grid icons under the widgets, and their names.
-        for (index, app) in HOME_APPS.into_iter().enumerate() {
-            let rect = home_icon_rect(index);
-            let (x, y) = rect.center();
-            assert_eq!(launcher_app_at(x as i16, y as i16), Some(app));
-            assert_eq!(
-                launcher_app_at(x as i16, (rect.y + rect.h + 50.0) as i16),
-                Some(app)
-            );
-            assert_eq!(launcher_icon_rect(app), rect);
-            assert!(rect.y > widget_rect(0).y + widget_rect(0).h);
-            assert!(rect.y + rect.h + 80.0 < app_icon_rect(0).y);
+    }
+
+    #[test]
+    fn edit_mode_icons_and_names_match_the_drawn_home_screen() {
+        // The unturned sprite frame and the name layer, composited where
+        // the home screen draws them, look as it does: entering and leaving
+        // edit mode shows no step.
+        let icon = fallback_icon(AppId::Exocortex).icon_mask(ICON_SIZE, ICON_RADIUS);
+        let rect = home::grid_rect(1);
+        let mut drawn = Canvas::new(SCREEN_W as i32, 1200);
+        drawn.clear(0x2a3b5c);
+        let mut composed = Canvas::new(SCREEN_W as i32, 1200);
+        composed.clear(0x2a3b5c);
+        draw_icon_shadow(&mut drawn, rect);
+        drawn.draw_image(&icon, rect.x as i32, rect.y as i32, 1.0);
+        let baseline = rect.y + rect.h + home::LABEL_DROP;
+        draw_app_name(&mut drawn, "Exocortex", rect.center().0, baseline);
+
+        let sprite = jiggle_sprite(&icon);
+        let middle = sprite_frame(home::JIGGLE_FRAMES / 2);
+        let frame = crop(&sprite, middle.x as i32, 0, SPRITE, SPRITE);
+        composed.draw_image(
+            &frame,
+            rect.x as i32 - SPRITE_PAD,
+            rect.y as i32 - SPRITE_PAD,
+            1.0,
+        );
+        let mut name = Canvas::new(NAME_W, NAME_H);
+        draw_app_name(&mut name, "Exocortex", NAME_W as f32 / 2.0, NAME_BASELINE);
+        let name = crop(&name, 0, 0, NAME_W, NAME_H);
+        composed.draw_image(
+            &name,
+            (rect.center().0 - NAME_W as f32 / 2.0) as i32,
+            (baseline - NAME_BASELINE) as i32,
+            1.0,
+        );
+        assert!(difference(&drawn, &composed) <= 2);
+        // The turned frames differ, and stay inside their frame.
+        let turned = crop(&sprite, 0, 0, SPRITE, SPRITE);
+        assert_ne!(turned.pixels, frame.pixels);
+        for y in 0..SPRITE {
+            assert_eq!(turned.pixels[(y * SPRITE) as usize], 0);
+            assert_eq!(turned.pixels[(y * SPRITE + SPRITE - 1) as usize], 0);
+        }
+    }
+
+    #[test]
+    fn alert_text_wraps_inside_its_card() {
+        let lines = wrap(
+            "Removing from Home Screen will keep the app in your App Library.",
+            Weight::Regular,
+            37.0,
+            home::ALERT_W - 110.0,
+        );
+        assert_eq!(lines.len(), 2);
+        for line in &lines {
+            assert!(text::measure(line, Weight::Regular, 37.0) <= home::ALERT_W - 110.0);
         }
     }
 
@@ -2739,6 +3390,14 @@ mod bench {
             let t = Instant::now();
             draw_spinner(&mut canvas, 540.0, 1400.0, 3, 1.0);
             eprintln!("spinner {:?}", t.elapsed());
+            let t = Instant::now();
+            let sprite =
+                jiggle_sprite(&fallback_icon(AppId::System).icon_mask(ICON_SIZE, ICON_RADIUS));
+            eprintln!(
+                "jiggle sprite {:?} ({} px)",
+                t.elapsed(),
+                sprite.pixels.len()
+            );
         }
     }
 }

@@ -494,6 +494,53 @@ impl Canvas {
         }
     }
 
+    /// Composites a premultiplied image turned by `angle` (radians,
+    /// clockwise on screen) about its center, which lands on (`cx`, `cy`),
+    /// with bilinear filtering. Outside the image counts as transparent, so
+    /// turned edges stay smooth (the home screen's jiggling icons).
+    pub fn draw_image_rotated(&mut self, image: &Image, cx: f32, cy: f32, angle: f32, alpha: f32) {
+        let a = alpha_256(alpha);
+        let (sin, cos) = angle.sin_cos();
+        let (hw, hh) = (image.width as f32 / 2.0, image.height as f32 / 2.0);
+        // The turned image's bounding box.
+        let reach_x = hw * cos.abs() + hh * sin.abs() + 1.0;
+        let reach_y = hw * sin.abs() + hh * cos.abs() + 1.0;
+        let y0 = ((cy - reach_y).floor() as i32).max(self.clip.1);
+        let y1 = ((cy + reach_y).ceil() as i32).min(self.clip.3);
+        let x0 = ((cx - reach_x).floor() as i32).max(self.clip.0);
+        let x1 = ((cx + reach_x).ceil() as i32).min(self.clip.2);
+        let sample = |x: i32, y: i32| {
+            if x < 0 || y < 0 || x >= image.width || y >= image.height {
+                0
+            } else {
+                image.pixels[(y * image.width + x) as usize]
+            }
+        };
+        for y in y0..y1 {
+            let dy = y as f32 + 0.5 - cy;
+            for x in x0..x1 {
+                let dx = x as f32 + 0.5 - cx;
+                // The image point that lands here: the inverse turn.
+                let u = dx * cos + dy * sin + hw - 0.5;
+                let v = -dx * sin + dy * cos + hh - 0.5;
+                if u <= -1.0 || v <= -1.0 || u >= image.width as f32 || v >= image.height as f32 {
+                    continue;
+                }
+                let (ux, vy) = (u.floor(), v.floor());
+                let fx = ((u - ux) * 256.0) as u32;
+                let fy = ((v - vy) * 256.0) as u32;
+                let (ux, vy) = (ux as i32, vy as i32);
+                let top = lerp_pixel(sample(ux, vy), sample(ux + 1, vy), fx);
+                let bottom = lerp_pixel(sample(ux, vy + 1), sample(ux + 1, vy + 1), fx);
+                let src = lerp_pixel(top, bottom, fy);
+                if src != 0 {
+                    let index = (y * self.width + x) as usize;
+                    self.pixels[index] = over(self.pixels[index], src, a);
+                }
+            }
+        }
+    }
+
     /// Blends an 8-bit coverage mask (a rasterized glyph or path).
     #[allow(clippy::too_many_arguments)]
     pub fn draw_mask(
@@ -826,6 +873,39 @@ mod tests {
         assert_eq!(rgb(9, 50), 0x000000);
         let corner = canvas.pixels[15 * 100 + 16] & 0xff;
         assert!(corner > 0 && corner < 255, "corner pixel {corner}");
+    }
+
+    #[test]
+    fn rotated_images_turn_clockwise_about_their_center() {
+        // A white square with a red top-left corner block.
+        let mut pixels = vec![0xffff_ffff_u32; 40 * 40];
+        for y in 0..10 {
+            for x in 0..10 {
+                pixels[y * 40 + x] = 0xffff_0000;
+            }
+        }
+        let image = Image {
+            width: 40,
+            height: 40,
+            pixels,
+        };
+        let mut still = Canvas::new(60, 60);
+        still.draw_image_rotated(&image, 30.0, 30.0, 0.0, 1.0);
+        let mut plain = Canvas::new(60, 60);
+        plain.draw_image(&image, 10, 10, 1.0);
+        assert_eq!(still.pixels, plain.pixels, "no turn draws it unchanged");
+        // A quarter turn clockwise brings the red corner to the top right.
+        let mut turned = Canvas::new(60, 60);
+        turned.draw_image_rotated(&image, 30.0, 30.0, std::f32::consts::FRAC_PI_2, 1.0);
+        assert_eq!(turned.pixels[15 * 60 + 45] & 0xffffff, 0xff0000);
+        assert_eq!(turned.pixels[15 * 60 + 15] & 0xffffff, 0xffffff);
+        // A small turn leaves soft (partly covered) edges.
+        let mut tilted = Canvas::new(60, 60);
+        tilted.draw_image_rotated(&image, 30.0, 30.0, 0.05, 1.0);
+        assert!((0..60).any(|x| {
+            let a = tilted.pixels[11 * 60 + x] >> 24;
+            a > 0 && a < 255
+        }));
     }
 
     #[test]

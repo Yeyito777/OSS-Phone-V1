@@ -15,6 +15,7 @@ mod display_power;
 mod freezer;
 mod gfx;
 mod gpu;
+mod home;
 mod input;
 mod interaction;
 mod ipc;
@@ -953,6 +954,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 refresh_voice(&mut state);
                             })
                         }
+                        Command::Layout(command) => state.home_command(command.clone()),
                         // Under Xwayland Moon owns the X server: a new image
                         // could not take it over.
                         Command::Restart if xwayland_server.is_some() => {
@@ -1646,7 +1648,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             deadline = deadline.min(now + Duration::from_micros(8_333));
         }
         if !state.animating(now) && !renderer.settling() && state.screen_awake {
-            if let Some(next) = renderer.prepare_idle(&conn, now)? {
+            if let Some(next) = renderer.prepare_idle(&conn, &state, now)? {
                 deadline = deadline.min(next);
             }
         }
@@ -2668,6 +2670,9 @@ fn pointer_begin(
             state.switcher_touch_begin(f32::from(x), f32::from(y));
         } else if state.view == View::Locked {
             state.lock_drag_begin(f32::from(y));
+        } else if state.view == View::Launcher {
+            // Icons, edit mode and the App Library (home.rs).
+            state.home_touch_begin(f32::from(x), f32::from(y));
         }
     }
     state.pointer = Some(pointer);
@@ -2682,7 +2687,6 @@ fn press_target(state: &mut ShellState, x: i16, y: i16) -> Option<Press> {
         View::Locked if state.lock_face == LockFace::Passcode && !lockout => {
             ui::keypad_action_at(x, y, !state.pin_input.is_empty()).map(Press::Keypad)
         }
-        View::Launcher => ui::launcher_app_at(x, y).map(Press::App),
         _ => None,
     }
 }
@@ -2765,6 +2769,8 @@ fn pointer_move(
             state.switcher_touch_move(fx, fy);
         } else if state.view == View::Locked {
             state.lock_drag_move(fy);
+        } else if state.view == View::Launcher {
+            state.home_touch_move(fx, fy);
         } else if state.view.is_app() && in_zone && rise >= model::HOME_GESTURE_SLOP {
             state.begin_home_gesture(fx, fy);
         }
@@ -3093,6 +3099,7 @@ fn cancel_stale_pointer(state: &mut ShellState, raw_touch: &mut RawTouchTracker,
             }
         }
         raw_touch.touch_id = None;
+        state.home_cancel_touch();
         recovered = true;
     }
     let mut position = 0;
@@ -3206,6 +3213,11 @@ fn pointer_end(
         return;
     }
     if state.view == View::Locked && state.lock_drag_end(dx.abs().max(dy.abs()) as f32) {
+        return;
+    }
+    if state.view == View::Launcher {
+        // Taps, holds, drags and swipes on the home screen (home.rs).
+        state.home_touch_end(f32::from(x), f32::from(y));
         return;
     }
     let elapsed = pointer.started.elapsed();
@@ -3327,10 +3339,7 @@ fn handle_tap(
             Some(KeypadAction::Cancel) => state.cancel_passcode(),
             None => state.last_action = "lock_tap_outside".into(),
         },
-        View::Launcher => match ui::launcher_app_at(x, y) {
-            Some(app) => state.open_app(app),
-            None => state.last_action = "launcher_tap_outside".into(),
-        },
+        View::Launcher => state.home_tap(f32::from(x), f32::from(y)),
         View::System | View::Browser | View::Phone | View::Messages | View::Exocortex => {
             let app_name = AppId::from_view(state.view).map_or("app", AppId::cgroup_name);
             let Some(_window) = state.managed_windows.first().copied() else {
@@ -3423,6 +3432,7 @@ fn apply_command(
         | Command::ProfileBudget(_)
         | Command::ProfileFrames(_)
         | Command::SettingsSet(..)
+        | Command::Layout(_)
         | Command::Transition(_) => {}
         Command::TransitionReady => {
             if let Some(transition) = state.page_transition.as_mut() {
@@ -3483,6 +3493,8 @@ fn apply_command(
             if state.view.is_app() {
                 state.home();
                 state.last_action = "swipe_up_background".into();
+            } else if state.view == View::Launcher {
+                state.home_button();
             }
         }
         Command::VolumeUp => change_volume(state, audio_volume, 5),

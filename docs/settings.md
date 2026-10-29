@@ -1,4 +1,4 @@
-# Moon settings: wallpaper and Auto-Lock
+# Moon settings: wallpaper, Auto-Lock and the home screen
 
 Moon owns the user's appearance settings and applies them; other programs
 (the System app, scripts) change them through Moon's control socket, never
@@ -22,8 +22,37 @@ An unknown key or value is refused (`ok: false`); nothing changes. Every
 reply and `state` carry the current settings:
 
 ```json
-"settings": {"version": 1, "wallpaper": "moon", "auto_lock_s": 30, "haptics": false, "haptic_ms": [0, 0, 0, 0], "power_hold": "voice"}
+"settings": {"version": 1, "wallpaper": "moon", "auto_lock_s": 30, "haptics": false, "haptic_ms": [0, 0, 0, 0], "power_hold": "voice",
+             "home": {"dock": ["phone", "browser", "messages", "system"], "grid": ["exocortex"], "removed": []}}
 ```
+
+## Home screen layout
+
+`home` is the home screen (`home-screen.md`): the dock's apps (at most
+four), the grid's in reading order (four columns), and the apps taken off
+it, which stay in the App Library. Every app is in exactly one of the
+three. The user changes it by editing the home screen; the control socket
+has:
+
+| Command | Effect |
+| --- | --- |
+| `layout reset` | Reset Home Screen Layout: the default dock and grid, nothing removed |
+| `layout set DOCK GRID` | both lists at once, comma-separated app ids in order (`-` for none); apps in neither are removed. Example: `layout set phone,messages exocortex,system,browser` |
+| `layout remove APP` | takes an app off the home screen (refused when it is not on it) |
+| `layout add APP` | puts it back, at the grid's first free place (refused when it is there) |
+| `layout edit on\|off` | enters or leaves edit mode (on: only with the home screen shown) |
+| `layout library on\|off` | shows the App Library or the home page |
+
+App ids are `system`, `browser`, `phone`, `messages`, `exocortex`. Icons
+move to their new places on screen; the file is saved as for any setting.
+These are not user input (Auto-Lock does not count them).
+
+Reading the file is lenient: unknown app ids are skipped, an app listed
+twice counts once, a dock of more than four spills its extra apps into the
+grid, and an app the file never mentions (one newer than the file) joins
+the grid; a `home` that is not a layout at all gives the default, without
+touching the other settings. Moons older than the layout ignore the key
+(and drop it if they save the file).
 
 ## File
 

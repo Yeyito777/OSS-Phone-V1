@@ -45,6 +45,11 @@ where the work resumes. Finished items are at the bottom.
 - [ ] **Fonts:** no CJK, Arabic, Hebrew or Indic coverage. `docs/fonts.md`
 - [ ] **Haptics:** the coin motor is faint, so tap haptics ship off; revisit
   the pulse lengths with hands on the phone.
+- [ ] **Home screen editing follow-ups:** a *Reset Home Screen Layout* entry
+  in the System app (a26-system; Moon's side is `layout reset`), jiggling
+  and removable widgets, more than one home page (page dots, dragging an
+  icon to the next page), App Library search and categories.
+  `docs/home-screen.md`
 
 ### Wayland (parked, opt-in)
 - [ ] Real-finger check on Xwayland, then decide whether Xwayland becomes the

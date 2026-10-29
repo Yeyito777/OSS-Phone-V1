@@ -28,7 +28,7 @@ pub enum View {
     Exocortex,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AppId {
     System,
@@ -143,11 +143,11 @@ pub enum LockFace {
     Passcode,
 }
 
-/// A control currently held down, drawn highlighted until release.
+/// A control currently held down, drawn highlighted until release (the
+/// home screen's icons are home.rs's).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Press {
     Keypad(crate::ui::KeypadAction),
-    App(AppId),
 }
 
 /// An app opening: its card grows from where it was tapped (a dock icon or
@@ -381,6 +381,9 @@ pub struct ShellState {
     pub app_pointer: Vec<AppPointer>,
     pub open_target: Option<OpenTarget>,
     pub page_transition: Option<PageTransition>,
+    /// The home screen's editing and the App Library (home.rs); its layout
+    /// is `settings.home`.
+    pub home: crate::home::HomeScreen,
     active_app_focused: bool,
     launch: Option<Launch>,
 }
@@ -429,6 +432,8 @@ pub struct PublicState {
     pub critical_battery_s: Option<u64>,
     /// The last notification target for an app (see `OpenTarget`).
     pub open_target: Option<PublicOpenTarget>,
+    /// Edit mode and the App Library (the layout is `settings.home`).
+    pub home: crate::home::PublicHome,
     /// Local time: the zone id (if chosen), its TZ rule, and the clock.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time: Option<PublicTime>,
@@ -501,6 +506,7 @@ impl ShellState {
             app_pointer: Vec::new(),
             open_target: None,
             page_transition: None,
+            home: Default::default(),
             active_app_focused: false,
             launch: None,
         }
@@ -558,6 +564,7 @@ impl ShellState {
                 serial: open.serial,
                 age_ms: open.at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
             }),
+            home: self.home_public(),
             time: None,
             animation: None,
             display: None,
@@ -586,6 +593,7 @@ impl ShellState {
         self.control_cancel_touch();
         self.call_cancel_touch();
         self.power_cancel_touch();
+        self.home_reset();
         self.last_action = "lock".into();
         self.redraw = true;
     }
@@ -675,6 +683,8 @@ impl ShellState {
         if !self.screen_awake || self.view == View::Locked {
             return;
         }
+        // Already home: out of edit mode, or back from the App Library.
+        let at_home = self.view == View::Launcher && self.switcher.is_none();
         let now = Instant::now();
         self.keyboard.hide();
         if let Some(app) = AppId::from_view(self.view) {
@@ -690,7 +700,8 @@ impl ShellState {
                 }
                 (SCREEN, DISPLAY_RADIUS)
             };
-            self.closing = Some(close_motion(app, from, radius, (0.0, 0.0), now));
+            let to = self.home_icon_rect(app);
+            self.closing = Some(close_motion(app, from, to, radius, (0.0, 0.0), now));
         }
         self.switcher = None;
         self.switcher_entry = None;
@@ -700,6 +711,9 @@ impl ShellState {
         self.cancel_app_launch();
         self.last_action = "home".into();
         self.redraw = true;
+        if at_home {
+            self.home_button();
+        }
     }
 
     /// The finger rose out of an app's bottom zone: from now on the app's
@@ -746,7 +760,8 @@ impl ShellState {
         match outcome {
             GestureOutcome::Home => {
                 self.go_home(false);
-                self.closing = Some(close_motion(gesture.app, rect, radius, velocity, now));
+                let to = self.home_icon_rect(gesture.app);
+                self.closing = Some(close_motion(gesture.app, rect, to, radius, velocity, now));
                 self.last_action = "swipe_up_background".into();
             }
             GestureOutcome::App => {
@@ -900,11 +915,11 @@ impl ShellState {
     }
 
     fn begin_launch(&mut self, app: AppId) {
-        let origin = crate::ui::launcher_icon_rect(app);
+        let origin = self.home_icon_rect(app);
         self.begin_launch_from(app, origin, crate::ui::ICON_RADIUS);
     }
 
-    fn begin_launch_from(&mut self, app: AppId, origin: RectF, radius: f32) {
+    pub(crate) fn begin_launch_from(&mut self, app: AppId, origin: RectF, radius: f32) {
         let view = app.view();
         if self.screen_awake && self.view != View::Locked && self.view != view {
             let now = Instant::now();
@@ -1277,6 +1292,7 @@ impl ShellState {
             || self.power_animating(now)
             || self.voice.visible(now)
             || self.page_transition.is_some()
+            || (self.view == View::Launcher && self.home.animating(now))
     }
 
     /// An app may ask for a page transition now: its own app in front,
@@ -1297,6 +1313,7 @@ impl ShellState {
         self.calls_tick(now);
         self.power_tick(now);
         self.voice_tick(now);
+        self.home_tick(now);
         if let Some(transition) = self.page_transition.as_mut()
             && transition.waiting
             && now.saturating_duration_since(transition.started) >= PAGE_READY_WAIT
@@ -1413,6 +1430,7 @@ impl ShellState {
             self.fade.map(|fade| fade.deadline()),
             self.alerts_deadline(),
             self.power_deadline(now),
+            self.home.deadline(),
         ]
         .into_iter()
         .flatten()
@@ -1421,10 +1439,11 @@ impl ShellState {
     }
 }
 
-/// The card of an app going home, zooming into its dock icon.
+/// The card of an app going home, zooming into its icon (`to`).
 fn close_motion(
     app: AppId,
     from: RectF,
+    to: RectF,
     radius: f32,
     velocity: (f32, f32),
     now: Instant,
@@ -1432,7 +1451,7 @@ fn close_motion(
     CardMotion::new(
         app,
         from,
-        crate::ui::launcher_icon_rect(app),
+        to,
         radius,
         crate::ui::ICON_RADIUS,
         velocity,
