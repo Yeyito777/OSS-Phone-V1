@@ -97,6 +97,7 @@ it off after 10 s untouched (`notifications-ui.md`).
 | --- | --- |
 | `power` | the power key's short press (sleep / wake) |
 | `power menu [restart]` | the power menu, as when the key is held for 0.9 s (with voice on, power + a volume key): *slide to power off* (or *slide to restart* after tapping Restart), Restart / Power Off, Cancel |
+| `close APP` | close an app as the app switcher does (an app in front goes home first); for updates and tools that restart an app |
 | `restart` | Moon quits cleanly (apps close, the phone locks) and runs the binary on disk again in the same process: an update goes live with no reboot, and the session, its mounts and the supervisor carry on (refused under Xwayland) |
 | `voice start\|send\|cancel` | hold the power key to talk to Exocortex, release, or drop it (`voice.md`) |
 | `open APP TARGET` | the app opens at a target, as a tapped notification does (after unlocking, when locked); `open browser URL` opens the link in the Browser (`app-services.md`) |

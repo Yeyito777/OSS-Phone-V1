@@ -34,6 +34,9 @@ pub enum Command {
     /// Diagnostics: log every composed frame's nodes.
     ProfileFrames(bool),
     Launch(AppId),
+    /// `close APP`: as swiping it away in the app switcher (an app in
+    /// front goes home first), so updates and tools can restart an app.
+    Close(AppId),
     /// `open APP TARGET`: the app opens at a target, as when a notification
     /// is tapped (after unlocking, when locked).
     Open(AppId, String),
@@ -310,6 +313,13 @@ fn parse_command(line: &str) -> Result<Command, String> {
         "pointer-end" => {
             Command::PointerEnd(parse_i16(parts.next(), "x")?, parse_i16(parts.next(), "y")?)
         }
+        "close" => match parts.next().map(str::to_ascii_lowercase) {
+            Some(value) => match AppId::parse(&value) {
+                Some(app) => Command::Close(app),
+                None => return Err("unknown app".into()),
+            },
+            None => return Err("close requires an app".into()),
+        },
         "launch" => match parts.next() {
             Some(value) => match AppId::parse(&value.to_ascii_lowercase()) {
                 Some(app) => Command::Launch(app),
@@ -576,6 +586,12 @@ mod tests {
         assert!(parse_command("voice").is_err());
         assert!(parse_command("voice send now").is_err());
         assert!(matches!(parse_command("restart"), Ok(Command::Restart)));
+        assert!(matches!(
+            parse_command("close Exocortex"),
+            Ok(Command::Close(AppId::Exocortex))
+        ));
+        assert!(parse_command("close").is_err());
+        assert!(parse_command("close nowhere").is_err());
         assert!(parse_command("restart now").is_err());
     }
 

@@ -1200,7 +1200,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         for app in std::mem::take(&mut state.pending_kills) {
             if apps.terminate(app) {
-                eprintln!("closed {} from the app switcher", app.display_name());
+                eprintln!("closed {}", app.display_name());
+            } else if apps.active() == Some(app) && AppId::from_view(state.view) != Some(app) {
+                // `close` of the app in front: it goes home first and is
+                // no longer active once the apps are reconciled below.
+                state.pending_kills.push(app);
+                continue;
             }
             renderer.forget_app(&conn, app);
         }
@@ -1718,6 +1723,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         if retry_sleep {
             deadline = now;
+        }
+        if !state.pending_kills.is_empty() {
+            deadline = deadline.min(now + Duration::from_millis(20));
         }
         if state.power.pending_action.is_some() || power_helper.is_some() {
             // The shutdown screen's frame, then the helper, then its exit.
@@ -3589,6 +3597,12 @@ fn apply_command(
         Command::Home => state.home(),
         Command::Switcher => state.pending_switcher = true,
         Command::Launch(app) => state.open_app(app),
+        Command::Close(app) => {
+            if AppId::from_view(state.view) == Some(app) {
+                state.home();
+            }
+            state.pending_kills.push(app);
+        }
         Command::Open(app, target) => state.open_target(app, target),
         // Started above (it may be refused).
         Command::Voice(voice::VoiceRequest::Start) => {}
