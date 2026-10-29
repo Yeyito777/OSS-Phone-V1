@@ -79,6 +79,8 @@ fn local_weekday_of_date(today: &libc::tm, offset: i32) -> Option<u8> {
 }
 
 pub fn local(seconds: i64) -> Option<libc::tm> {
+    // time_t is 64-bit on every Moon target (aarch64 musl, x86-64).
+    #[allow(deprecated)]
     let time = seconds as libc::time_t;
     let mut tm = blank_tm();
     // SAFETY: localtime_r writes only into the provided tm.
