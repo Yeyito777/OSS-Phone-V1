@@ -9,6 +9,13 @@
 //                                   `cancel`; end of input is `cancel`. Until
 //                                   then it prints `level L` lines on stdout
 //                                   (0..1, how loud the voice is) for Moon's orb.
+//   exocortex-voice dictate         an app's mic button: records at once,
+//                                   prints `level L` lines while recording, and
+//                                   reads one line on stdin: `stop` (transcribe)
+//                                   or `cancel` (end of input is `cancel`). After
+//                                   `stop` it prints `text "…"` (the transcription
+//                                   as one JSON string) or `error MESSAGE`, and
+//                                   exits. Nothing is sent and nothing is posted.
 //   exocortex-voice send FILE.wav   transcribe and send a recording (testing)
 //
 // The microphone is Android's: moon-voice-capture (AAudio, 16 kHz mono) runs
@@ -47,46 +54,19 @@ const log = (message: string) => console.error(`exocortex-voice: ${message}`);
 async function main(): Promise<number> {
   const [mode, file] = process.argv.slice(2);
   if (mode === "record") return await record();
+  if (mode === "dictate") return await dictate();
   if (mode === "send" && file) return await deliver(readFileSync(file), false);
-  console.error("usage: exocortex-voice record | send FILE.wav");
+  console.error("usage: exocortex-voice record | dictate | send FILE.wav");
   return 2;
 }
 
 async function record(): Promise<number> {
   const dir = mkdtempSync("/tmp/exocortex-voice.");
   try {
-    const command = CAPTURE_OVERRIDE
-      ? ["/bin/sh", "-c", CAPTURE_OVERRIDE]
-      : [BUSYBOX, "chroot", "/proc/1/root", CAPTURE, String(MAX_SECONDS)];
-    const capture = Bun.spawn(command, {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: Bun.file(`${dir}/capture.log`),
-    });
-    // The recording, metered as it comes for Moon's orb (until the key comes
-    // up: Moon then closes our stdout).
-    const chunks: Uint8Array[] = [];
-    const meter = new LevelMeter();
-    let metering = true;
-    const pump = (async () => {
-      for await (const chunk of capture.stdout) {
-        chunks.push(chunk);
-        const level = metering ? meter.push(chunk) : null;
-        if (level !== null) metering = emitLevel(level);
-      }
-    })();
-    const word = (await firstLine()).trim();
-    metering = false;
-    capture.kill("SIGTERM");
-    const killer = setTimeout(() => capture.kill("SIGKILL"), 3000);
-    const status = await capture.exited;
-    await pump;
-    clearTimeout(killer);
+    const { word, pcm, status } = await listen(dir);
     if (word !== "send" && word !== "send locked") return 0;
-    const pcm = Buffer.concat(chunks);
     if (pcm.length < RATE * 2 * 0.3) {
-      const why = readFileSync(`${dir}/capture.log`, "utf8").trim().split("\n").pop() ?? "";
-      log(`no audio (capture exit ${status}): ${why}`);
+      log(`no audio (capture exit ${status}): ${captureError(dir)}`);
       await notify("The microphone recorded nothing. Try again.");
       return 1;
     }
@@ -95,6 +75,77 @@ async function record(): Promise<number> {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** Dictation for an app's mic button: the text comes back on stdout. */
+async function dictate(): Promise<number> {
+  const dir = mkdtempSync("/tmp/exocortex-voice.");
+  try {
+    const { word, pcm, status } = await listen(dir);
+    if (word !== "stop") return 0;
+    if (pcm.length < RATE * 2 * 0.3) {
+      log(`no audio (capture exit ${status}): ${captureError(dir)}`);
+      return answer("error", "The microphone recorded nothing.");
+    }
+    log(`dictated ${(pcm.length / 2 / RATE).toFixed(1)} s`);
+    const daemon = await Daemon.connect().catch(() => null);
+    if (!daemon) return answer("error", "Exocortex is not running.");
+    try {
+      const result = await transcribe(daemon, wav(normalized(pcm)));
+      if ("error" in result) return answer("error", `Transcription failed: ${result.error}`);
+      return answer("text", result.text);
+    } finally {
+      daemon.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** The dictation's one answer line (text as JSON, an error on one line);
+ * exits 0 for text, 1 for an error. */
+function answer(kind: "text" | "error", value: string): number {
+  const line = kind === "text" ? JSON.stringify(value) : value.replace(/\s+/g, " ");
+  writeSync(1, `${kind} ${line}\n`);
+  return kind === "text" ? 0 : 1;
+}
+
+/** Records from the microphone at once, printing `level L` lines, until a
+ * line on stdin (the key came up, or the app's `stop` / `cancel`). */
+async function listen(dir: string): Promise<{ word: string; pcm: Buffer; status: number }> {
+  const command = CAPTURE_OVERRIDE
+    ? ["/bin/sh", "-c", CAPTURE_OVERRIDE]
+    : [BUSYBOX, "chroot", "/proc/1/root", CAPTURE, String(MAX_SECONDS)];
+  const capture = Bun.spawn(command, {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: Bun.file(`${dir}/capture.log`),
+  });
+  // The recording, metered as it comes for Moon's orb or the app's strip
+  // (until the line comes: Moon then closes our stdout).
+  const chunks: Uint8Array[] = [];
+  const meter = new LevelMeter();
+  let metering = true;
+  const pump = (async () => {
+    for await (const chunk of capture.stdout) {
+      chunks.push(chunk);
+      const level = metering ? meter.push(chunk) : null;
+      if (level !== null) metering = emitLevel(level);
+    }
+  })();
+  const word = (await firstLine()).trim();
+  metering = false;
+  capture.kill("SIGTERM");
+  const killer = setTimeout(() => capture.kill("SIGKILL"), 3000);
+  const status = await capture.exited;
+  await pump;
+  clearTimeout(killer);
+  return { word, pcm: Buffer.concat(chunks), status };
+}
+
+/** The capture's last word on why it recorded nothing. */
+function captureError(dir: string): string {
+  return readFileSync(`${dir}/capture.log`, "utf8").trim().split("\n").pop() ?? "";
 }
 
 /** How loud the voice is, 0..1, every 50 ms: its level above the noise floor
@@ -189,20 +240,12 @@ async function deliver(audio: Buffer, locked: boolean): Promise<number> {
     return 1;
   }
   try {
-    const started = Date.now();
-    const result = await daemon.request(
-      { type: "transcribe_audio", audioBase64: audio.toString("base64"), mimeType: "audio/wav", filename: "voice.wav" },
-      90_000,
-    );
-    // The daemon reports silence as an error ("returned an empty result").
-    const empty = result.type === "error" && /empty result/i.test(String(result.message));
-    if (result.type !== "transcription_result" && !empty) {
-      log(`transcription failed: ${result.message}`);
-      await notify(`Transcription failed: ${result.message}`);
+    const result = await transcribe(daemon, audio);
+    if ("error" in result) {
+      await notify(`Transcription failed: ${result.error}`);
       return 1;
     }
-    const text = empty ? "" : String(result.text ?? "").trim();
-    log(`transcribed in ${Date.now() - started} ms (${text.length} characters)`);
+    const text = result.text;
     if (!text) {
       await notify("Didn't catch that. Try again.");
       return 1;
@@ -244,6 +287,24 @@ async function deliver(audio: Buffer, locked: boolean): Promise<number> {
   } finally {
     daemon.close();
   }
+}
+
+/** What the daemon heard ("" for silence), or why it could not tell. */
+async function transcribe(daemon: Daemon, audio: Buffer): Promise<{ text: string } | { error: string }> {
+  const started = Date.now();
+  const result = await daemon.request(
+    { type: "transcribe_audio", audioBase64: audio.toString("base64"), mimeType: "audio/wav", filename: "voice.wav" },
+    90_000,
+  );
+  // The daemon reports silence as an error ("returned an empty result").
+  const empty = result.type === "error" && /empty result/i.test(String(result.message));
+  if (result.type !== "transcription_result" && !empty) {
+    log(`transcription failed: ${result.message}`);
+    return { error: String(result.message ?? result.type) };
+  }
+  const text = empty ? "" : String(result.text ?? "").trim();
+  log(`transcribed in ${Date.now() - started} ms (${text.length} characters)`);
+  return { text };
 }
 
 /** The voice conversation from TARGET_FILE, if one is set. */
