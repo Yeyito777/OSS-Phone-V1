@@ -14,6 +14,7 @@ use x11rb::connection::Connection;
 
 use crate::alerts::{self, CARD_W, CARD_X, Icons, RingInfo};
 use crate::backdrop::{self, DimLevels, LEVEL_STEP, RowFade, level_dims};
+use crate::badges::{self, Badges};
 use crate::calls;
 use crate::clock::LocalTime;
 use crate::compositor::{Compositor, Frame, Node, SurfaceId};
@@ -262,6 +263,7 @@ struct HomeKey {
     date: (u8, u8, u8),
     wallpaper: String,
     layout: HomeLayout,
+    badges: Badges,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -407,7 +409,8 @@ pub struct Renderer {
     widget_sprites: [Option<Layer<u64>>; Widget::COUNT],
     dock: Layer<()>,
     home_status: Layer<StatusInfo>,
-    library: Layer<()>,
+    /// (With the apps' icon badges.)
+    library: Layer<Badges>,
     done: Layer<()>,
     plus: Layer<()>,
     badge: Layer<()>,
@@ -417,6 +420,8 @@ pub struct Renderer {
     /// (Drawn in idle time after startup, or when first needed.)
     sprites: [Option<SurfaceId>; AppId::COUNT],
     names: [SurfaceId; AppId::COUNT],
+    /// Each app's icon badge (badges.rs), by app: its count.
+    count_badges: Vec<Layer<u32>>,
 }
 
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
@@ -511,6 +516,16 @@ impl Renderer {
             let id = compositor.create_layer(conn, NAME_W as u16, NAME_H as u16, true)?;
             compositor.upload(conn, id, &canvas)?;
             names[app.index()] = id;
+        }
+        let mut count_badges = Vec::with_capacity(AppId::COUNT);
+        for _ in AppId::ALL {
+            count_badges.push(Layer::new(
+                conn,
+                &mut compositor,
+                badges::LAYER_W,
+                badges::LAYER_H,
+                true,
+            )?);
         }
         let mut renderer = Self {
             twenty_four_hour,
@@ -656,6 +671,7 @@ impl Renderer {
             )?,
             sprites: [None; AppId::COUNT],
             names,
+            count_badges,
             compositor,
             wallpaper,
             wallpaper_id: "moon".into(),
@@ -877,6 +893,7 @@ impl Renderer {
                 date: (time.weekday, time.day, time.month),
                 wallpaper: self.wallpaper_id.clone(),
                 layout: state.settings.home.clone(),
+                badges: state.badges,
             };
             let wallpaper = &self.wallpaper;
             let icons = &self.icons;
@@ -900,6 +917,11 @@ impl Renderer {
                             rect.center().0,
                             rect.y + rect.h + home::LABEL_DROP,
                         );
+                    }
+                    let count = state.badges.get(app);
+                    if count > 0 {
+                        let (x, y) = badges::anchor(rect, 0.0);
+                        badges::draw(canvas, count, x.round(), y.round(), 1.0);
                     }
                 }
                 draw_status_bar(canvas, &status, None);
@@ -1106,10 +1128,17 @@ impl Renderer {
         self.done.update(conn, compositor, (), draw_done_button)?;
         self.plus.update(conn, compositor, (), draw_plus_button)?;
         self.badge.update(conn, compositor, (), draw_badge)?;
+        for app in AppId::ALL {
+            let count = state.badges.get(app);
+            self.count_badges[app.index()].update(conn, compositor, count, |canvas| {
+                badges::draw_layer(canvas, count);
+            })?;
+        }
         let icons = &self.icons;
-        self.library.update(conn, compositor, (), |canvas| {
-            draw_library(canvas, icons);
-        })?;
+        self.library
+            .update(conn, compositor, state.badges, |canvas| {
+                draw_library(canvas, icons, &state.badges);
+            })?;
         if let Some(alert) = state.home.alert
             && let Some(item) = alert.item
         {
@@ -2248,7 +2277,7 @@ impl Renderer {
         let views = home.icon_views(&state.settings.home, t);
         let pressed = pressed.filter(|_| page < 0.5);
         for index in 0..AppId::COUNT {
-            self.icon_nodes(views.get(index), pressed, nodes);
+            self.icon_nodes(views.get(index), pressed, &state.badges, nodes);
         }
         nodes.push(Self::full(
             self.done.id,
@@ -2417,9 +2446,15 @@ impl Renderer {
         ));
     }
 
-    /// An icon's name, its sprite frame, its pressed shade and its badge
-    /// (all invisible without a `view`).
-    fn icon_nodes(&self, view: Option<&IconView>, pressed: Option<AppId>, nodes: &mut Vec<Node>) {
+    /// An icon's name, its sprite frame, its pressed shade, its "−" badge
+    /// and its count badge (all invisible without a `view`).
+    fn icon_nodes(
+        &self,
+        view: Option<&IconView>,
+        pressed: Option<AppId>,
+        badges: &Badges,
+        nodes: &mut Vec<Node>,
+    ) {
         let hidden = |surface| Node::Image {
             surface,
             src: RectF::new(0.0, 0.0, 1.0, 1.0),
@@ -2438,6 +2473,7 @@ impl Renderer {
                 radius: 0.0,
             });
             nodes.push(hidden(self.badge.id));
+            nodes.push(hidden(self.count_badges[0].id));
             return;
         };
         let index = view.app.index();
@@ -2493,6 +2529,28 @@ impl Renderer {
             by - half,
             quantized(view.badge * view.alpha),
         ));
+        // The count badge rides its icon's top-right corner, turning and
+        // scaling with it; at rest it lands where the home page draws it.
+        let (ax, ay) = badges::anchor(view.rect, view.angle);
+        let (lx, ly) = badges::layer_anchor();
+        let (w, h) = (badges::LAYER_W as f32, badges::LAYER_H as f32);
+        let (x, y) = (ax - lx * scale, ay - ly * scale);
+        nodes.push(Node::Image {
+            surface: self.count_badges[index].id,
+            src: RectF::new(0.0, 0.0, w, h),
+            dst: if still {
+                RectF::new(x.round(), y.round(), w, h)
+            } else {
+                RectF::new(x, y, w * scale, h * scale)
+            },
+            alpha: if badges.get(view.app) > 0 {
+                quantized(view.alpha)
+            } else {
+                0.0
+            },
+            radius: 0.0,
+            smooth: !still,
+        });
     }
 
     pub fn destroy<C: Connection>(&mut self, conn: &C) {
@@ -2638,8 +2696,8 @@ fn draw_done_button(canvas: &mut Canvas) {
 const DONE_TEXT: f32 = 41.0;
 
 /// The App Library: a search field, then every app by name, each with its
-/// icon, as iOS lists them.
-fn draw_library(canvas: &mut Canvas, icons: &[AppIcon; AppId::COUNT]) {
+/// icon (and its badge), as iOS lists them.
+fn draw_library(canvas: &mut Canvas, icons: &[AppIcon; AppId::COUNT], badges: &Badges) {
     canvas.clear(0);
     let field = home::LIBRARY_SEARCH;
     canvas.fill_rrect(field, 30.0, 0x767680, 0.36);
@@ -2667,6 +2725,11 @@ fn draw_library(canvas: &mut Canvas, icons: &[AppIcon; AppId::COUNT]) {
         let row = home::library_row(index);
         let icon = home::library_icon_rect(index);
         canvas.draw_image_scaled(&icons[app.index()].large, icon, 1.0);
+        let count = badges.get(*app);
+        if count > 0 {
+            let (bx, by) = badges::anchor(icon, 0.0);
+            badges::draw(canvas, count, bx, by, icon.w / ICON_SIZE as f32);
+        }
         let x = icon.x + icon.w + 40.0;
         text::draw(
             canvas,
@@ -3607,6 +3670,36 @@ mod tests {
         for y in 0..SPRITE {
             assert_eq!(turned.pixels[(y * SPRITE) as usize], 0);
             assert_eq!(turned.pixels[(y * SPRITE + SPRITE - 1) as usize], 0);
+        }
+    }
+
+    #[test]
+    fn edit_mode_count_badges_match_the_drawn_home_screen() {
+        // A badge's layer, placed where an icon at rest puts it, looks as
+        // the home page draws it: entering edit mode shows no step.
+        for (rect, count) in [
+            (home::cell_rect(3, 0), 7),
+            (home::cell_rect(0, 1), 42),
+            (home::dock_rect(2, 4), 1234),
+        ] {
+            let mut drawn = Canvas::new(SCREEN_W as i32, 2340);
+            drawn.clear(0x2a3b5c);
+            let mut composed = Canvas::new(SCREEN_W as i32, 2340);
+            composed.clear(0x2a3b5c);
+            let (x, y) = badges::anchor(rect, 0.0);
+            badges::draw(&mut drawn, count, x.round(), y.round(), 1.0);
+            let mut layer = Canvas::new(badges::LAYER_W, badges::LAYER_H);
+            badges::draw_layer(&mut layer, count);
+            let (lx, ly) = badges::layer_anchor();
+            let layer = crop(&layer, 0, 0, badges::LAYER_W, badges::LAYER_H);
+            composed.draw_image(
+                &layer,
+                (x - lx).round() as i32,
+                (y - ly).round() as i32,
+                1.0,
+            );
+            assert!(difference(&drawn, &composed) <= 2, "{count}");
+            assert!(drawn.pixels.iter().any(|p| p & 0xffffff == RED));
         }
     }
 

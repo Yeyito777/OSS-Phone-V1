@@ -128,6 +128,32 @@ impl LeaseManager {
     }
 }
 
+/// Apps that keep the screen on while they are in front (`awake on`: a
+/// recording, a video), each with the process that asked: it ends with
+/// `awake off`, or when that process exits or restarts.
+#[derive(Debug, Default)]
+pub struct AwakeRequests([Option<u32>; AppId::COUNT]);
+
+impl AwakeRequests {
+    pub fn set(&mut self, app: AppId, pid: u32, on: bool) {
+        self.0[app.index()] = on.then_some(pid);
+    }
+
+    /// The app asked, and `pid` is still the process that did.
+    pub fn holds(&self, app: AppId, pid: Option<u32>) -> bool {
+        self.0[app.index()].is_some_and(|asked| Some(asked) == pid)
+    }
+
+    /// For `state`: the running apps that asked.
+    pub fn public(&self, pid: impl Fn(AppId) -> Option<u32>) -> Vec<&'static str> {
+        AppId::ALL
+            .into_iter()
+            .filter(|app| self.holds(*app, pid(*app)))
+            .map(AppId::cgroup_name)
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +202,22 @@ mod tests {
         let public = leases.public(AppId::System, start);
         assert_eq!(public.len(), 1);
         assert_eq!(public[0].kind, LeaseKind::Transfer);
+    }
+
+    #[test]
+    fn keeping_awake_lasts_as_long_as_the_process_that_asked() {
+        let mut awake = AwakeRequests::default();
+        awake.set(AppId::Exocortex, 41, true);
+        assert!(awake.holds(AppId::Exocortex, Some(41)));
+        assert!(!awake.holds(AppId::Exocortex, Some(42)), "restarted");
+        assert!(!awake.holds(AppId::Exocortex, None), "exited");
+        assert!(!awake.holds(AppId::System, Some(41)));
+        assert_eq!(
+            awake.public(|app| (app == AppId::Exocortex).then_some(41)),
+            ["exocortex"]
+        );
+        assert!(awake.public(|_| None).is_empty());
+        awake.set(AppId::Exocortex, 41, false);
+        assert!(!awake.holds(AppId::Exocortex, Some(41)));
     }
 }

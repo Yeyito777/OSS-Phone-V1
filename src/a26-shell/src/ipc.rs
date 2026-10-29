@@ -82,10 +82,25 @@ pub enum Command {
     /// default`: the status bar over an app in its own colour, or back to
     /// black (status_bar.rs). Without APP: the app asking.
     StatusBar(Option<AppId>, Option<crate::status_bar::StatusStyle>),
-    /// `clipboard get`: the clipboard's text (clipboard.rs).
+    /// `clipboard get`: the clipboard's text, and whether it has an image
+    /// (clipboard.rs).
     ClipboardGet,
+    /// `clipboard get image`: the clipboard's image, in base64.
+    ClipboardGetImage,
     /// `clipboard set "TEXT"` (a JSON string): the clipboard holds it.
     ClipboardSet(String),
+    /// `clipboard set image/png BASE64`: the clipboard holds the image.
+    ClipboardSetImage(crate::clipboard::ClipImage),
+    /// A `clipboard set image/...` line not read yet: megabytes of base64,
+    /// for a thread of its own to read (`read_clipboard_upload`).
+    ClipboardUpload,
+    /// `awake [APP] on|off`: the app in front keeps the screen on (no
+    /// Auto-Lock dim or lock) while the process that asked runs. Without
+    /// APP: the app asking.
+    Awake(Option<AppId>, bool),
+    /// `badge [APP] N`: the count on the app's home screen icon (0: none;
+    /// badges.rs). Without APP: the app asking.
+    Badge(Option<AppId>, u32),
     Quit,
     /// `restart`: quit cleanly, then run the binary on disk again in the
     /// same process. An update goes live; the session, its mounts and the
@@ -118,8 +133,9 @@ impl Command {
     }
 }
 
-/// The longest command line: `clipboard set` with a 1 MiB text, escaped.
-const MAX_LINE: u64 = 8 << 20;
+/// The longest command line: `clipboard set image/png` with an 8 MiB image
+/// in base64 (`clipboard set` with a 1 MiB text, escaped, takes at most 6).
+const MAX_LINE: u64 = 12 << 20;
 
 pub struct IpcServer {
     listener: UnixListener,
@@ -151,6 +167,10 @@ impl IpcServer {
                 Ok((mut stream, _)) => {
                     let _ = stream.set_read_timeout(Some(Duration::from_millis(150)));
                     let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+                    if is_clipboard_upload(&stream) {
+                        requests.push((stream, Ok(Command::ClipboardUpload)));
+                        continue;
+                    }
                     let mut line = String::new();
                     let result = BufReader::new((&mut stream).take(MAX_LINE))
                         .read_line(&mut line)
@@ -227,9 +247,13 @@ pub fn respond<T: Serialize>(mut stream: UnixStream, result: Result<&T, &str>) {
 }
 
 fn parse_command(line: &str) -> Result<Command, String> {
-    // The text is one JSON string, spaces and all.
-    if let Some(text) = line.strip_prefix("clipboard set ") {
-        return serde_json::from_str::<String>(text.trim())
+    if let Some(value) = line.strip_prefix("clipboard set ") {
+        let value = value.trim();
+        if value.starts_with("image/") {
+            return parse_clipboard_image(value).map(Command::ClipboardSetImage);
+        }
+        // The text is one JSON string, spaces and all.
+        return serde_json::from_str::<String>(value)
             .map(Command::ClipboardSet)
             .map_err(|_| "clipboard set requires a JSON string".into());
     }
@@ -441,10 +465,39 @@ fn parse_command(line: &str) -> Result<Command, String> {
                 }
             }
         }
-        "clipboard" => match parts.next() {
-            Some("get") => Command::ClipboardGet,
-            _ => return Err("clipboard requires get or set \"TEXT\"".into()),
+        "clipboard" => match (parts.next(), parts.next()) {
+            (Some("get"), None) => Command::ClipboardGet,
+            (Some("get"), Some("image")) => Command::ClipboardGetImage,
+            _ => {
+                return Err(
+                    "clipboard requires get [image], set \"TEXT\" or set image/png BASE64".into(),
+                );
+            }
         },
+        "awake" => {
+            let mut word = parts.next();
+            let app = word.and_then(AppId::parse);
+            if app.is_some() {
+                word = parts.next();
+            }
+            match word {
+                Some("on") => Command::Awake(app, true),
+                Some("off") => Command::Awake(app, false),
+                _ => return Err("awake requires [APP] on or off".into()),
+            }
+        }
+        "badge" => {
+            let mut word = parts.next();
+            let app = word.and_then(AppId::parse);
+            if app.is_some() {
+                word = parts.next();
+            }
+            let count = word
+                .and_then(|word| word.parse::<u32>().ok())
+                .filter(|count| *count <= crate::badges::MAX)
+                .ok_or("badge requires [APP] N (0 to 99999; 0 clears it)")?;
+            Command::Badge(app, count)
+        }
         "light-probe" => match parts.next() {
             Some("off") => Command::LightProbe(None),
             Some(x) => {
@@ -514,6 +567,56 @@ fn parse_command(line: &str) -> Result<Command, String> {
     };
     no_extra(parts)?;
     Ok(command)
+}
+
+const CLIPBOARD_UPLOAD: &[u8] = b"clipboard set image/";
+
+/// Whether a connection's line starts `clipboard set image/` (a look at
+/// what has arrived, nothing read). A line that has not arrived that far
+/// is read here as any other, and parses the same.
+fn is_clipboard_upload(stream: &UnixStream) -> bool {
+    let mut head = [0_u8; CLIPBOARD_UPLOAD.len()];
+    // SAFETY: recv writes at most `head.len()` bytes into `head`.
+    let peeked = unsafe {
+        libc::recv(
+            stream.as_raw_fd(),
+            head.as_mut_ptr().cast(),
+            head.len(),
+            libc::MSG_PEEK,
+        )
+    };
+    peeked == head.len() as isize && head == CLIPBOARD_UPLOAD
+}
+
+/// Reads and checks a `clipboard set image/...` line (on its own thread:
+/// up to 12 MiB, then the base64).
+pub fn read_clipboard_upload(stream: &UnixStream) -> Result<crate::clipboard::ClipImage, String> {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let mut line = String::new();
+    BufReader::with_capacity(1 << 16, stream.take(MAX_LINE))
+        .read_line(&mut line)
+        .map_err(|error| error.to_string())?;
+    match parse_command(line.trim())? {
+        Command::ClipboardSetImage(image) => Ok(image),
+        _ => Err("clipboard set image requires image/TYPE BASE64".into()),
+    }
+}
+
+/// `image/png BASE64` (`clipboard set`): the image, checked before the
+/// clipboard takes it.
+fn parse_clipboard_image(value: &str) -> Result<crate::clipboard::ClipImage, String> {
+    use crate::clipboard::{self, ClipImage, ImageKind};
+    let (mime, data) = value.split_once(' ').unwrap_or((value, ""));
+    let kind = ImageKind::parse(mime)
+        .ok_or("clipboard images are image/png, image/jpeg, image/gif or image/webp")?;
+    let data = data.trim();
+    if data.len() / 4 * 3 > clipboard::MAX_IMAGE + 3 {
+        return Err("clipboard image is over 8 MiB".into());
+    }
+    let bytes = clipboard::base64_decode(data)
+        .filter(|bytes| !bytes.is_empty())
+        .ok_or("clipboard set image requires its data in base64")?;
+    ClipImage::new(kind, bytes).map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -688,10 +791,79 @@ mod tests {
             "clipboard set bare words",
             r#"clipboard set "a" "b""#,
             "clipboard get more",
+            "clipboard get image now",
             "clipboard clear",
         ] {
             assert!(parse_command(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn parses_clipboard_images_in_base64() {
+        use crate::clipboard::{ImageKind, base64_encode};
+        assert!(matches!(
+            parse_command("clipboard get image"),
+            Ok(Command::ClipboardGetImage)
+        ));
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+        let line = format!("clipboard set image/png {}", base64_encode(png));
+        assert!(matches!(
+            parse_command(&line),
+            Ok(Command::ClipboardSetImage(image))
+                if image.kind == ImageKind::Png && &image.bytes[..] == png
+        ));
+        let jpeg = format!("clipboard set image/jpeg {}", base64_encode(png));
+        for bad in [
+            "clipboard set image/png",
+            "clipboard set image/png !!!!",
+            "clipboard set image/svg+xml PHN2Zz4=",
+            jpeg.as_str(),
+        ] {
+            assert!(parse_command(bad).is_err(), "{bad}");
+        }
+        // Over the limit: refused before decoding.
+        let huge = format!("clipboard set image/png {}", "A".repeat(12 << 20));
+        assert!(parse_command(&huge).is_err());
+    }
+
+    #[test]
+    fn parses_awake_and_badges_for_the_caller_or_a_named_app() {
+        assert!(matches!(
+            parse_command("awake on"),
+            Ok(Command::Awake(None, true))
+        ));
+        assert!(matches!(
+            parse_command("awake exocortex off"),
+            Ok(Command::Awake(Some(AppId::Exocortex), false))
+        ));
+        assert!(matches!(
+            parse_command("badge 3"),
+            Ok(Command::Badge(None, 3))
+        ));
+        assert!(matches!(
+            parse_command("badge exocortex 0"),
+            Ok(Command::Badge(Some(AppId::Exocortex), 0))
+        ));
+        assert!(matches!(
+            parse_command("badge messages 99999"),
+            Ok(Command::Badge(Some(AppId::Messages), 99999))
+        ));
+        for bad in [
+            "awake",
+            "awake yes",
+            "awake exocortex",
+            "awake on now",
+            "awake nowhere on",
+            "badge",
+            "badge -1",
+            "badge 100000",
+            "badge exocortex",
+            "badge exocortex 2 3",
+            "badge nowhere 2",
+        ] {
+            assert!(parse_command(bad).is_err(), "{bad}");
+        }
+        assert!(!Command::Awake(None, true).is_user_input());
     }
 
     #[test]
