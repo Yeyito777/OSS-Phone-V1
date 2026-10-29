@@ -1430,8 +1430,11 @@ impl HomeScreen {
             return;
         };
         let from = drag.rect(now);
+        // Let go over a new place before the dwell ran out: it goes there.
         let slot = drag
-            .target
+            .hover
+            .map(|(slot, _)| slot)
+            .or(drag.target)
             .or_else(|| layout.slot(drag.app))
             .unwrap_or(Slot::Grid(GRID_MAX));
         if layout.place(drag.app, slot) {
@@ -2001,6 +2004,14 @@ mod tests {
         assert_eq!(layout.grid, vec![AppId::Browser, AppId::Exocortex]);
         assert!(home.effects.contains(&Effect::Save));
         assert!(home.effects.contains(&Effect::Haptic(Haptic::Light)));
+        // Let go over a new place at once: it goes there all the same.
+        let (x, y) = grid_rect(1).center();
+        home.touch_begin(&layout, x, y, at(start, 3000));
+        home.touch_move(&mut layout, x, y + 30.0, at(start, 3010));
+        let (dx, dy) = dock_rect(3, 4).center();
+        home.touch_move(&mut layout, dx, dy, at(start, 3020));
+        home.touch_end(&mut layout, dx, dy, at(start, 3030));
+        assert_eq!(layout.slot(AppId::Exocortex), Some(Slot::Dock(3)));
     }
 
     #[test]
