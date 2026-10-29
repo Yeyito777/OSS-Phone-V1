@@ -102,6 +102,8 @@ refresh_resolv() {
 # exocortex-ns.sh writes its own PID too, in case setsid had to fork.
 DAEMON_MARK='exocortex-ns\.sh daemon|run-daemon\.sh|exocortexd-main'
 NOTIFY_MARK='exocortex-ns\.sh notify|exocortex-notify'
+SSHD_MARK='exocortex-ns\.sh sshd|sshd: /usr/sbin/sshd'
+TUNNEL_MARK='exocortex-ns\.sh tunnel|oss-phone-tunnel|ssh -N .*-R 127\.0\.0\.1:'
 KEEPER_MARK='exocortex-keeper\.sh (keeper|init)'
 WATCHDOG_MARK='exocortex-keeper\.sh watchdog'
 
@@ -113,12 +115,35 @@ start_daemon() {
     log "daemon started pid=$!"
 }
 
-start_notify() {
-    rotate "$LOGDIR/notify.out"
-    "$BB" setsid "$BB" unshare -m --propagation private /system/bin/sh "$NS" notify \
-        </dev/null >>"$LOGDIR/notify.out" 2>&1 &
-    echo $! >"$STATE/notify.pid"
-    log "exocortex-notify started pid=$!"
+# The other children (exocortex-notify, sshd, the reverse tunnel) each in a
+# namespace of its own, restarted with the same backoff as the daemon.
+start_child() {
+    rotate "$LOGDIR/$1.out"
+    "$BB" setsid "$BB" unshare -m --propagation private /system/bin/sh "$NS" "$1" \
+        </dev/null >>"$LOGDIR/$1.out" 2>&1 &
+    echo $! >"$STATE/$1.pid"
+    log "$1 started pid=$!"
+}
+
+# keep_child NAME MARK: start NAME when it is not running, at most once per
+# backoff delay (2 s doubling to 60 s; reset after two minutes up).
+keep_child() {
+    alive "$STATE/$1.pid" "$2" && return 0
+    eval "started=\${${1}_started:-0} delay=\${${1}_delay:-2}"
+    if [ "$started" != 0 ]; then
+        [ $((now - started)) -lt 120 ] || delay=2
+        [ $((now - started)) -ge "$delay" ] || return 0
+        log "$1 exited; restarting (backoff ${delay}s)"
+        [ "$delay" -ge 60 ] || delay=$((delay * 2))
+    fi
+    start_child "$1"
+    eval "${1}_started=$(uptime_s) ${1}_delay=$delay"
+}
+
+stop_children() {
+    stop_child "$STATE/notify.pid" "$NOTIFY_MARK" 3
+    stop_child "$STATE/tunnel.pid" "$TUNNEL_MARK" 3
+    stop_child "$STATE/sshd.pid" "$SSHD_MARK" 3
 }
 
 # SIGTERM is the daemon's graceful shutdown: it settles running turns and
@@ -154,14 +179,13 @@ keeper() {
     log "keeper running"
 
     daemon_delay=2 daemon_started=0
-    notify_delay=2 notify_started=0
     tick=0
     while :; do
         if shutting_down; then
             # moon-power.sh stops the daemon in its order; an Android
             # shutdown gets the same graceful stop from here.
             stop_child "$STATE/daemon.pid" "$DAEMON_MARK" 25
-            stop_child "$STATE/notify.pid" "$NOTIFY_MARK" 3
+            stop_children
             log "phone shutting down; keeper exiting"
             # Under init an exit would only be restarted: wait for init's
             # own shutdown to end the service instead.
@@ -172,7 +196,7 @@ keeper() {
 
         if [ -e "$BASE/disabled" ]; then
             stop_child "$STATE/daemon.pid" "$DAEMON_MARK" 25
-            stop_child "$STATE/notify.pid" "$NOTIFY_MARK" 3
+            stop_children
             "$BB" sleep 5
             continue
         fi
@@ -194,18 +218,11 @@ keeper() {
             shutting_down || [ -e "$STATE/stopped" ] || { start_daemon; daemon_started=$(uptime_s); }
         fi
 
-        if [ -x "$ROOT$NOTIFY_BIN" ] && ! alive "$STATE/notify.pid" "$NOTIFY_MARK"; then
-            if [ "$notify_started" != 0 ]; then
-                if [ $((now - notify_started)) -ge 120 ]; then notify_delay=2; fi
-                if [ $((now - notify_started)) -lt "$notify_delay" ]; then
-                    "$BB" sleep 2
-                    continue
-                fi
-                [ "$notify_delay" -ge 60 ] || notify_delay=$((notify_delay * 2))
-            fi
-            start_notify
-            notify_started=$(uptime_s)
-        fi
+        now=$(uptime_s)
+        [ ! -x "$ROOT$NOTIFY_BIN" ] || keep_child notify "$NOTIFY_MARK"
+        # SSH (docs/SSH.md): the server once installed, the tunnel once configured.
+        [ ! -x "$ROOT/usr/sbin/sshd" ] || [ ! -s "$ROOT/etc/ssh/oss-phone-sshd.conf" ] || keep_child sshd "$SSHD_MARK"
+        [ ! -s "$ROOT/etc/oss-phone/tunnel.conf" ] || keep_child tunnel "$TUNNEL_MARK"
         "$BB" sleep 2
     done
 }
@@ -243,7 +260,7 @@ case "${1:-}" in
         # Called by moon-power.sh after it set moon.boot.mode=shutdown, so the
         # loops stand down instead of restarting what this stops.
         stop_child "$STATE/daemon.pid" "$DAEMON_MARK" "${2:-25}"
-        stop_child "$STATE/notify.pid" "$NOTIFY_MARK" 3
+        stop_children
         ;;
     resolv) refresh_resolv ;;
     status)
@@ -256,6 +273,8 @@ case "${1:-}" in
         elif [ -e "$STATE/stopped" ]; then echo "daemon: stopped (exocortexd start)"
         else echo "daemon: not running"; fi
         report notify "$NOTIFY_MARK"
+        report sshd "$SSHD_MARK"
+        report tunnel "$TUNNEL_MARK"
         [ ! -e "$BASE/disabled" ] || echo "disabled ($BASE/disabled)"
         ;;
     *) echo "usage: $0 boot|start|shutdown|status" >&2; exit 2 ;;

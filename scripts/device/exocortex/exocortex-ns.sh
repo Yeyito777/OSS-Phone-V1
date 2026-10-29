@@ -4,6 +4,8 @@
 #
 #   exocortex-ns.sh daemon    the Exocortex daemon (run-daemon.sh)
 #   exocortex-ns.sh notify    exocortex-notify, the moon-notifyd bridge
+#   exocortex-ns.sh sshd      the phone's SSH server (docs/SSH.md)
+#   exocortex-ns.sh tunnel    its reverse tunnel to whale (oss-phone-tunnel)
 #   exocortex-ns.sh exec CMD  CMD in the same environment (installs, debugging):
 #                             busybox unshare -m --propagation private \
 #                                 sh exocortex-ns.sh exec bash -l
@@ -21,11 +23,11 @@ set -eu
 ROOT=/data/local/a26-linux
 BB="$ROOT/busybox.static"
 STATE="$ROOT/var/lib/exocortex-keeper"
-ROLE="${1:?daemon|notify|exec}"
+ROLE="${1:?daemon|notify|sshd|tunnel|exec}"
 LIVE=/proc/1/root
 
 # The PID survives every exec below; the keeper tracks it.
-case "$ROLE" in daemon|notify) echo $$ >"$STATE/$ROLE.pid" ;; esac
+case "$ROLE" in daemon|notify|sshd|tunnel) echo $$ >"$STATE/$ROLE.pid" ;; esac
 [ -s "$STATE/resolv.conf" ] || /system/bin/sh /data/adb/exocortex/exocortex-keeper.sh resolv
 
 # 1. Drop the copies of Moon's session mounts, deepest first.
@@ -78,10 +80,23 @@ case "$ROLE" in
             EXOCORTEX_SOCKET=/opt/exocortex/config/runtime/exocortexd.sock \
             /opt/a26-system/bin/exocortex-notify
         ;;
+    sshd)
+        # Sessions get a devpts instance of their own (ptys that no other
+        # namespace's teardown touches), else the bound one from /dev.
+        if "$BB" mount -t devpts -o newinstance,ptmxmode=0666,mode=0620 devpts "$ROOT/dev/pts" 2>/dev/null; then
+            "$BB" mount -o bind "$ROOT/dev/pts/ptmx" "$ROOT/dev/ptmx" || true
+        fi
+        # shellcheck disable=SC2086
+        exec "$BB" chroot "$ROOT" /usr/bin/env -i $ENV /usr/sbin/sshd -D -e -f /etc/ssh/oss-phone-sshd.conf
+        ;;
+    tunnel)
+        # shellcheck disable=SC2086
+        exec "$BB" chroot "$ROOT" /usr/bin/env -i $ENV /usr/local/bin/oss-phone-tunnel
+        ;;
     exec)
         shift
         # shellcheck disable=SC2086
         exec "$BB" chroot "$ROOT" /usr/bin/env -i $ENV "$@"
         ;;
-    *) echo "usage: $0 daemon|notify|exec CMD..." >&2; exit 2 ;;
+    *) echo "usage: $0 daemon|notify|sshd|tunnel|exec CMD..." >&2; exit 2 ;;
 esac
