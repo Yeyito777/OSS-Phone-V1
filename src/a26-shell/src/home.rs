@@ -4,12 +4,14 @@
 //! takes its app off the Home Screen (after an alert). Removed apps stay in
 //! the App Library, the page beyond the home page: it opens every app and
 //! puts a removed one back (hold it for "Add to Home Screen", or drag it
-//! home). docs/home-screen.md.
+//! home). Widgets live on the top rows of the page: they jiggle and come
+//! off the same way ("Remove Widget?"), and edit mode's + opens a gallery
+//! that puts them back. docs/home-screen.md.
 //!
 //! The layout persists in Moon's settings (settings.rs, key `home`).
 //! Everything here is geometry and state over time, unit tested without X:
 //! the launcher's touches come here (the `impl ShellState` below), and
-//! `ui.rs` draws `icon_views`.
+//! `ui.rs` draws `icon_views` and `widget_views`.
 
 use std::time::{Duration, Instant};
 
@@ -24,16 +26,23 @@ use crate::ui::{ICON_RADIUS, ICON_SIZE};
 
 /// A home-screen icon's side.
 const ICON: f32 = ICON_SIZE as f32;
-/// The grid: four columns under the widgets (which span two each).
+/// The page: four columns of six rows of cells under the status bar. An
+/// app takes a cell; a widget takes a block of two by two, on the top rows
+/// from the left; apps fill the other cells in reading order.
 pub const GRID_MARGIN: f32 = 75.0;
 pub const GRID_PITCH: f32 = 254.0;
 pub const GRID_COLUMNS: usize = 4;
-pub const GRID_ROWS: usize = 4;
-/// Apps the grid holds (one page).
-pub const GRID_MAX: usize = GRID_COLUMNS * GRID_ROWS;
-/// The first grid row, under the widgets, and the rows' pitch.
-pub const ROW_TOP: f32 = crate::ui::WIDGET_TOP + crate::ui::WIDGET_SIZE + 66.0;
+pub const GRID_ROWS: usize = 6;
+const CELLS: usize = GRID_COLUMNS * GRID_ROWS;
+/// The first row, about iOS's top inset (82 pt): room for edit mode's + and
+/// Done in a row of their own under the status bar, clear of the first
+/// row's badges. Then the rows' pitch.
+pub const PAGE_TOP: f32 = 228.0;
 pub const ROW_PITCH: f32 = 290.0;
+/// A widget's side: two columns wide.
+pub const WIDGET_SIZE: f32 = 422.0;
+/// Widgets the page holds (side by side on its top rows).
+pub const WIDGETS_MAX: usize = GRID_COLUMNS / 2;
 /// A grid icon's name: its baseline below the icon.
 pub const LABEL_DROP: f32 = 50.0;
 /// The dock: a frosted shelf above the bottom edge, at most four apps,
@@ -56,17 +65,19 @@ pub const LIBRARY_ICON_X: f32 = 72.0;
 
 /// The status bar's glyphs (its time, Wi-Fi and battery) end here.
 pub const STATUS_GLYPHS_BOTTOM: f32 = 84.0;
-/// Edit mode's Done button, as on iOS: a pill in a row of its own under the
-/// status bar, its right edge on the grid's right margin, centred between
-/// the status bar's glyphs and the widgets. Taps reach it a little around
-/// it (never the widgets'); a swipe down from the status bar above it is
-/// still Control Centre's.
+/// Edit mode's + and Done buttons, as on iOS: in a row of their own under
+/// the status bar, + (a circle) on the grid's left margin and Done (a pill)
+/// on its right one, centred between the status bar's glyphs and the first
+/// row's badges. Taps reach them a little around them (never the first
+/// row's); a swipe down from the status bar above them still pulls down
+/// the notifications or Control Centre.
 const DONE_W: f32 = 166.0;
 const DONE_H: f32 = 64.0;
 const GRID_RIGHT: f32 = GRID_MARGIN + (GRID_COLUMNS - 1) as f32 * GRID_PITCH + ICON;
 pub const DONE: RectF = RectF::new(
     GRID_RIGHT - DONE_W,
-    ((STATUS_GLYPHS_BOTTOM + crate::ui::WIDGET_TOP - DONE_H) / 2.0).round(),
+    // (Whole pixels as these stand; `round` is not const on Rust 1.85.)
+    (STATUS_GLYPHS_BOTTOM + PAGE_TOP - BADGE_OVERHANG - DONE_H) / 2.0,
     DONE_W,
     DONE_H,
 );
@@ -76,10 +87,22 @@ const DONE_TARGET: RectF = RectF::new(
     SCREEN_W - DONE.x + 32.0,
     DONE_H + 32.0,
 );
+pub const PLUS: RectF = RectF::new(GRID_MARGIN, DONE.y, DONE_H, DONE_H);
+const PLUS_TARGET: RectF = RectF::new(0.0, DONE.y - 16.0, PLUS.x + PLUS.w + 32.0, DONE_H + 32.0);
+/// The widget gallery (+): a sheet up from the bottom edge, its title row,
+/// then a row per widget with a preview and an Add Widget button.
+pub const GALLERY_H: f32 = 1010.0;
+pub const GALLERY_HEAD: f32 = 210.0;
+pub const GALLERY_ROW: f32 = 330.0;
+pub const GALLERY_PREVIEW: f32 = 230.0;
+const GALLERY_BUTTON_W: f32 = 270.0;
+const GALLERY_BUTTON_H: f32 = 84.0;
 /// The "−" badge: its radius, its center's inset from the icon's top-left
 /// corner, and the reach of a tap on it.
 pub const BADGE_RADIUS: f32 = 28.0;
 const BADGE_INSET: f32 = 12.0;
+/// How far a badge reaches above its icon.
+const BADGE_OVERHANG: f32 = BADGE_RADIUS - BADGE_INSET;
 const BADGE_TARGET: f32 = 50.0;
 
 /// The removal alert, centered: its text, then two stacked buttons.
@@ -95,6 +118,8 @@ pub const MENU_H: f32 = 124.0;
 /// unrotated.
 pub const JIGGLE_FRAMES: usize = 11;
 pub const JIGGLE_ANGLE: f32 = 0.03;
+/// Widgets are large: fewer frames of them.
+pub const WIDGET_FRAMES: usize = 5;
 /// One wobble (seconds), and the bounce that goes with it (pixels).
 const JIGGLE_PERIOD: f32 = 0.26;
 const BOUNCE: f32 = 2.0;
@@ -112,7 +137,7 @@ const LIFT_SCALE: f32 = 1.15;
 const EDIT_FADE: Duration = Duration::from_millis(160);
 /// A removed icon shrinks away over this long.
 const REMOVE_TIME: Duration = Duration::from_millis(260);
-/// The alert and the menu fade out over this long.
+/// The alert, the menu and the gallery fade out over this long.
 const POPUP_FADE: Duration = Duration::from_millis(180);
 /// Icons making room move on this spring (response, damping).
 const MOVE_RESPONSE: f32 = 0.38;
@@ -125,14 +150,67 @@ pub enum Slot {
     Grid(usize),
 }
 
-/// The home screen's apps: the dock's, the grid's (in reading order), and
-/// those taken off it (still in the App Library). Every app is in exactly
-/// one of the three.
+/// A widget on the home page (ui.rs draws them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Widget {
+    Calendar,
+    Battery,
+}
+
+impl Widget {
+    pub const COUNT: usize = 2;
+    pub const ALL: [Self; Self::COUNT] = [Self::Calendar, Self::Battery];
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Its id (`layout widget`, settings.json).
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Calendar => "calendar",
+            Self::Battery => "battery",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Calendar => "Calendar",
+            Self::Battery => "Battery",
+        }
+    }
+
+    /// What the gallery says it shows.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Calendar => "The day and the date.",
+            Self::Battery => "The battery's charge.",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|widget| widget.id() == value)
+    }
+}
+
+/// An app or a widget (`state.home.alert` shows its id).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(untagged)]
+pub enum Item {
+    App(AppId),
+    Widget(Widget),
+}
+
+/// The home screen: the widgets on its top rows, the dock's apps, the
+/// grid's (in reading order), and those taken off it (still in the App
+/// Library). Every app is in exactly one of the three.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct HomeLayout {
     pub dock: Vec<AppId>,
     pub grid: Vec<AppId>,
     pub removed: Vec<AppId>,
+    pub widgets: Vec<Widget>,
 }
 
 impl Default for HomeLayout {
@@ -141,6 +219,7 @@ impl Default for HomeLayout {
             dock: vec![AppId::Phone, AppId::Browser, AppId::Messages, AppId::System],
             grid: vec![AppId::Exocortex],
             removed: Vec::new(),
+            widgets: vec![Widget::Calendar, Widget::Battery],
         }
     }
 }
@@ -167,24 +246,38 @@ fn unique(apps: Vec<AppId>, seen: &mut Vec<AppId>) -> Vec<AppId> {
 }
 
 impl HomeLayout {
-    /// A layout from its parts, made whole: repeated apps count once, the
-    /// dock's extra apps lead the grid and the grid's leave it, and an app
-    /// the parts never mention (one newer than the file) joins the grid.
-    pub fn new(dock: Vec<AppId>, grid: Vec<AppId>, removed: Vec<AppId>) -> Self {
+    /// A layout from its parts, made whole: repeated apps and widgets count
+    /// once, the dock's extra apps lead the grid and the grid's leave it,
+    /// and an app the parts never mention (one newer than the file) joins
+    /// the grid.
+    pub fn new(
+        dock: Vec<AppId>,
+        grid: Vec<AppId>,
+        removed: Vec<AppId>,
+        widgets: Vec<Widget>,
+    ) -> Self {
         let mut seen = Vec::new();
         let mut dock = unique(dock, &mut seen);
         let mut grid = unique(grid, &mut seen);
         let mut removed = unique(removed, &mut seen);
+        let mut widgets: Vec<Widget> = widgets.into_iter().fold(Vec::new(), |mut all, widget| {
+            if !all.contains(&widget) {
+                all.push(widget);
+            }
+            all
+        });
+        widgets.truncate(WIDGETS_MAX);
+        let capacity = CELLS - 4 * widgets.len();
         if dock.len() > DOCK_MAX {
             let extra = dock.split_off(DOCK_MAX);
             grid.splice(0..0, extra);
         }
-        if grid.len() > GRID_MAX {
-            removed.extend(grid.split_off(GRID_MAX));
+        if grid.len() > capacity {
+            removed.extend(grid.split_off(capacity));
         }
         for app in AppId::ALL {
             if !seen.contains(&app) {
-                if grid.len() < GRID_MAX {
+                if grid.len() < capacity {
                     grid.push(app);
                 } else {
                     removed.push(app);
@@ -195,45 +288,105 @@ impl HomeLayout {
             dock,
             grid,
             removed,
+            widgets,
         }
     }
 
     /// The layout `layout set DOCK GRID` asks for: apps in neither list are
-    /// removed.
-    pub fn with(dock: Vec<AppId>, grid: Vec<AppId>) -> Self {
+    /// removed; the widgets stay.
+    pub fn with(&self, dock: Vec<AppId>, grid: Vec<AppId>) -> Self {
         let removed = AppId::ALL
             .into_iter()
             .filter(|app| !dock.contains(app) && !grid.contains(app))
             .collect();
-        Self::new(dock, grid, removed)
+        Self::new(dock, grid, removed, self.widgets.clone())
     }
 
-    /// Reads a saved layout leniently: unknown app ids are skipped, and
+    /// Reads a saved layout leniently: unknown app and widget ids are
+    /// skipped, a layout from before widgets keeps the default ones, and
     /// anything that is not a layout gives the default.
     fn from_value(value: &serde_json::Value) -> Self {
         let Some(object) = value.as_object() else {
             return Self::default();
         };
-        let keys = ["dock", "grid", "removed"];
+        let keys = ["dock", "grid", "removed", "widgets"];
         if !keys
             .iter()
             .any(|key| object.get(*key).is_some_and(serde_json::Value::is_array))
         {
             return Self::default();
         }
-        let list = |key: &str| -> Vec<AppId> {
+        let ids = |key: &str| -> Option<Vec<&str>> {
             object
                 .get(key)
                 .and_then(serde_json::Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_str().and_then(AppId::parse))
-                        .collect()
-                })
-                .unwrap_or_default()
+                .map(|items| items.iter().filter_map(serde_json::Value::as_str).collect())
         };
-        Self::new(list("dock"), list("grid"), list("removed"))
+        let apps = |key: &str| -> Vec<AppId> {
+            ids(key)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(AppId::parse)
+                .collect()
+        };
+        let widgets = ids("widgets").map_or_else(
+            || Self::default().widgets,
+            |ids| ids.into_iter().filter_map(Widget::parse).collect(),
+        );
+        Self::new(apps("dock"), apps("grid"), apps("removed"), widgets)
+    }
+
+    /// Apps the grid holds: the page's cells less the widgets' blocks.
+    pub fn capacity(&self) -> usize {
+        CELLS - 4 * self.widgets.len()
+    }
+
+    /// The grid's cells (column, row), in reading order: those no widget
+    /// covers.
+    fn cells(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        (0..CELLS)
+            .map(|cell| (cell % GRID_COLUMNS, cell / GRID_COLUMNS))
+            .filter(|(column, row)| *row >= 2 || column / 2 >= self.widgets.len())
+    }
+
+    pub fn widget_rect(&self, widget: Widget) -> Option<RectF> {
+        let index = self.widgets.iter().position(|w| *w == widget)?;
+        let cell = cell_rect(2 * index, 0);
+        Some(RectF::new(cell.x, cell.y, WIDGET_SIZE, WIDGET_SIZE))
+    }
+
+    /// Adds a widget at the top of the page (the others move along), when
+    /// it is not there and the grid's apps still fit.
+    pub fn add_widget(&mut self, widget: Widget) -> bool {
+        if !self.can_add_widget(widget) {
+            return false;
+        }
+        self.widgets.insert(0, widget);
+        true
+    }
+
+    pub fn can_add_widget(&self, widget: Widget) -> bool {
+        !self.widgets.contains(&widget)
+            && self.widgets.len() < WIDGETS_MAX
+            && self.grid.len() + 4 <= self.capacity()
+    }
+
+    pub fn remove_widget(&mut self, widget: Widget) -> bool {
+        let before = self.widgets.len();
+        self.widgets.retain(|w| *w != widget);
+        self.widgets.len() != before
+    }
+
+    /// The widgets `layout widgets LIST` asks for, if the grid's apps still
+    /// fit around them.
+    pub fn with_widgets(&self, widgets: Vec<Widget>) -> Option<Self> {
+        let made = Self::new(
+            self.dock.clone(),
+            self.grid.clone(),
+            self.removed.clone(),
+            widgets,
+        );
+        (made.grid == self.grid).then_some(made)
     }
 
     pub fn slot(&self, app: AppId) -> Option<Slot> {
@@ -258,7 +411,10 @@ impl HomeLayout {
     pub fn rect(&self, slot: Slot) -> RectF {
         match slot {
             Slot::Dock(index) => dock_rect(index, self.dock.len()),
-            Slot::Grid(index) => grid_rect(index),
+            Slot::Grid(index) => {
+                let (column, row) = self.cells().nth(index).unwrap_or((0, GRID_ROWS));
+                cell_rect(column, row)
+            }
         }
     }
 
@@ -288,7 +444,7 @@ impl HomeLayout {
         if self.on_home(app) {
             return false;
         }
-        let slot = if self.grid.len() < GRID_MAX {
+        let slot = if self.grid.len() < self.capacity() {
             Slot::Grid(self.grid.len())
         } else {
             Slot::Dock(self.dock.len())
@@ -305,7 +461,7 @@ impl HomeLayout {
             Slot::Dock(index) if self.dock.len() < DOCK_MAX => {
                 self.dock.insert(index.min(self.dock.len()), app);
             }
-            Slot::Grid(index) if self.grid.len() < GRID_MAX => {
+            Slot::Grid(index) if self.grid.len() < self.capacity() => {
                 self.grid.insert(index.min(self.grid.len()), app);
             }
             _ => {
@@ -317,13 +473,11 @@ impl HomeLayout {
     }
 }
 
-/// Grid icon `index`, in reading order.
-pub fn grid_rect(index: usize) -> RectF {
-    let column = (index % GRID_COLUMNS) as f32;
-    let row = (index / GRID_COLUMNS) as f32;
+/// The icon in a cell of the page.
+pub fn cell_rect(column: usize, row: usize) -> RectF {
     RectF::new(
-        GRID_MARGIN + column * GRID_PITCH,
-        ROW_TOP + row * ROW_PITCH,
+        GRID_MARGIN + column as f32 * GRID_PITCH,
+        PAGE_TOP + row as f32 * ROW_PITCH,
         ICON,
         ICON,
     )
@@ -405,22 +559,53 @@ pub fn menu_rect(app: AppId) -> RectF {
     RectF::new(LIBRARY_ICON_X, y, MENU_W, MENU_H)
 }
 
-/// The pre-drawn jiggle frame nearest to `angle`.
-pub fn jiggle_frame(angle: f32) -> usize {
+/// The widget gallery's sheet, at rest.
+pub fn gallery_rect() -> RectF {
+    RectF::new(0.0, SCREEN_H - GALLERY_H, SCREEN_W, GALLERY_H)
+}
+
+/// Gallery row `index` (Widget::ALL's order), in the sheet.
+pub fn gallery_row(index: usize) -> RectF {
+    RectF::new(
+        0.0,
+        GALLERY_HEAD + index as f32 * GALLERY_ROW,
+        SCREEN_W,
+        GALLERY_ROW,
+    )
+}
+
+/// A row's Add Widget button, in the sheet.
+pub fn gallery_button(index: usize) -> RectF {
+    let row = gallery_row(index);
+    RectF::new(
+        GRID_RIGHT - GALLERY_BUTTON_W,
+        row.y + (row.h - GALLERY_BUTTON_H) / 2.0,
+        GALLERY_BUTTON_W,
+        GALLERY_BUTTON_H,
+    )
+}
+
+/// The sheet's close button (an X in a circle), in the sheet.
+pub fn gallery_close() -> RectF {
+    RectF::new(GRID_RIGHT - 72.0, 54.0, 72.0, 72.0)
+}
+
+/// The pre-drawn jiggle frame (of `frames`) nearest to `angle`.
+pub fn jiggle_frame(angle: f32, frames: usize) -> usize {
     let t = (angle / JIGGLE_ANGLE).clamp(-1.0, 1.0) * 0.5 + 0.5;
-    (t * (JIGGLE_FRAMES - 1) as f32).round() as usize
+    (t * (frames - 1) as f32).round() as usize
 }
 
-/// The rotation jiggle frame `frame` shows.
-pub fn frame_angle(frame: usize) -> f32 {
-    (frame as f32 / (JIGGLE_FRAMES - 1) as f32 * 2.0 - 1.0) * JIGGLE_ANGLE
+/// The rotation jiggle frame `frame` (of `frames`) shows.
+pub fn frame_angle(frame: usize, frames: usize) -> f32 {
+    (frame as f32 / (frames - 1) as f32 * 2.0 - 1.0) * JIGGLE_ANGLE
 }
 
-/// An icon's wobble at `now`: rotation (at full swing) and bounce. Each
-/// icon is a little out of phase, and of tempo, with the others.
-fn jiggle(app: AppId, since: Instant, now: Instant) -> (f32, f32) {
+/// An item's wobble at `now`: rotation (at full swing) and bounce. Each
+/// one (`seed`) is a little out of phase, and of tempo, with the others.
+fn jiggle(seed: usize, since: Instant, now: Instant) -> (f32, f32) {
     let t = now.saturating_duration_since(since).as_secs_f32();
-    let i = app.index() as f32;
+    let i = seed as f32;
     let period = JIGGLE_PERIOD * (1.0 + 0.07 * (i * 1.7).sin());
     let phase = i * 2.4;
     let turn = std::f32::consts::TAU * t / period + phase;
@@ -431,7 +616,7 @@ fn jiggle(app: AppId, since: Instant, now: Instant) -> (f32, f32) {
 }
 
 /// The place an icon dragged with its center at (`x`, `y`) would take
-/// among the others; None over the widgets or a full dock.
+/// among the others; None over a widget, above the page or a full dock.
 fn hover_slot(layout: &HomeLayout, app: AppId, x: f32, y: f32) -> Option<Slot> {
     let mut others = layout.clone();
     others.take(app);
@@ -445,18 +630,17 @@ fn hover_slot(layout: &HomeLayout, app: AppId, x: f32, y: f32) -> Option<Slot> {
         let index = ((x - first) / DOCK_PITCH).round().clamp(0.0, count as f32);
         return Some(Slot::Dock(index as usize));
     }
-    if y < ROW_TOP - ROW_PITCH / 2.0 || others.grid.len() >= GRID_MAX {
+    if y < PAGE_TOP - ROW_PITCH / 2.0 || others.grid.len() >= others.capacity() {
         return None;
     }
     let column = ((x - GRID_MARGIN - ICON / 2.0) / GRID_PITCH)
         .round()
         .clamp(0.0, (GRID_COLUMNS - 1) as f32) as usize;
-    let row = ((y - ROW_TOP - ICON / 2.0) / ROW_PITCH)
+    let row = ((y - PAGE_TOP - ICON / 2.0) / ROW_PITCH)
         .round()
         .clamp(0.0, (GRID_ROWS - 1) as f32) as usize;
-    Some(Slot::Grid(
-        (row * GRID_COLUMNS + column).min(others.grid.len()),
-    ))
+    let index = others.cells().position(|cell| cell == (column, row))?;
+    Some(Slot::Grid(index.min(others.grid.len())))
 }
 
 /// What an icon looks like on a frame (ui.rs draws it).
@@ -490,6 +674,28 @@ impl IconView {
     pub fn label_shift(&self) -> f32 {
         let scale = self.rect.w / ICON;
         -(ICON / 2.0 + LABEL_DROP - 14.0) * scale * self.angle.sin()
+    }
+}
+
+/// What a widget looks like on a frame (ui.rs draws it).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WidgetView {
+    pub widget: Widget,
+    /// Its square on screen, scaled about its center.
+    pub rect: RectF,
+    pub angle: f32,
+    pub alpha: f32,
+    pub badge: f32,
+}
+
+impl WidgetView {
+    /// Its badge's center: near the top-left corner, turned with it.
+    pub fn badge_center(&self) -> (f32, f32) {
+        let scale = self.rect.w / WIDGET_SIZE;
+        let (cx, cy) = self.rect.center();
+        let d = (BADGE_INSET - WIDGET_SIZE / 2.0) * scale;
+        let (sin, cos) = self.angle.sin_cos();
+        (cx + d * cos - d * sin, cy + d * sin + d * cos)
     }
 }
 
@@ -581,15 +787,22 @@ impl Drag {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Target {
     Icon(AppId),
-    Badge(AppId),
+    Widget(Widget),
+    Badge(Item),
     Done,
+    Plus,
+    /// The gallery's Add Widget button (Widget::ALL's order), its close
+    /// button, and the rest of its sheet.
+    GalleryAdd(usize),
+    GalleryClose,
+    Sheet,
     Library(AppId),
     Empty,
     /// The bottom edge (the home gesture).
     Edge,
     AlertButton(usize),
     MenuItem,
-    /// Off the alert or the menu.
+    /// Off the alert, the menu or the gallery.
     Outside,
 }
 
@@ -613,10 +826,11 @@ struct Touch {
     phase: Phase,
 }
 
-/// The removal alert or the App Library's menu, for an app.
+/// The removal alert (for an app or a widget), the App Library's menu (for
+/// an app), or the widget gallery.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Popup {
-    pub app: AppId,
+    pub item: Option<Item>,
     shown: Instant,
     closing: Option<Instant>,
     /// The button under the finger.
@@ -624,9 +838,9 @@ pub struct Popup {
 }
 
 impl Popup {
-    fn new(app: AppId, now: Instant) -> Self {
+    fn new(item: Option<Item>, now: Instant) -> Self {
         Self {
-            app,
+            item,
             shown: now,
             closing: None,
             pressed: None,
@@ -635,6 +849,14 @@ impl Popup {
 
     fn open(&self) -> bool {
         self.closing.is_none()
+    }
+
+    /// The menu's app.
+    pub fn app(&self) -> Option<AppId> {
+        match self.item {
+            Some(Item::App(app)) => Some(app),
+            _ => None,
+        }
     }
 
     fn close(&mut self, now: Instant) {
@@ -667,13 +889,26 @@ impl Popup {
     }
 }
 
-/// An app leaving the home screen: it shrinks away from where it was.
+/// An app or a widget leaving the home screen: it shrinks away from where
+/// it was.
 #[derive(Debug, Clone, Copy)]
 struct Removal {
-    app: AppId,
+    item: Item,
     rect: RectF,
     label: bool,
     at: Instant,
+}
+
+impl Removal {
+    /// Where it is at `now`, and how far it has gone (0 to 1).
+    fn shrink(&self, now: Instant) -> (RectF, f32) {
+        let p = gfx::ease_out(
+            now.saturating_duration_since(self.at).as_secs_f32() / REMOVE_TIME.as_secs_f32(),
+        );
+        let (cx, cy) = self.rect.center();
+        let (w, h) = (self.rect.w * (1.0 - p), self.rect.h * (1.0 - p));
+        (RectF::new(cx - w / 2.0, cy - h / 2.0, w, h), p)
+    }
 }
 
 /// The home page and the App Library, side by side: 0 shows the home page,
@@ -791,11 +1026,15 @@ pub struct HomeScreen {
     /// the home page: when that changes, the icon moves there from where it
     /// is.
     rests: [Option<RectF>; AppId::COUNT],
+    /// The same for the widgets.
+    widget_motions: [Option<IconMotion>; Widget::COUNT],
+    widget_rests: [Option<RectF>; Widget::COUNT],
     laid_out: bool,
     touch: Option<Touch>,
     drag: Option<Drag>,
     pub alert: Option<Popup>,
     pub menu: Option<Popup>,
+    pub gallery: Option<Popup>,
     removing: Option<Removal>,
     pub effects: Vec<Effect>,
 }
@@ -843,10 +1082,12 @@ impl HomeScreen {
             || self.pager.rest != 0.0
             || self.pager.moving(now)
             || self.motions.iter().any(Option::is_some)
+            || self.widget_motions.iter().any(Option::is_some)
             || self.drag.is_some()
             || self.removing.is_some()
             || self.alert.is_some()
             || self.menu.is_some()
+            || self.gallery.is_some()
     }
 
     /// Frames are needed (the jiggle always moves).
@@ -854,10 +1095,12 @@ impl HomeScreen {
         self.editing.is_some()
             || self.pager.moving(now)
             || self.motions.iter().any(Option::is_some)
+            || self.widget_motions.iter().any(Option::is_some)
             || self.drag.is_some()
             || self.removing.is_some()
             || self.alert.is_some_and(|popup| popup.animating(now))
             || self.menu.is_some_and(|popup| popup.animating(now))
+            || self.gallery.is_some_and(|popup| popup.animating(now))
     }
 
     /// When a still finger becomes a long press.
@@ -865,7 +1108,7 @@ impl HomeScreen {
         let touch = self.touch.filter(|touch| touch.phase == Phase::Pending)?;
         matches!(
             touch.target,
-            Target::Icon(_) | Target::Empty | Target::Library(_)
+            Target::Icon(_) | Target::Widget(_) | Target::Empty | Target::Library(_)
         )
         .then_some(touch.started + LONG_PRESS)
     }
@@ -897,9 +1140,9 @@ impl HomeScreen {
             }
             let mut rect = self.motions[app.index()]
                 .map_or_else(|| working.rect(slot), |motion| motion.rect(now));
-            let (angle, bounce) = self
-                .editing
-                .map_or((0.0, 0.0), |editing| jiggle(app, editing.since, now));
+            let (angle, bounce) = self.editing.map_or((0.0, 0.0), |editing| {
+                jiggle(app.index(), editing.since, now)
+            });
             rect.y += bounce * amount;
             // The dock leaves (down, fading) for the App Library; the grid
             // goes with its page.
@@ -923,15 +1166,13 @@ impl HomeScreen {
                 lifted: false,
             });
         }
-        if let Some(removal) = self.removing {
-            let p = gfx::ease_out(
-                now.saturating_duration_since(removal.at).as_secs_f32() / REMOVE_TIME.as_secs_f32(),
-            );
-            let (cx, cy) = removal.rect.center();
-            let size = removal.rect.w * (1.0 - p);
+        if let Some(removal) = self.removing
+            && let Item::App(app) = removal.item
+        {
+            let (rect, p) = removal.shrink(now);
             views.push(IconView {
-                app: removal.app,
-                rect: RectF::new(cx - size / 2.0, cy - size / 2.0, size, size),
+                app,
+                rect,
                 angle: 0.0,
                 alpha: 1.0 - p,
                 badge: amount * (1.0 - p),
@@ -948,6 +1189,45 @@ impl HomeScreen {
                 badge: 0.0,
                 label: 0.0,
                 lifted: true,
+            });
+        }
+        views
+    }
+
+    /// Every widget on this frame, one shrinking away included.
+    pub fn widget_views(&self, layout: &HomeLayout, now: Instant) -> Vec<WidgetView> {
+        let amount = self.edit_amount(now);
+        let page = self.pager.value(now);
+        let mut views = Vec::with_capacity(Widget::COUNT);
+        for widget in &layout.widgets {
+            let index = widget.index();
+            let Some(rest) = layout.widget_rect(*widget) else {
+                continue;
+            };
+            let mut rect = self.widget_motions[index].map_or(rest, |motion| motion.rect(now));
+            let (angle, bounce) = self.editing.map_or((0.0, 0.0), |editing| {
+                jiggle(AppId::COUNT + index, editing.since, now)
+            });
+            rect.y += bounce * amount;
+            rect.x -= page * SCREEN_W;
+            views.push(WidgetView {
+                widget: *widget,
+                rect,
+                angle: angle * amount,
+                alpha: 1.0,
+                badge: amount,
+            });
+        }
+        if let Some(removal) = self.removing
+            && let Item::Widget(widget) = removal.item
+        {
+            let (rect, p) = removal.shrink(now);
+            views.push(WidgetView {
+                widget,
+                rect,
+                angle: 0.0,
+                alpha: 1.0 - p,
+                badge: amount * (1.0 - p),
             });
         }
         views
@@ -971,6 +1251,7 @@ impl HomeScreen {
             for (app, slot) in working.slots() {
                 self.rests[app.index()] = Some(working.rect(slot));
             }
+            self.widget_rests = Widget::ALL.map(|widget| layout.widget_rect(widget));
             self.laid_out = true;
         }
     }
@@ -997,6 +1278,19 @@ impl HomeScreen {
             }
         }
         self.rests = rests;
+        for widget in Widget::ALL {
+            let index = widget.index();
+            let new = layout.widget_rect(widget);
+            match (self.widget_rests[index], new) {
+                (Some(old), Some(new)) if self.laid_out && old != new => {
+                    let from = self.widget_motions[index].map_or(old, |motion| motion.rect(now));
+                    self.widget_motions[index] = Some(IconMotion::new(from, new, now));
+                }
+                (_, None) => self.widget_motions[index] = None,
+                _ => {}
+            }
+            self.widget_rests[index] = new;
+        }
         self.laid_out = true;
     }
 
@@ -1044,8 +1338,8 @@ impl HomeScreen {
             return false;
         }
         self.drop_drag(layout, now, true);
-        if let Some(alert) = self.alert.as_mut() {
-            alert.close(now);
+        for popup in [&mut self.alert, &mut self.gallery].into_iter().flatten() {
+            popup.close(now);
         }
         if let Some(editing) = self.editing.as_mut() {
             editing.leaving = Some(now);
@@ -1074,6 +1368,10 @@ impl HomeScreen {
     /// of edit mode, or back from the App Library. False when there was
     /// nothing to leave.
     pub fn home_button(&mut self, layout: &mut HomeLayout, now: Instant) -> bool {
+        if let Some(gallery) = self.gallery.as_mut().filter(|gallery| gallery.open()) {
+            gallery.close(now);
+            return true;
+        }
         if self.editing() {
             return self.end_editing(layout, now);
         }
@@ -1107,13 +1405,27 @@ impl HomeScreen {
     }
 
     fn target_at(&self, layout: &HomeLayout, x: f32, y: f32, now: Instant) -> Target {
+        if self.gallery.is_some_and(|gallery| gallery.open()) {
+            let sheet = gallery_rect();
+            if !sheet.contains(x, y) {
+                return Target::Outside;
+            }
+            let (x, y) = (x - sheet.x, y - sheet.y);
+            if gallery_close().inset(-24.0).contains(x, y) {
+                return Target::GalleryClose;
+            }
+            return (0..Widget::COUNT)
+                .find(|index| gallery_button(*index).inset(-16.0).contains(x, y))
+                .map_or(Target::Sheet, Target::GalleryAdd);
+        }
         if let Some(_alert) = self.alert.filter(Popup::open) {
             return (0..2)
                 .find(|index| alert_button(*index).contains(x, y))
                 .map_or(Target::Outside, Target::AlertButton);
         }
         if let Some(menu) = self.menu.filter(Popup::open) {
-            return if menu_rect(menu.app).contains(x, y) {
+            let app = menu.app().unwrap_or(AppId::System);
+            return if menu_rect(app).contains(x, y) {
                 Target::MenuItem
             } else {
                 Target::Outside
@@ -1131,21 +1443,38 @@ impl HomeScreen {
                 .find(|(index, _)| library_row(*index).contains(x - shift, y))
                 .map_or(Target::Empty, |(_, app)| Target::Library(app));
         }
-        let removing = self.removing.map(|removal| removal.app);
+        let removing = self.removing.map(|removal| removal.item);
         let views: Vec<IconView> = self
             .icon_views(layout, now)
             .into_iter()
-            .filter(|view| !view.lifted && Some(view.app) != removing && view.alpha > 0.0)
+            .filter(|view| {
+                !view.lifted && Some(Item::App(view.app)) != removing && view.alpha > 0.0
+            })
+            .collect();
+        let widgets: Vec<WidgetView> = self
+            .widget_views(layout, now)
+            .into_iter()
+            .filter(|view| Some(Item::Widget(view.widget)) != removing)
             .collect();
         if self.editing() {
-            for view in &views {
-                let (bx, by) = view.badge_center();
+            let badges = views
+                .iter()
+                .map(|view| (Item::App(view.app), view.badge_center()))
+                .chain(
+                    widgets
+                        .iter()
+                        .map(|view| (Item::Widget(view.widget), view.badge_center())),
+                );
+            for (item, (bx, by)) in badges {
                 if (x - bx).powi(2) + (y - by).powi(2) <= BADGE_TARGET * BADGE_TARGET {
-                    return Target::Badge(view.app);
+                    return Target::Badge(item);
                 }
             }
             if DONE_TARGET.contains(x, y) {
                 return Target::Done;
+            }
+            if PLUS_TARGET.contains(x, y) {
+                return Target::Plus;
             }
         }
         for view in &views {
@@ -1159,7 +1488,10 @@ impl HomeScreen {
                 return Target::Icon(view.app);
             }
         }
-        Target::Empty
+        widgets
+            .iter()
+            .find(|view| view.rect.contains(x, y))
+            .map_or(Target::Empty, |view| Target::Widget(view.widget))
     }
 
     pub fn touch_begin(&mut self, layout: &HomeLayout, x: f32, y: f32, now: Instant) {
@@ -1170,6 +1502,9 @@ impl HomeScreen {
         }
         if let (Some(menu), Target::MenuItem) = (self.menu.as_mut(), target) {
             menu.pressed = Some(0);
+        }
+        if let (Some(gallery), Target::GalleryAdd(index)) = (self.gallery.as_mut(), target) {
+            gallery.pressed = Some(index);
         }
         if self.pager.moving(now) && !self.editing() {
             // A finger catches the page where it is.
@@ -1210,7 +1545,13 @@ impl HomeScreen {
             };
         }
         if let (Some(menu), Target::MenuItem) = (self.menu.as_mut(), touch.target) {
-            menu.pressed = menu_rect(menu.app).contains(x, y).then_some(0);
+            let app = menu.app().unwrap_or(AppId::System);
+            menu.pressed = menu_rect(app).contains(x, y).then_some(0);
+        }
+        if let (Some(gallery), Target::GalleryAdd(index)) = (self.gallery.as_mut(), touch.target) {
+            let mut button = gallery_button(index).inset(-16.0);
+            button.y += gallery_rect().y;
+            gallery.pressed = button.contains(x, y).then_some(index);
         }
         match touch.phase {
             Phase::Pending if moved => match touch.target {
@@ -1228,6 +1569,10 @@ impl HomeScreen {
                 Target::Edge
                 | Target::Badge(_)
                 | Target::Done
+                | Target::Plus
+                | Target::GalleryAdd(_)
+                | Target::GalleryClose
+                | Target::Sheet
                 | Target::AlertButton(_)
                 | Target::MenuItem
                 | Target::Outside => {}
@@ -1252,8 +1597,8 @@ impl HomeScreen {
         if let Some(alert) = self.alert.as_mut() {
             alert.pressed = None;
         }
-        if let Some(menu) = self.menu.as_mut() {
-            menu.pressed = None;
+        for popup in [&mut self.menu, &mut self.gallery].into_iter().flatten() {
+            popup.pressed = None;
         }
         match touch.phase {
             Phase::Pending => self.tap(layout, touch, x, y, now),
@@ -1288,14 +1633,14 @@ impl HomeScreen {
     fn tap(&mut self, layout: &mut HomeLayout, touch: Touch, x: f32, y: f32, now: Instant) {
         match touch.target {
             Target::AlertButton(index) => {
-                let Some(app) = self.alert.filter(Popup::open).map(|alert| alert.app) else {
+                let Some(item) = self.alert.filter(Popup::open).and_then(|alert| alert.item) else {
                     return;
                 };
                 if !alert_button(index).contains(x, y) {
                     return;
                 }
                 if index == 0 {
-                    self.remove_app(layout, app, now);
+                    self.remove_item(layout, item, now);
                 } else {
                     self.effects.push(Effect::Action("home_remove_cancel"));
                 }
@@ -1303,14 +1648,36 @@ impl HomeScreen {
                     alert.close(now);
                 }
             }
-            Target::Outside => {
-                // An alert waits for a button; a menu closes.
-                if let Some(menu) = self.menu.as_mut() {
-                    menu.close(now);
+            Target::Outside | Target::GalleryClose => {
+                // An alert waits for a button; a menu or the gallery closes.
+                for popup in [&mut self.menu, &mut self.gallery].into_iter().flatten() {
+                    popup.close(now);
                 }
             }
+            Target::GalleryAdd(index) => {
+                let mut button = gallery_button(index).inset(-16.0);
+                button.y += gallery_rect().y;
+                let widget = Widget::ALL[index];
+                if !button.contains(x, y) || !layout.can_add_widget(widget) {
+                    return;
+                }
+                // It goes to the top of the page; the icons make room.
+                self.change(layout, now, |layout| layout.add_widget(widget));
+                self.effects.push(Effect::Haptic(Haptic::Light));
+                self.effects.push(Effect::Action("widget_added"));
+                if let Some(gallery) = self.gallery.as_mut() {
+                    gallery.close(now);
+                }
+            }
+            Target::Plus => {
+                if PLUS_TARGET.contains(x, y) {
+                    self.gallery = Some(Popup::new(None, now));
+                    self.effects.push(Effect::Action("widget_gallery"));
+                }
+            }
+            Target::Sheet | Target::Widget(_) => {}
             Target::MenuItem => {
-                let Some(app) = self.menu.filter(Popup::open).map(|menu| menu.app) else {
+                let Some(app) = self.menu.filter(Popup::open).and_then(|menu| menu.app()) else {
                     return;
                 };
                 if menu_rect(app).contains(x, y) {
@@ -1323,11 +1690,11 @@ impl HomeScreen {
                     }
                 }
             }
-            Target::Badge(app) => {
+            Target::Badge(item) => {
                 if (x - touch.start.0).hypot(y - touch.start.1) > BADGE_TARGET {
                     return;
                 }
-                self.alert = Some(Popup::new(app, now));
+                self.alert = Some(Popup::new(Some(item), now));
                 self.effects.push(Effect::Action("home_remove_alert"));
             }
             Target::Done => {
@@ -1454,7 +1821,7 @@ impl HomeScreen {
             .map(|(slot, _)| slot)
             .or(drag.target)
             .or_else(|| layout.slot(drag.app))
-            .unwrap_or(Slot::Grid(GRID_MAX));
+            .unwrap_or(Slot::Grid(CELLS));
         if layout.place(drag.app, slot) {
             self.effects.push(Effect::Save);
         }
@@ -1469,24 +1836,46 @@ impl HomeScreen {
         self.effects.push(Effect::Action("home_drop"));
     }
 
-    /// Takes an app off the home screen; it shrinks away and the others
-    /// close the gap.
-    fn remove_app(&mut self, layout: &mut HomeLayout, app: AppId, now: Instant) {
-        let Some(view) = self
-            .icon_views(layout, now)
-            .into_iter()
-            .find(|view| view.app == app)
-        else {
-            return;
+    /// Takes an app or a widget off the home screen; it shrinks away and
+    /// the icons close the gap.
+    fn remove_item(&mut self, layout: &mut HomeLayout, item: Item, now: Instant) {
+        let (rect, label) = match item {
+            Item::App(app) => {
+                let Some(view) = self
+                    .icon_views(layout, now)
+                    .into_iter()
+                    .find(|view| view.app == app)
+                else {
+                    return;
+                };
+                (view.rect, view.label > 0.0)
+            }
+            Item::Widget(widget) => {
+                let Some(view) = self
+                    .widget_views(layout, now)
+                    .into_iter()
+                    .find(|view| view.widget == widget)
+                else {
+                    return;
+                };
+                (view.rect, false)
+            }
         };
-        if self.change(layout, now, |layout| layout.remove(app)) {
+        let removed = self.change(layout, now, |layout| match item {
+            Item::App(app) => layout.remove(app),
+            Item::Widget(widget) => layout.remove_widget(widget),
+        });
+        if removed {
             self.removing = Some(Removal {
-                app,
-                rect: view.rect,
-                label: view.label > 0.0,
+                item,
+                rect,
+                label,
                 at: now,
             });
-            self.effects.push(Effect::Action("home_removed"));
+            self.effects.push(Effect::Action(match item {
+                Item::App(_) => "home_removed",
+                Item::Widget(_) => "widget_removed",
+            }));
         }
     }
 
@@ -1503,7 +1892,7 @@ impl HomeScreen {
                 self.begin_editing(now);
                 Phase::Held(app)
             }
-            Target::Empty if !self.editing() && self.pager.value(now) < 0.5 => {
+            Target::Empty | Target::Widget(_) if !self.editing() && self.pager.value(now) < 0.5 => {
                 self.begin_editing(now);
                 Phase::Ignored
             }
@@ -1511,7 +1900,7 @@ impl HomeScreen {
                 // A removed app offers to come back; any app can be dragged
                 // home from here.
                 if !layout.on_home(app) {
-                    self.menu = Some(Popup::new(app, now));
+                    self.menu = Some(Popup::new(Some(Item::App(app)), now));
                     self.effects.push(Effect::Action("library_menu"));
                 }
                 self.effects.push(Effect::Haptic(Haptic::Medium));
@@ -1542,7 +1931,7 @@ impl HomeScreen {
             self.relayout(layout, now);
             changed = true;
         }
-        for motion in &mut self.motions {
+        for motion in self.motions.iter_mut().chain(&mut self.widget_motions) {
             if motion.is_some_and(|motion| motion.settled(now)) {
                 *motion = None;
                 changed = true;
@@ -1562,7 +1951,7 @@ impl HomeScreen {
             self.editing = None;
             changed = true;
         }
-        for popup in [&mut self.alert, &mut self.menu] {
+        for popup in [&mut self.alert, &mut self.menu, &mut self.gallery] {
             if popup.is_some_and(|popup| popup.closed(now)) {
                 *popup = None;
                 changed = true;
@@ -1576,7 +1965,8 @@ impl HomeScreen {
 /// `layout ...` on the control socket (docs/settings.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LayoutCommand {
-    /// Reset Home Screen Layout: the default dock and grid, nothing removed.
+    /// Reset Home Screen Layout: the default widgets, dock and grid,
+    /// nothing removed.
     Reset,
     /// The dock and the grid, in order; apps in neither are removed.
     Set(Vec<AppId>, Vec<AppId>),
@@ -1586,6 +1976,10 @@ pub enum LayoutCommand {
     Edit(bool),
     /// Shows the App Library (true) or the home page.
     Library(bool),
+    /// Adds a widget at the top of the page (true) or removes it.
+    Widget(bool, Widget),
+    /// The widgets, in order (none: `-`).
+    Widgets(Vec<Widget>),
 }
 
 impl LayoutCommand {
@@ -1603,6 +1997,11 @@ impl LayoutCommand {
                 Some("-") => Ok(Vec::new()),
                 Some(text) => text.split(',').map(|name| app(Some(name))).collect(),
             }
+        };
+        let widget = |value: Option<&str>| {
+            value
+                .and_then(|value| Widget::parse(&value.to_ascii_lowercase()))
+                .ok_or_else(|| "unknown widget (calendar or battery)".to_string())
         };
         let on_off = |value: Option<&str>, what: &str| match value {
             Some("on") => Ok(true),
@@ -1628,9 +2027,32 @@ impl LayoutCommand {
             Some("add") => Self::Add(app(parts.next())?),
             Some("edit") => Self::Edit(on_off(parts.next(), "edit")?),
             Some("library") => Self::Library(on_off(parts.next(), "library")?),
+            Some("widget") => match parts.next() {
+                Some("add") => Self::Widget(true, widget(parts.next())?),
+                Some("remove") => Self::Widget(false, widget(parts.next())?),
+                _ => return Err("layout widget requires add or remove, then a widget".into()),
+            },
+            Some("widgets") => match parts.next() {
+                Some("-") => Self::Widgets(Vec::new()),
+                Some(text) => {
+                    let widgets = text
+                        .split(',')
+                        .map(|name| widget(Some(name)))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if (1..widgets.len()).any(|i| widgets[..i].contains(&widgets[i])) {
+                        return Err("a widget may appear once".into());
+                    }
+                    Self::Widgets(widgets)
+                }
+                None => {
+                    return Err(
+                        "layout widgets requires a list (comma-separated, - for none)".into(),
+                    );
+                }
+            },
             _ => {
                 return Err(
-                    "layout requires reset, set DOCK GRID, remove APP, add APP, edit on|off or library on|off"
+                    "layout requires reset, set DOCK GRID, remove APP, add APP, widget add|remove WIDGET, widgets LIST, edit on|off or library on|off"
                         .into(),
                 );
             }
@@ -1649,10 +2071,12 @@ pub struct PublicHome {
     /// `home` or `library`.
     pub page: &'static str,
     pub dragging: Option<AppId>,
-    /// The app the removal alert asks about.
-    pub alert: Option<AppId>,
+    /// The app or widget the removal alert asks about.
+    pub alert: Option<Item>,
     /// The App Library app whose menu is open.
     pub menu: Option<AppId>,
+    /// The widget gallery is open.
+    pub gallery: bool,
 }
 
 impl ShellState {
@@ -1717,7 +2141,10 @@ impl ShellState {
         if self.view != View::Launcher || !self.screen_awake {
             // An app came forward (a notification, `ctl launch`): edit mode
             // and the App Library's menu end with the home screen.
-            if self.home.editing.is_some() || self.home.alert.is_some() || self.home.menu.is_some()
+            if self.home.editing.is_some()
+                || self.home.alert.is_some()
+                || self.home.menu.is_some()
+                || self.home.gallery.is_some()
             {
                 self.home.leave(&mut self.settings.home, now);
                 self.home_effects();
@@ -1750,7 +2177,7 @@ impl ShellState {
                 self.last_action = "home_layout_reset".into();
             }
             LayoutCommand::Set(dock, grid) => {
-                let wanted = HomeLayout::with(dock, grid);
+                let wanted = layout.with(dock, grid);
                 self.home.change(layout, now, |layout| {
                     std::mem::replace(layout, wanted) != *layout
                 });
@@ -1787,16 +2214,47 @@ impl ShellState {
                     self.last_action = "app_library".into();
                 }
             }
+            LayoutCommand::Widget(true, widget) => {
+                if !self
+                    .home
+                    .change(layout, now, |layout| layout.add_widget(widget))
+                {
+                    return Err(
+                        "that widget is on the home screen, or the page has no room for it",
+                    );
+                }
+                self.last_action = "widget_added".into();
+            }
+            LayoutCommand::Widget(false, widget) => {
+                if !self
+                    .home
+                    .change(layout, now, |layout| layout.remove_widget(widget))
+                {
+                    return Err("that widget is not on the home screen");
+                }
+                self.last_action = "widget_removed".into();
+            }
+            LayoutCommand::Widgets(widgets) => {
+                let Some(wanted) = layout.with_widgets(widgets) else {
+                    return Err("the page has no room for those widgets");
+                };
+                self.home.change(layout, now, |layout| {
+                    std::mem::replace(layout, wanted) != *layout
+                });
+                self.last_action = "home_widgets_set".into();
+            }
         }
         self.home_effects();
         self.redraw = true;
         Ok(())
     }
 
-    /// Edit mode's Done button is under (x, y): a touch there is not a pull
-    /// from the top edge.
-    pub fn home_done_at(&self, x: f32, y: f32) -> bool {
-        self.home_ready() && self.home.editing() && DONE_TARGET.contains(x, y)
+    /// Edit mode's + or Done button is under (x, y): a touch there is not a
+    /// pull from the top edge.
+    pub fn home_button_at(&self, x: f32, y: f32) -> bool {
+        self.home_ready()
+            && self.home.editing()
+            && (DONE_TARGET.contains(x, y) || PLUS_TARGET.contains(x, y))
     }
 
     pub fn home_public(&self) -> PublicHome {
@@ -1808,8 +2266,17 @@ impl ShellState {
                 "home"
             },
             dragging: self.home.dragging(),
-            alert: self.home.alert.filter(Popup::open).map(|alert| alert.app),
-            menu: self.home.menu.filter(Popup::open).map(|menu| menu.app),
+            alert: self
+                .home
+                .alert
+                .filter(Popup::open)
+                .and_then(|alert| alert.item),
+            menu: self
+                .home
+                .menu
+                .filter(Popup::open)
+                .and_then(|menu| menu.app()),
+            gallery: self.home.gallery.is_some_and(|gallery| gallery.open()),
         }
     }
 
@@ -1837,6 +2304,11 @@ mod tests {
         start + Duration::from_millis(ms)
     }
 
+    /// Grid icon `index` of the default layout (under its two widgets).
+    fn grid(index: usize) -> RectF {
+        HomeLayout::default().rect(Slot::Grid(index))
+    }
+
     #[test]
     fn layouts_are_made_whole_and_read_leniently() {
         let layout = HomeLayout::default();
@@ -1855,8 +2327,10 @@ mod tests {
             ],
             Vec::new(),
             Vec::new(),
+            vec![Widget::Battery, Widget::Battery],
         );
         assert_eq!(made.dock.len(), DOCK_MAX);
+        assert_eq!(made.widgets, vec![Widget::Battery]);
         assert_eq!(made.grid, vec![AppId::Exocortex]);
         let read: HomeLayout = serde_json::from_str(
             r#"{"dock":["phone","pager","phone"],"grid":["system"],"removed":["browser"],"x":1}"#,
@@ -1868,6 +2342,16 @@ mod tests {
             vec![AppId::System, AppId::Messages, AppId::Exocortex]
         );
         assert_eq!(read.removed, vec![AppId::Browser]);
+        // A layout from before widgets keeps the default ones; a saved
+        // empty list is none; unknown widgets are skipped.
+        assert_eq!(read.widgets, HomeLayout::default().widgets);
+        let none: HomeLayout = serde_json::from_str(r#"{"dock":["phone"],"widgets":[]}"#).unwrap();
+        assert!(none.widgets.is_empty());
+        let one: HomeLayout = serde_json::from_str(r#"{"widgets":["clock","battery",3]}"#).unwrap();
+        assert_eq!(one.widgets, vec![Widget::Battery]);
+        assert_eq!(one.grid.len(), AppId::COUNT);
+        let saved = serde_json::to_string(&none).unwrap();
+        assert!(saved.contains(r#""widgets":[]"#), "{saved}");
         for broken in ["7", r#""dock""#, "{}", r#"{"dock":3}"#] {
             let read: HomeLayout = serde_json::from_str(broken).unwrap();
             assert_eq!(read, HomeLayout::default(), "{broken}");
@@ -1905,34 +2389,102 @@ mod tests {
         assert!(layout.place(AppId::Phone, Slot::Grid(9)));
         assert_eq!(layout.slot(AppId::Phone), Some(Slot::Grid(1)));
         assert_eq!(
-            HomeLayout::with(vec![AppId::Phone], vec![AppId::System]).removed,
+            HomeLayout::default()
+                .with(vec![AppId::Phone], vec![AppId::System])
+                .removed,
             vec![AppId::Browser, AppId::Messages, AppId::Exocortex]
         );
     }
 
     #[test]
+    fn widgets_take_two_by_two_blocks_and_apps_fill_around_them() {
+        let mut layout = HomeLayout {
+            grid: vec![
+                AppId::Exocortex,
+                AppId::System,
+                AppId::Browser,
+                AppId::Messages,
+                AppId::Phone,
+            ],
+            dock: Vec::new(),
+            ..HomeLayout::default()
+        };
+        // Both widgets: the apps start on the third row.
+        assert_eq!(layout.capacity(), 16);
+        assert_eq!(
+            layout.widget_rect(Widget::Battery),
+            Some(RectF::new(
+                cell_rect(2, 0).x,
+                PAGE_TOP,
+                WIDGET_SIZE,
+                WIDGET_SIZE
+            ))
+        );
+        assert_eq!(layout.rect(Slot::Grid(0)), cell_rect(0, 2));
+        let widget = layout.widget_rect(Widget::Calendar).unwrap();
+        assert!(widget.y + widget.h < cell_rect(0, 2).y);
+        // One widget: apps fill the cells beside it, then the rows below.
+        assert!(layout.remove_widget(Widget::Calendar));
+        assert!(!layout.remove_widget(Widget::Calendar));
+        assert_eq!(layout.widget_rect(Widget::Battery).unwrap().x, GRID_MARGIN);
+        assert_eq!(layout.rect(Slot::Grid(0)), cell_rect(2, 0));
+        assert_eq!(layout.rect(Slot::Grid(3)), cell_rect(3, 1));
+        assert_eq!(layout.rect(Slot::Grid(4)), cell_rect(0, 2));
+        // None: the first row sits right under the status bar.
+        assert!(layout.remove_widget(Widget::Battery));
+        assert_eq!(layout.rect(Slot::Grid(0)), cell_rect(0, 0));
+        assert_eq!(layout.capacity(), GRID_COLUMNS * GRID_ROWS);
+        // A widget goes back to the top of the page.
+        assert!(layout.add_widget(Widget::Battery));
+        assert!(layout.add_widget(Widget::Calendar));
+        assert_eq!(layout.widgets, vec![Widget::Calendar, Widget::Battery]);
+        assert!(!layout.add_widget(Widget::Calendar));
+        // A widget needs room: 21 apps leave none for one.
+        let full = HomeLayout::new(Vec::new(), AppId::ALL.to_vec(), Vec::new(), Vec::new());
+        assert!(full.with_widgets(vec![Widget::Battery]).is_some());
+        let mut crowded = full.clone();
+        crowded.grid = (0..21).map(|i| AppId::ALL[i % AppId::COUNT]).collect();
+        assert!(!crowded.can_add_widget(Widget::Battery));
+        assert_eq!(
+            full.with_widgets(Vec::new()).unwrap().widgets,
+            Vec::<Widget>::new()
+        );
+    }
+
+    #[test]
     fn geometry_matches_the_drawn_home_screen() {
-        // The original grid row under the widgets and the four-icon dock.
-        assert_eq!(grid_rect(0), RectF::new(75.0, 674.0, ICON, ICON));
-        assert_eq!(grid_rect(5).x, 75.0 + GRID_PITCH);
+        // The first row under the status bar, and the four-icon dock.
+        assert_eq!(cell_rect(0, 0), RectF::new(75.0, PAGE_TOP, ICON, ICON));
+        assert_eq!(cell_rect(1, 0).x, 75.0 + GRID_PITCH);
         assert_eq!(dock_rect(0, 4).x, 540.0 - 1.5 * DOCK_PITCH - ICON / 2.0);
-        // The bottom grid row and its names clear the dock.
-        let last = grid_rect(GRID_MAX - 1);
+        // The bottom row and its names clear the dock.
+        let last = cell_rect(GRID_COLUMNS - 1, GRID_ROWS - 1);
         assert!(last.y + last.h + LABEL_DROP + 20.0 < DOCK.y);
-        assert!(grid_rect(0).y > crate::ui::WIDGET_TOP + crate::ui::WIDGET_SIZE);
-        // Done sits in a row of its own: on the grid's right margin, clear
-        // of the status bar's glyphs and the widgets, centred between them.
-        assert_eq!(DONE.x + DONE.w, grid_rect(3).x + ICON);
+        // + and Done sit in a row of their own on the grid's margins, clear
+        // of the status bar's glyphs and the first row, centred between.
+        assert_eq!(DONE.x + DONE.w, cell_rect(3, 0).x + ICON);
+        assert_eq!(PLUS.x, cell_rect(0, 0).x);
+        assert_eq!((PLUS.y, PLUS.h), (DONE.y, DONE.h));
         let above = DONE.y - STATUS_GLYPHS_BOTTOM;
-        let below = crate::ui::WIDGET_TOP - (DONE.y + DONE.h);
-        assert!(above >= 16.0 && below >= 16.0 && (above - below).abs() <= 1.0);
-        assert!(DONE_TARGET.y + DONE_TARGET.h < crate::ui::WIDGET_TOP);
-        assert!(DONE_TARGET.x + DONE_TARGET.w <= SCREEN_W);
+        let below = PAGE_TOP - BADGE_OVERHANG - (DONE.y + DONE.h);
+        assert!(above >= 28.0 && below >= 28.0 && (above - below).abs() <= 1.0);
+        assert_eq!(DONE.y, DONE.y.round());
+        for target in [DONE_TARGET, PLUS_TARGET] {
+            assert!(target.y + target.h < PAGE_TOP);
+            assert!(target.x >= 0.0 && target.x + target.w <= SCREEN_W);
+        }
+        // The gallery's rows fit in its sheet.
+        let last = gallery_row(Widget::COUNT - 1);
+        assert!(last.y + last.h <= GALLERY_H);
         // Jiggle frames run evenly through zero.
-        assert_eq!(jiggle_frame(0.0), JIGGLE_FRAMES / 2);
-        assert_eq!(frame_angle(JIGGLE_FRAMES / 2), 0.0);
-        assert_eq!(jiggle_frame(JIGGLE_ANGLE * 2.0), JIGGLE_FRAMES - 1);
-        assert_eq!(jiggle_frame(-JIGGLE_ANGLE), 0);
+        assert_eq!(jiggle_frame(0.0, JIGGLE_FRAMES), JIGGLE_FRAMES / 2);
+        assert_eq!(frame_angle(JIGGLE_FRAMES / 2, JIGGLE_FRAMES), 0.0);
+        assert_eq!(frame_angle(WIDGET_FRAMES / 2, WIDGET_FRAMES), 0.0);
+        assert_eq!(
+            jiggle_frame(JIGGLE_ANGLE * 2.0, JIGGLE_FRAMES),
+            JIGGLE_FRAMES - 1
+        );
+        assert_eq!(jiggle_frame(-JIGGLE_ANGLE, WIDGET_FRAMES), 0);
         assert_eq!(
             library_apps()[0],
             AppId::Browser,
@@ -1944,10 +2496,10 @@ mod tests {
     fn hover_finds_grid_and_dock_places() {
         let layout = HomeLayout::default();
         // Over the second grid column: after Exocortex.
-        let (x, y) = grid_rect(1).center();
+        let (x, y) = grid(1).center();
         assert_eq!(hover_slot(&layout, AppId::Phone, x, y), Some(Slot::Grid(1)));
         // Far down the grid: the end of the grid.
-        let (x, y) = grid_rect(14).center();
+        let (x, y) = grid(14).center();
         assert_eq!(hover_slot(&layout, AppId::Phone, x, y), Some(Slot::Grid(1)));
         // A dock app moves within the dock; a grid app finds the dock full.
         let (x, y) = dock_rect(3, 4).center();
@@ -1969,7 +2521,7 @@ mod tests {
         let start = Instant::now();
         let mut layout = HomeLayout::default();
         let mut home = HomeScreen::default();
-        let (x, y) = grid_rect(0).center();
+        let (x, y) = grid(0).center();
         home.touch_begin(&layout, x, y, start);
         assert_eq!(home.pressed(), Some(AppId::Exocortex));
         assert_eq!(home.deadline(), Some(at(start, 500)));
@@ -1987,7 +2539,7 @@ mod tests {
         assert!(view.lifted && view.rect.w > ICON * 1.1);
         assert!((view.rect.center().0 - (x + 40.0)).abs() < 1.0);
         // Over the third column for longer than the dwell, then dropped.
-        let (tx, ty) = grid_rect(2).center();
+        let (tx, ty) = grid(2).center();
         home.touch_move(&mut layout, tx, ty, at(start, 700));
         home.tick(&mut layout, at(start, 750));
         home.tick(&mut layout, at(start, 800));
@@ -1999,7 +2551,7 @@ mod tests {
         run(&mut home, &mut layout, at(start, 820), 1500);
         let views = home.icon_views(&layout, at(start, 2400));
         let view = views.iter().find(|v| v.app == AppId::Exocortex).unwrap();
-        assert!((view.rect.x - grid_rect(0).x).abs() < 1.0);
+        assert!((view.rect.x - grid(0).x).abs() < 1.0);
         assert_eq!(view.rect.w, ICON);
     }
 
@@ -2015,7 +2567,7 @@ mod tests {
         home.touch_move(&mut layout, x, y - 30.0, at(start, 320));
         assert_eq!(home.dragging(), Some(AppId::Browser));
         // Over Exocortex's place: it moves aside once the dwell passes.
-        let (gx, gy) = grid_rect(0).center();
+        let (gx, gy) = grid(0).center();
         home.touch_move(&mut layout, gx, gy, at(start, 400));
         home.tick(&mut layout, at(start, 450));
         assert!(home.motions[AppId::Exocortex.index()].is_none());
@@ -2027,7 +2579,7 @@ mod tests {
         let messages = views.iter().find(|v| v.app == AppId::Messages).unwrap();
         assert!((messages.rect.x - dock_rect(1, 3).x).abs() < 3.0);
         let exocortex = views.iter().find(|v| v.app == AppId::Exocortex).unwrap();
-        assert!((exocortex.rect.x - grid_rect(1).x).abs() < 3.0);
+        assert!((exocortex.rect.x - grid(1).x).abs() < 3.0);
         home.touch_end(&mut layout, gx, gy, at(start, 1700));
         assert_eq!(
             layout.dock,
@@ -2037,7 +2589,7 @@ mod tests {
         assert!(home.effects.contains(&Effect::Save));
         assert!(home.effects.contains(&Effect::Haptic(Haptic::Light)));
         // Let go over a new place at once: it goes there all the same.
-        let (x, y) = grid_rect(1).center();
+        let (x, y) = grid(1).center();
         home.touch_begin(&layout, x, y, at(start, 3000));
         home.touch_move(&mut layout, x, y + 30.0, at(start, 3010));
         let (dx, dy) = dock_rect(3, 4).center();
@@ -2058,7 +2610,10 @@ mod tests {
         let (bx, by) = browser.badge_center();
         home.touch_begin(&layout, bx, by, t);
         home.touch_end(&mut layout, bx, by, t);
-        assert_eq!(home.alert.map(|alert| alert.app), Some(AppId::Browser));
+        assert_eq!(
+            home.alert.and_then(|alert| alert.item),
+            Some(Item::App(AppId::Browser))
+        );
         // Cancel keeps it.
         let (cx, cy) = alert_button(1).center();
         home.touch_begin(&layout, cx, cy, at(start, 600));
@@ -2092,7 +2647,7 @@ mod tests {
         let (lx, ly) = row.center();
         home.touch_begin(&layout, lx, ly, at(start, 3300));
         home.tick(&mut layout, at(start, 3810));
-        assert_eq!(home.menu.map(|menu| menu.app), Some(AppId::Browser));
+        assert_eq!(home.menu.and_then(|menu| menu.app()), Some(AppId::Browser));
         home.touch_end(&mut layout, lx, ly, at(start, 3900));
         assert!(home.menu.is_some(), "the menu stays once the finger lifts");
         let (mx, my) = menu_rect(AppId::Browser).center();
@@ -2100,6 +2655,99 @@ mod tests {
         home.touch_end(&mut layout, mx, my, at(start, 4010));
         assert_eq!(layout.slot(AppId::Browser), Some(Slot::Grid(1)));
         assert!(layout.removed.is_empty());
+    }
+
+    /// Taps (`x`, `y`) at `t`.
+    fn tap(home: &mut HomeScreen, layout: &mut HomeLayout, (x, y): (f32, f32), t: Instant) {
+        home.touch_begin(layout, x, y, t);
+        home.touch_end(layout, x, y, t);
+    }
+
+    #[test]
+    fn a_widget_badge_removes_it_and_the_gallery_adds_it_back() {
+        let start = Instant::now();
+        let mut layout = HomeLayout::default();
+        let mut home = HomeScreen::default();
+        // Holding a widget enters edit mode.
+        let (cx, cy) = layout.widget_rect(Widget::Calendar).unwrap().center();
+        home.touch_begin(&layout, cx, cy, start);
+        home.tick(&mut layout, at(start, 510));
+        assert!(home.editing());
+        home.touch_end(&mut layout, cx, cy, at(start, 600));
+        let badge = |home: &HomeScreen, layout: &HomeLayout, widget, t| {
+            home.widget_views(layout, t)
+                .into_iter()
+                .find(|view| view.widget == widget)
+                .unwrap()
+                .badge_center()
+        };
+        // Its badge asks first, as iOS does.
+        let t = at(start, 800);
+        let at_badge = badge(&home, &layout, Widget::Calendar, t);
+        tap(&mut home, &mut layout, at_badge, t);
+        assert_eq!(
+            home.alert.and_then(|alert| alert.item),
+            Some(Item::Widget(Widget::Calendar))
+        );
+        tap(
+            &mut home,
+            &mut layout,
+            alert_button(0).center(),
+            at(start, 900),
+        );
+        assert_eq!(layout.widgets, vec![Widget::Battery]);
+        assert!(home.effects.contains(&Effect::Save));
+        // Battery moves to the left, and Exocortex up beside it.
+        run(&mut home, &mut layout, at(start, 900), 1500);
+        let t = at(start, 2500);
+        let battery = home.widget_views(&layout, t)[0];
+        assert!((battery.rect.x - GRID_MARGIN).abs() < 1.0);
+        let exocortex = |home: &HomeScreen, layout: &HomeLayout, t| {
+            home.icon_views(layout, t)
+                .into_iter()
+                .find(|view| view.app == AppId::Exocortex)
+                .unwrap()
+                .rect
+        };
+        let rect = exocortex(&home, &layout, t);
+        assert!((rect.x - cell_rect(2, 0).x).abs() < 1.0);
+        assert!((rect.y - PAGE_TOP).abs() <= BOUNCE + 0.5);
+        // Without the other one the first row sits under the status bar.
+        let at_badge = badge(&home, &layout, Widget::Battery, t);
+        tap(&mut home, &mut layout, at_badge, t);
+        tap(
+            &mut home,
+            &mut layout,
+            alert_button(0).center(),
+            at(start, 2600),
+        );
+        assert!(layout.widgets.is_empty());
+        run(&mut home, &mut layout, at(start, 2600), 1500);
+        let rect = exocortex(&home, &layout, at(start, 4200));
+        assert!((rect.x - GRID_MARGIN).abs() < 1.0);
+        // + opens the gallery; Add Widget puts Calendar back on top.
+        let t = at(start, 4300);
+        tap(&mut home, &mut layout, PLUS.center(), t);
+        assert!(home.gallery.is_some_and(|gallery| gallery.open()));
+        let mut add = gallery_button(Widget::Calendar.index());
+        add.y += gallery_rect().y;
+        tap(&mut home, &mut layout, add.center(), at(start, 4600));
+        assert_eq!(layout.widgets, vec![Widget::Calendar]);
+        assert!(home.editing(), "edit mode goes on");
+        run(&mut home, &mut layout, at(start, 4600), 400);
+        assert!(home.gallery.is_none());
+        // A tap above the sheet closes it; the home gesture does too.
+        tap(&mut home, &mut layout, PLUS.center(), at(start, 5100));
+        tap(&mut home, &mut layout, (540.0, 400.0), at(start, 5200));
+        assert!(!home.gallery.is_some_and(|gallery| gallery.open()));
+        assert!(
+            home.editing(),
+            "a tap that closes the gallery stays in edit mode"
+        );
+        tap(&mut home, &mut layout, PLUS.center(), at(start, 5600));
+        assert!(home.home_button(&mut layout, at(start, 5700)));
+        assert!(!home.gallery.is_some_and(|gallery| gallery.open()));
+        assert!(home.editing());
     }
 
     #[test]
@@ -2114,7 +2762,7 @@ mod tests {
         home.touch_end(&mut layout, 540.0, 1500.0, at(start, 600));
         assert!(home.editing(), "releasing the hold stays in edit mode");
         // An icon tap in edit mode opens nothing.
-        let (x, y) = grid_rect(0).center();
+        let (x, y) = grid(0).center();
         home.touch_begin(&layout, x, y, at(start, 700));
         home.touch_end(&mut layout, x, y, at(start, 750));
         assert!(!home.effects.iter().any(|e| matches!(e, Effect::Launch(..))));
@@ -2134,12 +2782,12 @@ mod tests {
         let mut layout = HomeLayout::default();
         let mut home = HomeScreen::default();
         layout.place(AppId::System, Slot::Grid(1));
-        let (x, y) = grid_rect(1).center();
+        let (x, y) = grid(1).center();
         home.touch_begin(&layout, x, y, start);
         home.touch_end(&mut layout, x, y, at(start, 80));
         assert_eq!(
             home.effects.last(),
-            Some(&Effect::Launch(AppId::System, grid_rect(1), ICON_RADIUS))
+            Some(&Effect::Launch(AppId::System, grid(1), ICON_RADIUS))
         );
         assert!(!home.live(at(start, 100)));
     }
@@ -2215,7 +2863,7 @@ mod tests {
         let mut layout = HomeLayout::default();
         let mut home = HomeScreen::default();
         home.begin_editing(start);
-        let (x, y) = grid_rect(0).center();
+        let (x, y) = grid(0).center();
         home.touch_begin(&layout, x, y, at(start, 200));
         home.touch_move(&mut layout, x, y + 40.0, at(start, 220));
         let (dx, dy) = dock_rect(0, 4).center();
@@ -2243,7 +2891,7 @@ mod tests {
             state.settings.home.removed,
             vec![AppId::System, AppId::Messages]
         );
-        assert_eq!(state.home_icon_rect(AppId::Browser), grid_rect(1));
+        assert_eq!(state.home_icon_rect(AppId::Browser), grid(1));
         assert!(
             state
                 .home_command(LayoutCommand::Remove(AppId::System))
@@ -2254,11 +2902,38 @@ mod tests {
         assert!(state.home_public().editing);
         state.home();
         assert!(!state.home_public().editing);
-        // A touch on Done is Done's; above it, the status bar still pulls
-        // Control Centre down.
+        // Widgets by command: both off, then one back.
+        state
+            .home_command(LayoutCommand::Widgets(Vec::new()))
+            .unwrap();
+        assert!(state.settings.home.widgets.is_empty());
+        assert_eq!(state.home_icon_rect(AppId::Exocortex), cell_rect(0, 0));
+        assert!(
+            state
+                .home_command(LayoutCommand::Widget(false, Widget::Calendar))
+                .is_err()
+        );
+        state
+            .home_command(LayoutCommand::Widget(true, Widget::Battery))
+            .unwrap();
+        assert_eq!(state.settings.home.widgets, vec![Widget::Battery]);
+        assert_eq!(state.home_icon_rect(AppId::Exocortex), cell_rect(2, 0));
+        assert!(
+            state
+                .home_command(LayoutCommand::Widget(true, Widget::Battery))
+                .is_err()
+        );
+        state
+            .home_command(LayoutCommand::Widget(false, Widget::Battery))
+            .unwrap();
+        // A touch on + or Done is theirs; above them, the status bar still
+        // pulls the notifications and Control Centre down.
         state.home_command(LayoutCommand::Edit(true)).unwrap();
+        let (px, py) = PLUS.center();
+        assert!(state.home_button_at(px, py));
+        assert!(!state.alerts_pointer_begin(px, py));
         let (dx, dy) = DONE.center();
-        assert!(state.home_done_at(dx, dy));
+        assert!(state.home_button_at(dx, dy));
         assert!(!state.control_pointer_begin(dx, dy));
         assert!(!state.control_pointer_begin(dx, DONE.y - 8.0));
         assert!(state.control_pointer_begin(dx, 40.0));
@@ -2272,12 +2947,12 @@ mod tests {
         assert!(state.home_command(LayoutCommand::Edit(true)).is_err());
         // A tap opens an app from where its icon is now.
         state.view = View::Launcher;
-        let (x, y) = grid_rect(1).center();
+        let (x, y) = cell_rect(1, 0).center();
         state.home_tap(x, y);
         assert_eq!(state.view, View::Browser);
         assert_eq!(
             state.launch().map(|launch| launch.card.from),
-            Some(grid_rect(1))
+            Some(cell_rect(1, 0))
         );
         state.home_command(LayoutCommand::Reset).unwrap();
         assert_eq!(state.settings.home, HomeLayout::default());
@@ -2304,6 +2979,26 @@ mod tests {
         );
         assert!(parse("remove nothing").is_err());
         assert_eq!(parse("edit on"), Ok(LayoutCommand::Edit(true)));
+        assert_eq!(
+            parse("widget remove Calendar"),
+            Ok(LayoutCommand::Widget(false, Widget::Calendar))
+        );
+        assert_eq!(
+            parse("widget add battery"),
+            Ok(LayoutCommand::Widget(true, Widget::Battery))
+        );
+        assert_eq!(parse("widgets -"), Ok(LayoutCommand::Widgets(Vec::new())));
+        assert_eq!(
+            parse("widgets battery,calendar"),
+            Ok(LayoutCommand::Widgets(vec![
+                Widget::Battery,
+                Widget::Calendar
+            ]))
+        );
+        assert!(parse("widgets battery,battery").is_err());
+        assert!(parse("widget remove clock").is_err());
+        assert!(parse("widget").is_err());
+        assert!(parse("widgets").is_err());
         assert_eq!(parse("library off"), Ok(LayoutCommand::Library(false)));
         assert!(parse("edit").is_err());
         assert!(parse("reset now").is_err());

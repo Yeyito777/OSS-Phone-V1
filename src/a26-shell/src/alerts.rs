@@ -623,6 +623,7 @@ impl ShellState {
         let pull_allowed = self.screen_awake
             && y <= PULL_ZONE
             && x < crate::control_centre::SPLIT_X
+            && !self.home_button_at(x, y)
             && (self.view == View::Launcher || self.view.is_app())
             && self.switcher.is_none()
             && self.gesture.is_none()
