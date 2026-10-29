@@ -15,9 +15,9 @@
 // outside the chroot through /proc/1/root, as moon-power does. The daemon
 // transcribes (`transcribe_audio`, its OpenAI login), then the text goes to the
 // voice conversation named in /etc/exocortex-voice.json (into its running
-// turn if it is working), which the app then shows. Without one: to the
-// conversation the Exocortex app shows in front, or a new conversation with
-// Claude. Problems become a notification (app exocortex, tag voice). Logs (to
+// turn if it is working), in the background: nothing opens. Without one: to
+// the conversation the Exocortex app shows in front, or a new conversation
+// with Claude. Problems become a notification (app exocortex, tag voice). Logs (to
 // Moon's log) never carry what was said.
 
 import { createConnection } from "node:net";
@@ -216,7 +216,6 @@ async function deliver(audio: Buffer, locked: boolean): Promise<number> {
     if (target) {
       if (await sendTo(daemon, target, text)) {
         log(`sent to ${target}, the voice conversation`);
-        if ((await conversationInFront()) !== target) open(target);
         return 0;
       }
       log(`the voice conversation ${target} refused it; starting a new one`);
@@ -239,7 +238,6 @@ async function deliver(audio: Buffer, locked: boolean): Promise<number> {
       return 1;
     }
     log(`started ${created.convId}`);
-    open(created.convId);
     return 0;
   } finally {
     daemon.close();
@@ -254,11 +252,6 @@ function voiceConversation(): string | null {
   } catch {
     return null;
   }
-}
-
-/** The Exocortex app opens at a conversation (after unlocking, if locked). */
-function open(convId: string): void {
-  Bun.spawnSync([SHELLCTL, "open", "exocortex", convId], { stdout: "ignore", stderr: "ignore" });
 }
 
 /** Sends to a conversation; joins its turn when it is working. */

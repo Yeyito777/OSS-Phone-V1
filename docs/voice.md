@@ -16,13 +16,12 @@ Where it goes: always to the phone's voice conversation, named in
 `/etc/exocortex-voice.json` (`{"conversation": "ID"}`; on this phone the
 pinned main conversation, EXO); when that conversation is working the words
 join its running turn (queue timing `next-turn`: Claude takes them in at its
-next tool boundary) rather than waiting for the turn to end, and the app then
-shows it. A voice conversation
-that is gone means a new conversation with Claude instead. Without the file:
-the conversation the Exocortex app shows, when the app is in front on an
-unlocked screen, else a new conversation with Claude that the app opens
-(which, with several agents, sends words to whichever chat happens to be
-open). Held on the lock screen, the passcode comes up on release
+next tool boundary) rather than waiting for the turn to end. It is sent in
+the background: no app opens. A voice conversation that is gone means a new
+conversation with Claude instead. Without the file: the conversation the
+Exocortex app shows, when the app is in front on an unlocked screen, else a
+new conversation with Claude (which, with several agents, sends words to
+whichever chat happens to be open). Held on the lock screen, the passcode comes up on release
 and the message is sent only once the phone is unlocked (within 2 minutes,
 otherwise it is dropped): anyone can pick up a locked phone, and Exocortex
 runs as root.
