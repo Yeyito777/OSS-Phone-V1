@@ -25,6 +25,15 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 
+# For agents' sandbox builds (/opt/build/bin/oss-build): release optimisation
+# without LTO, codegen split and incremental, so a small edit rebuilds in
+# seconds. Never shipped; releases use the profile above.
+[profile.dev-release]
+inherits = "release"
+lto = false
+codegen-units = 256
+incremental = true
+
 [dev-dependencies]
 # Protocol tests drive the Wayland server with a real client in-process.
 wayland-client = "0.31"
