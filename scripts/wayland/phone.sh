@@ -44,17 +44,26 @@ push_scripts() {
 
 case "${1:-}" in
 install)
-    tarball="${2:-}"
+    tarball=''
+    force=0
+    for argument in "${@:2}"; do
+        if [ "$argument" = --force ]; then force=1; else tarball="$argument"; fi
+    done
     if [ -z "$tarball" ]; then
         mkdir -p "$CACHE"
         scp -q "$WHALE_OUT/a26-wayland-rootfs.tar.gz" "$CACHE/"
         tarball="$CACHE/a26-wayland-rootfs.tar.gz"
     fi
-    # Never rm -rf a tree with live bind mounts (/dev, /proc, /sys) inside it.
+    # rm -rf through live bind mounts (/dev, /proc, /sys, /data) deletes
+    # what they point at: stop unless the owner passes --force.
     if su_sh "grep -q \" $WL_ROOT/\" /proc/mounts"; then
-        echo "refusing: something is still mounted under $WL_ROOT" >&2
         su_sh "grep \" $WL_ROOT/\" /proc/mounts" >&2
-        exit 1
+        if [ "$force" = 1 ]; then
+            echo "WARNING: replacing $WL_ROOT with mounts inside it (--force)" >&2
+        else
+            echo "refusing: something is still mounted under $WL_ROOT (override: --force; rm -rf would reach through the mounts)" >&2
+            exit 1
+        fi
     fi
     adb push "$tarball" /data/local/tmp/a26-wayland-rootfs.tar.gz
     su_sh "rm -rf $WL_ROOT.new && mkdir -p $WL_ROOT.new && /data/local/a26-linux/busybox.static tar -xzf /data/local/tmp/a26-wayland-rootfs.tar.gz -C $WL_ROOT.new && rm -rf $WL_ROOT && mv $WL_ROOT.new $WL_ROOT && rm -f /data/local/tmp/a26-wayland-rootfs.tar.gz && du -sh $WL_ROOT"

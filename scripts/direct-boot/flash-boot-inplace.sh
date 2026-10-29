@@ -7,16 +7,20 @@
 #
 #   --dry-run              run every check and make the backup, write nothing
 #   --allow-kernel-change  accept a kernel that differs from the installed one
+#   --allow-init-change    accept a ramdisk /init that differs (see below)
+#   --force                also accept a KNOWN_BAD image and an image that fails
+#                          the format checks (it must still fit the partition)
 #
-# Refuses an image whose size is not exactly the partition's, that is not a
-# boot v4 image ("ANDROID!", header version 4) with an AVB footer, or whose
-# kernel differs from the installed image (unless allowed).
+# Stops, unless overridden, on an image whose size is not exactly the
+# partition's, that is not a boot v4 image ("ANDROID!", header version 4) with
+# an AVB footer, whose kernel or ramdisk /init differs from the installed
+# image, or that is known not to boot. Every stop names the flag that
+# overrides it; the phone's owner decides.
 #
-# Hard rule, no override: an image whose ramdisk /init differs from the
-# installed image's is refused. A new PID 1 is the one change whose failure
-# cannot be caught in userspace: both stage-2 images (/init = oss-init) reset
-# before adb and needed a physical Download-mode rescue. Such an image may only
-# be tried from a one-shot boot slot, which this non-A/B phone does not have.
+# The known risk of a changed /init: a new PID 1 is the one change whose
+# failure cannot be caught in userspace. Both stage-2 images (/init =
+# oss-init) reset before adb and needed a physical Download-mode rescue
+# (notes/direct-boot/RESCUE.md); this non-A/B phone has no one-shot slot.
 #
 # The installed image is first read back into /data/adb/moon/boot-backups (newest
 # three kept) and copied to the host under $A26_RESCUE/inplace-backups. After
@@ -25,7 +29,7 @@
 #
 # Images verified on the phone (KNOWN_GOOD below) may replace any installed
 # kernel without --allow-kernel-change, so a rollback never needs an override;
-# images known not to boot (KNOWN_BAD) are refused outright.
+# images known not to boot (KNOWN_BAD) need --force.
 #
 # A wrong-but-booting image is fixed by running this again with the backup. An
 # image that does not boot needs Download mode (notes/direct-boot/RESCUE.md).
@@ -49,39 +53,53 @@ WORK=/data/local/tmp/boot-flash
 
 DRY_RUN=0
 ALLOW_KERNEL=0
+ALLOW_INIT=0
+FORCE=0
 IMAGE=''
 while (( $# )); do
     case "$1" in
         --dry-run) DRY_RUN=1 ;;
         --allow-kernel-change) ALLOW_KERNEL=1 ;;
-        --allow-init-change)
-            echo "--allow-init-change was removed: a changed ramdisk /init is never flashed (see the header)" >&2
-            exit 2 ;;
-        -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+        --allow-init-change) ALLOW_INIT=1 ;;
+        --force) FORCE=1 ;;
+        -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *) [[ -z "$IMAGE" ]] || { echo "only one image" >&2; exit 2; }; IMAGE="$1" ;;
     esac
     shift
 done
-[[ -f "$IMAGE" ]] || { echo "usage: $0 [--dry-run] [--allow-kernel-change] IMAGE" >&2; exit 2; }
+[[ -f "$IMAGE" ]] || {
+    echo "usage: $0 [--dry-run] [--allow-kernel-change] [--allow-init-change] [--force] IMAGE" >&2
+    exit 2
+}
 SERIAL="$(a26_resolve_serial)"
 phone() { adb -s "$SERIAL" shell "/data/local/tmp/su -c '$1'" | tr -d '\r'; }
 
 fail() { echo "flash-boot-inplace: $*" >&2; exit 1; }
+# A check the owner may override with --force.
+check() {
+    if [[ "$FORCE" == 1 ]]; then
+        echo "flash-boot-inplace: WARNING: $* (continuing: --force)" >&2
+    else
+        fail "$* (override: --force)"
+    fi
+}
 sha256() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}' || sha256sum "$1" | awk '{print $1}'; }
 
 # Host-side format checks.
 size="$(wc -c <"$IMAGE" | tr -d ' ')"
 partition_size="$(phone "blockdev --getsize64 $PARTITION")"
 [[ "$partition_size" =~ ^[0-9]+$ ]] || fail "cannot read the size of $PARTITION"
-[[ "$size" == "$partition_size" ]] || fail "image is $size bytes, partition is $partition_size"
-[[ "$(head -c 8 "$IMAGE")" == 'ANDROID!' ]] || fail 'not an Android boot image (no ANDROID! magic)'
+# Bigger than the partition cannot be written at all.
+(( size <= partition_size )) || fail "image is $size bytes, larger than the $partition_size-byte partition"
+[[ "$size" == "$partition_size" ]] || check "image is $size bytes, partition is $partition_size"
+[[ "$(head -c 8 "$IMAGE")" == 'ANDROID!' ]] || check 'not an Android boot image (no ANDROID! magic)'
 header_version="$(od -A n -t u4 -j 40 -N 4 "$IMAGE" | tr -d ' ')"
-[[ "$header_version" == 4 ]] || fail "boot header version is $header_version, expected 4"
-[[ "$(tail -c 64 "$IMAGE" | head -c 4)" == AVBf ]] || fail 'no AVB footer at the end of the image'
+[[ "$header_version" == 4 ]] || check "boot header version is $header_version, expected 4"
+[[ "$(tail -c 64 "$IMAGE" | head -c 4)" == AVBf ]] || check 'no AVB footer at the end of the image'
 image_sha="$(sha256 "$IMAGE")"
-echo "image $IMAGE sha256=$image_sha ($size bytes, boot v$header_version, AVB footer)"
-[[ -z "${KNOWN_BAD[$image_sha]:-}" ]] || fail "refusing a known non-booting image: ${KNOWN_BAD[$image_sha]}"
+echo "image $IMAGE sha256=$image_sha ($size bytes, boot v$header_version)"
+[[ -z "${KNOWN_BAD[$image_sha]:-}" ]] || check "known non-booting image: ${KNOWN_BAD[$image_sha]}"
 if [[ -n "${KNOWN_GOOD[$image_sha]:-}" ]]; then
     echo "known-good image: ${KNOWN_GOOD[$image_sha]}"
     ALLOW_KERNEL=1
@@ -98,7 +116,7 @@ WORK=/data/local/tmp/boot-flash
 BACKUPS=/data/adb/moon/boot-backups
 MAGISKBOOT=/data/adb/magisk/magiskboot
 BB=/data/local/a26-linux/busybox.static
-image_sha=$1 dry_run=$2 allow_kernel=$3
+image_sha=$1 dry_run=$2 allow_kernel=$3 allow_init=${4:-0} force=${5:-0}
 fail() { echo "phone: $*" >&2; exit 1; }
 [ -x "$BB" ] || BB=''
 dd_cmd() { if [ -n "$BB" ]; then "$BB" dd "$@"; else toybox dd "$@"; fi; }
@@ -121,23 +139,44 @@ echo "CURRENT_SHA=$current_sha"
 # Kernel and Magisk init must be byte-identical to the installed image.
 mkdir -p "$WORK/cur" "$WORK/new"
 (cd "$WORK/cur" && "$MAGISKBOOT" unpack ../current.img >/dev/null 2>&1) || fail 'cannot unpack the installed image'
-(cd "$WORK/new" && "$MAGISKBOOT" unpack ../new.img >/dev/null 2>&1) || fail 'cannot unpack the new image'
-for part in cur new; do
-    [ -s "$WORK/$part/kernel" ] || fail "no kernel in the $part image"
-    (cd "$WORK/$part" && "$MAGISKBOOT" cpio ramdisk.cpio "extract init init" >/dev/null 2>&1) ||
-        fail "no /init in the $part ramdisk"
+compare=1
+if ! (cd "$WORK/new" && "$MAGISKBOOT" unpack ../new.img >/dev/null 2>&1); then
+    [ "$force" = 1 ] || fail 'cannot unpack the new image (override: --force)'
+    echo 'WARNING: the new image does not unpack; kernel and /init not compared (--force)'
+    compare=0
+fi
+[ "$compare" = 1 ] && for part in cur new; do
+    missing=''
+    [ -s "$WORK/$part/kernel" ] || missing="no kernel in the $part image"
+    [ -n "$missing" ] || (cd "$WORK/$part" && "$MAGISKBOOT" cpio ramdisk.cpio "extract init init" >/dev/null 2>&1) ||
+        missing="no /init in the $part ramdisk"
+    if [ -n "$missing" ]; then
+        [ "$force" = 1 ] || fail "$missing (override: --force)"
+        echo "WARNING: $missing; kernel and /init not compared (--force)"
+        compare=0
+        break
+    fi
 done
-if cmp -s "$WORK/cur/kernel" "$WORK/new/kernel"; then
+if [ "$compare" = 0 ]; then
+    :
+elif cmp -s "$WORK/cur/kernel" "$WORK/new/kernel"; then
     echo 'kernel: identical'
 elif [ "$allow_kernel" = 1 ]; then
     echo 'kernel: DIFFERENT (allowed by --allow-kernel-change)'
 else
     fail 'kernel differs from the installed image (use --allow-kernel-change)'
 fi
-if cmp -s "$WORK/cur/init" "$WORK/new/init"; then
+if [ "$compare" = 0 ]; then
+    :
+elif cmp -s "$WORK/cur/init" "$WORK/new/init"; then
     echo 'magisk init: identical'
 else
-    fail 'ramdisk /init differs from the installed image: refused, no override (a new PID 1 can only be tried from a one-shot boot slot)'
+    if [ "$allow_init" = 1 ]; then
+        echo 'magisk init: DIFFERENT (allowed by --allow-init-change)'
+        echo 'RISK: a new PID 1 that fails resets before adb; both stage-2 images needed a Download-mode rescue (notes/direct-boot/RESCUE.md)'
+    else
+        fail 'ramdisk /init differs from the installed image (use --allow-init-change; a failing PID 1 needs a Download-mode rescue)'
+    fi
 fi
 [ "$current_sha" != "$image_sha" ] || echo 'note: the image is byte-identical to the installed one'
 [ "$dry_run" = 1 ] && { echo 'dry run: nothing written'; exit 0; }
@@ -151,10 +190,13 @@ write_and_verify() {
     echo 3 >/proc/sys/vm/drop_caches
     after=$(awk '{print $7}' "/sys/class/block/$dev/stat")
     echo "sectors written to $dev: $((after - before))"
+    # Over the image's own length: a (forced) smaller image leaves the rest
+    # of the partition as it was.
+    length=$(wc -c <"$src" | tr -d ' ')
     if [ -n "$BB" ]; then
-        readback=$("$BB" dd if="$PARTITION" bs=4194304 iflag=direct 2>/dev/null | sha256sum | cut -d' ' -f1)
+        readback=$("$BB" dd if="$PARTITION" bs=4194304 iflag=direct 2>/dev/null | "$BB" head -c "$length" | sha256sum | cut -d' ' -f1)
     else
-        readback=$(toybox dd if="$PARTITION" bs=4194304 2>/dev/null | sha256sum | cut -d' ' -f1)
+        readback=$(toybox dd if="$PARTITION" bs=4194304 2>/dev/null | head -c "$length" | sha256sum | cut -d' ' -f1)
     fi
     echo "READBACK_SHA=$readback"
     [ "$readback" = "$expected" ]
@@ -176,7 +218,7 @@ adb -s "$SERIAL" push "$IMAGE" "$WORK/new.img" >/dev/null 2>&1 || fail 'cannot p
 adb -s "$SERIAL" push "$PHONE_SCRIPT" "$WORK/flash.sh" >/dev/null 2>&1 || fail 'cannot push the helper'
 
 set +e
-output="$(phone "sh $WORK/flash.sh $image_sha $DRY_RUN $ALLOW_KERNEL" 2>&1)"
+output="$(phone "sh $WORK/flash.sh $image_sha $DRY_RUN $ALLOW_KERNEL $ALLOW_INIT $FORCE" 2>&1)"
 status=$?
 set -e
 echo "$output"

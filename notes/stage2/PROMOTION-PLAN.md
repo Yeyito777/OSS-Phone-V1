@@ -154,6 +154,10 @@ failure still auto-recovers. Promotion is gated on every item passing.
 
 ## 4. Exact `flash-boot-inplace.sh` changes to allow an oss-init BOOT image
 
+> 2026-10-28: the owner restored `--allow-init-change` (it prints the risk
+> and proceeds), and `--force` overrides `KNOWN_BAD`. The gated path below is
+> still the recommended way; it is no longer the only one.
+
 Today the script refuses, with no override, any BOOT image whose ramdisk `/init`
 differs from the installed one (that rule caught the v2/v3 bricks). Promotion
 adds a **separate, heavily gated** path that does not weaken the default refusal.

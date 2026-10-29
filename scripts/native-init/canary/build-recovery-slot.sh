@@ -29,7 +29,8 @@
 # Magisk itself uses for this ramdisk.
 #
 # Every image also carries /oss-rebootmode-clear.ko (sha256-pinned), and the
-# script REFUSES a payload whose /init is not one of our recovery-slot pre-inits
+# script stops (A26_FORCE=1 overrides, with a warning) on a payload whose
+# /init is not one of our recovery-slot pre-inits
 # (oss-init or oss-pid1, recognised by the /init.magisk + /init.stock layout and
 # /init differing from magiskinit). Those load the module as their first action;
 # a slot image without that clear would loop in recovery after any failure
@@ -37,6 +38,11 @@
 #
 # Deterministic: inputs are copied verbatim, AVB uses a fixed salt.
 set -euo pipefail
+# A stop the owner may override with A26_FORCE=1.
+refuse() {
+  if [[ "${A26_FORCE:-0}" == 1 ]]; then echo "WARNING: $* (continuing: A26_FORCE=1)" >&2
+  else echo "refusing: $* (override: A26_FORCE=1)" >&2; exit 1; fi
+}
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 R="${A26_RESEARCH:-$HOME/Workspace/research/linux-galaxy-a26}"
 OUT="${1:?output dir}"
@@ -73,12 +79,12 @@ printf 'OSS-Phone recovery-slot test image\n' >"$WORK/mb/marker"
 ( cd "$WORK/mb"
   for f in init.magisk init.stock; do
     "$MAGISKBOOT" cpio ramdisk.cpio "exists $f" >/dev/null 2>&1 ||
-      { echo "refusing: payload has no /$f, so its /init is not an oss pre-init" >&2; exit 1; }
+      refuse "payload has no /$f, so its /init is not an oss pre-init"
   done
   "$MAGISKBOOT" cpio ramdisk.cpio "extract init $WORK/p-init" "extract init.magisk $WORK/p-magisk" >/dev/null 2>&1
-  ! cmp -s "$WORK/p-init" "$WORK/p-magisk" || { echo "refusing: /init is magiskinit (no rebootmode clear)" >&2; exit 1; }
+  ! cmp -s "$WORK/p-init" "$WORK/p-magisk" || refuse "/init is magiskinit (no rebootmode clear)"
   grep -q oss-rebootmode-clear.ko "$WORK/p-init" ||
-    { echo "refusing: /init does not reference oss-rebootmode-clear.ko" >&2; exit 1; } )
+    refuse "/init does not reference oss-rebootmode-clear.ko" )
 ( cd "$WORK/mb" &&
   "$MAGISKBOOT" cpio ramdisk.cpio "add 0644 overlay.d/sbin/oss-recovery-slot marker" \
                                   "add 0644 oss-rebootmode-clear.ko $KO" >/dev/null 2>&1 &&
@@ -97,7 +103,7 @@ unpack_bootimg --boot_img "$STOCK_RECOVERY" --out "$WORK/rec" --format=mkbootimg
 for frag in "$WORK/vb/vendor_ramdisk00" "$WORK/vb/vendor_ramdisk01" "$WORK/boot/ramdisk"; do
   if (lz4 -dc "$frag" 2>/dev/null || gzip -dc "$frag" 2>/dev/null || cat "$frag") |
       cpio -t 2>/dev/null | grep -qE '^(system/bin/recovery|sbin/recovery)$'; then
-    echo "refusing: $frag contains a recovery binary" >&2; exit 1
+    refuse "$frag contains a recovery binary"
   fi
 done
 cmp "$WORK/vb/dtb" "$WORK/rec/dtb" || { echo "vendor_boot dtb != recovery dtb" >&2; exit 1; }

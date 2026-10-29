@@ -9,7 +9,14 @@
 # no logind, seatd or VT on this phone).
 set -eu
 WL_ROOT=/data/local/a26-wayland
-sh /data/local/tmp/a26-wayland/a26-wayland-check.sh >&2 || { echo "refusing to run: display stack not handed off" >&2; exit 1; }
+if ! sh /data/local/tmp/a26-wayland/a26-wayland-check.sh >&2; then
+    if [ "${WL_FORCE:-0}" = 1 ]; then
+        echo "WARNING: display stack not handed off (continuing: WL_FORCE=1)" >&2
+    else
+        echo "refusing to run: display stack not handed off (override: WL_FORCE=1)" >&2
+        exit 1
+    fi
+fi
 mkdir -p "$WL_ROOT/run" "$WL_ROOT/tmp"
 # The same CPU floor the supervisor gives Xorg (uclamp.min 60), so the numbers
 # compare with Moon's on Xorg.

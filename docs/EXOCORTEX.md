@@ -146,7 +146,7 @@ started at `post-fs-data` in every boot mode. On shutdown the keeper stops
 the daemon gracefully as now and then idles (an exit would be restarted)
 until init's own shutdown terminates the service. `95-exocortex.sh` does
 nothing while `init.svc.exocortex` is running. Only overlay files change; the ramdisk
-`/init` stays byte-identical (RESCUE.md's hard rule), and it would be flashed
+`/init` stays byte-identical (no `--allow-init-change` needed; RESCUE.md), and it would be flashed
 with `flash-boot-inplace.sh` like the direct-boot image, attended. Until
 then the keeper pair above does the same job from `/data`.
 

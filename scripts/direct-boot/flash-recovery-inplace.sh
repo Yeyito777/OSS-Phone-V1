@@ -9,13 +9,15 @@
 #   --dry-run         run every check and make the backup, write nothing
 #   --restore-stock   write the known-good stock recovery (9ab6cefe…) and exit
 #   --check-bcb       print whether the misc BCB (first 4 KiB) is all zero, exit
+#   --force           accept any image (not on the list below, or failing the
+#                     format checks, as long as it fits) and a non-zero BCB
 #
-# Only images on the whitelist below are accepted (the canary and stock
-# recovery); anything else is refused. The image must be exactly the RECOVERY
-# partition size, start with "ANDROID!", be boot header v2 (recovery is v2 on
-# this device), and carry an AVB footer. Before writing, the misc BCB must be
-# all zero (a stuck boot-recovery command is refused so a test can never start
-# from an already-sticky state). The installed recovery is read back to
+# By default only images on the list below (the canary and stock recovery)
+# are accepted, the image must be exactly the RECOVERY partition size, start
+# with "ANDROID!", be boot header v2 (recovery is v2 on this device), and
+# carry an AVB footer, and the misc BCB must be all zero (so a test does not
+# start from an already-sticky boot-recovery command). Each of these stops
+# names --force, which overrides it with a warning: the owner decides. The installed recovery is read back to
 # /data/local/tmp and copied to $A26_RESCUE/inplace-backups, the image is
 # written with dd+fsync+sync, then re-read with O_DIRECT and must match its
 # sha256; on a mismatch the backup is written back and verified.
@@ -52,13 +54,14 @@ PARTITION=/dev/block/by-name/recovery
 PART_SIZE=100663296
 WORK=/data/local/tmp/recovery-flash
 
-DRY_RUN=0 RESTORE=0 CHECK_BCB=0 IMAGE=''
+DRY_RUN=0 RESTORE=0 CHECK_BCB=0 FORCE=0 IMAGE=''
 while (( $# )); do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --restore-stock) RESTORE=1 ;;
     --check-bcb) CHECK_BCB=1 ;;
-    -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
+    --force) FORCE=1 ;;
+    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) [[ -z "$IMAGE" ]] || { echo "only one image" >&2; exit 2; }; IMAGE="$1" ;;
   esac; shift
@@ -66,6 +69,11 @@ done
 SERIAL="$(a26_resolve_serial)"
 phone() { adb -s "$SERIAL" shell "/data/local/tmp/su -c '$1'" | tr -d '\r'; }
 fail() { echo "flash-recovery-inplace: $*" >&2; exit 1; }
+# A check the owner may override with --force.
+check() {
+  if [[ "$FORCE" == 1 ]]; then echo "flash-recovery-inplace: WARNING: $* (continuing: --force)" >&2
+  else fail "$* (override: --force)"; fi
+}
 sha256() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}' || sha256sum "$1" | awk '{print $1}'; }
 
 # 0 = all-zero (clean). Fails closed: anything but two real 64-hex hashes that
@@ -89,22 +97,26 @@ if (( RESTORE )); then
   [[ "$(sha256 "$IMAGE")" == "$STOCK_SHA" ]] || fail "stock recovery sha mismatch"
 fi
 
-[[ -f "$IMAGE" ]] || { echo "usage: $0 [--dry-run] IMAGE | --restore-stock | --check-bcb" >&2; exit 2; }
+[[ -f "$IMAGE" ]] || { echo "usage: $0 [--dry-run] [--force] IMAGE | --restore-stock | --check-bcb" >&2; exit 2; }
 
 # Host-side format checks.
 size="$(wc -c <"$IMAGE" | tr -d ' ')"
-[[ "$size" == "$PART_SIZE" ]] || fail "image is $size bytes, RECOVERY is $PART_SIZE"
-[[ "$(head -c 8 "$IMAGE")" == 'ANDROID!' ]] || fail 'not an Android boot image'
+(( size <= PART_SIZE )) || fail "image is $size bytes, larger than RECOVERY ($PART_SIZE)"
+[[ "$size" == "$PART_SIZE" ]] || check "image is $size bytes, RECOVERY is $PART_SIZE"
+[[ "$(head -c 8 "$IMAGE")" == 'ANDROID!' ]] || check 'not an Android boot image'
 hv="$(od -A n -t u4 -j 40 -N 4 "$IMAGE" | tr -d ' ')"
-[[ "$hv" == 2 ]] || fail "boot header version is $hv, expected 2 (recovery)"
-[[ "$(tail -c 64 "$IMAGE" | head -c 4)" == AVBf ]] || fail 'no AVB footer'
+[[ "$hv" == 2 ]] || check "boot header version is $hv, expected 2 (recovery)"
+[[ "$(tail -c 64 "$IMAGE" | head -c 4)" == AVBf ]] || check 'no AVB footer'
 image_sha="$(sha256 "$IMAGE")"
-[[ -n "${KNOWN[$image_sha]:-}" ]] || fail "refusing an unknown recovery image (sha $image_sha)"
-echo "image $IMAGE sha256=$image_sha (${KNOWN[$image_sha]})"
+[[ -n "${KNOWN[$image_sha]:-}" ]] || check "unknown recovery image (sha $image_sha)"
+echo "image $IMAGE sha256=$image_sha (${KNOWN[$image_sha]:-not on the list})"
 
-# A stuck BCB must be cleared first (so a test never starts already-sticky).
-bcb_zero || fail "misc BCB is non-zero; clear it before writing recovery (see CANARY-RUNBOOK.md)"
-echo "misc BCB: all zero (clean)"
+# A stuck BCB should be cleared first (so a test does not start already-sticky).
+if bcb_zero; then
+  echo "misc BCB: all zero (clean)"
+else
+  check "misc BCB is non-zero; clear it first (see CANARY-RUNBOOK.md)"
+fi
 
 PHONE_SCRIPT="$(mktemp)"; trap 'rm -f "$PHONE_SCRIPT"' EXIT
 cat >"$PHONE_SCRIPT" <<'PHONE'
@@ -114,12 +126,12 @@ PARTITION=/dev/block/by-name/recovery
 WORK=/data/local/tmp/recovery-flash
 BACKUPS=/data/adb/moon/recovery-backups
 BB=/data/local/a26-linux/busybox.static
-image_sha=$1 dry_run=$2
+image_sha=$1 dry_run=$2 force=${3:-0}
 fail() { echo "phone: $*" >&2; exit 1; }
 [ -x "$BB" ] || BB=''
 dd_cmd() { if [ -n "$BB" ]; then "$BB" dd "$@"; else toybox dd "$@"; fi; }
 [ "$(sha256sum "$WORK/new.img" | cut -d' ' -f1)" = "$image_sha" ] || fail 'pushed image hash mismatch'
-[ "$(blockdev --getsize64 "$PARTITION")" = 100663296 ] || fail 'unexpected RECOVERY size'
+[ "$(blockdev --getsize64 "$PARTITION")" = 100663296 ] || [ "$force" = 1 ] || fail 'unexpected RECOVERY size (override: --force)'
 [ "$(blockdev --getro "$PARTITION")" = 0 ] || fail "$PARTITION is read-only"
 mkdir -p "$BACKUPS"; chmod 0700 "$BACKUPS"
 dd_cmd if="$PARTITION" of="$WORK/current.img" bs=4194304 2>/dev/null || fail 'cannot read RECOVERY'
@@ -135,8 +147,10 @@ dev=$(basename "$(readlink -f "$PARTITION")")
 write_and_verify() {
   dd_cmd if="$1" of="$PARTITION" bs=4194304 conv=fsync 2>/dev/null || return 1
   sync; blockdev --flushbufs "$PARTITION" 2>/dev/null; echo 3 >/proc/sys/vm/drop_caches
-  if [ -n "$BB" ]; then rb=$("$BB" dd if="$PARTITION" bs=4194304 iflag=direct 2>/dev/null | sha256sum | cut -d' ' -f1)
-  else rb=$(toybox dd if="$PARTITION" bs=4194304 2>/dev/null | sha256sum | cut -d' ' -f1); fi
+  # Over the image's own length (a forced smaller image).
+  n=$(wc -c <"$1" | tr -d ' ')
+  if [ -n "$BB" ]; then rb=$("$BB" dd if="$PARTITION" bs=4194304 iflag=direct 2>/dev/null | "$BB" head -c "$n" | sha256sum | cut -d' ' -f1)
+  else rb=$(toybox dd if="$PARTITION" bs=4194304 2>/dev/null | head -c "$n" | sha256sum | cut -d' ' -f1); fi
   echo "READBACK_SHA=$rb"; [ "$rb" = "$2" ]; }
 if write_and_verify "$WORK/new.img" "$image_sha"; then echo 'RESULT=written-and-verified'; exit 0; fi
 echo 'read-back mismatch: restoring backup' >&2
@@ -148,7 +162,7 @@ phone "rm -rf $WORK" >/dev/null
 adb -s "$SERIAL" shell "mkdir -p $WORK" >/dev/null
 adb -s "$SERIAL" push "$IMAGE" "$WORK/new.img" >/dev/null 2>&1 || fail 'cannot push image'
 adb -s "$SERIAL" push "$PHONE_SCRIPT" "$WORK/flash.sh" >/dev/null 2>&1 || fail 'cannot push helper'
-set +e; output="$(phone "sh $WORK/flash.sh $image_sha $DRY_RUN" 2>&1)"; status=$?; set -e
+set +e; output="$(phone "sh $WORK/flash.sh $image_sha $DRY_RUN $FORCE" 2>&1)"; status=$?; set -e
 echo "$output"
 backup="$(sed -n 's/^BACKUP=//p' <<<"$output")"
 if [[ -n "$backup" ]]; then

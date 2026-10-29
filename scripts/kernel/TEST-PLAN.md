@@ -28,7 +28,7 @@ byte-identical to the mirror-built ones below (`28f31505…`, `8c0461ee…`,
 phone (`8c0461ee…`, read back 2026-10-26) is therefore already the
 official-source OSS kernel: nothing to flash, and the results above stand.
 For any future kernel change: same ramdisk only, attended, with
-`scripts/direct-boot/flash-boot-inplace.sh --allow-kernel-change` (changes to `/init` are refused).
+`scripts/direct-boot/flash-boot-inplace.sh --allow-kernel-change` (a changed `/init` also needs `--allow-init-change`).
 
 Images (unflashed) live in the Mac checkout's git-ignored `images/kernel/`
 (copies of whale's `$KROOT/out/boot/`); verify with `shasum -a 256 -c SHA256SUMS`.

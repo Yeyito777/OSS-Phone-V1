@@ -2,9 +2,11 @@
 
 Everything here is tried **only from the RECOVERY partition**, once, through the
 BCB-free `reboot-recovery` entry, so a failed boot returns to the untouched BOOT
-(`notes/stage2/CANARY-RUNBOOK.md`). No image whose `/init` changes ever goes to
-BOOT: `flash-boot-inplace.sh` refuses it, and v2/v3 (on BOOT) both reset-looped
-(`notes/stage2/V2-BOOTLOOP-ROOTCAUSE.md`, `V3-BOOTLOOP-ROOTCAUSE.md`).
+(`notes/stage2/CANARY-RUNBOOK.md`). An image whose `/init` changes goes to
+BOOT only if the owner says so: `flash-boot-inplace.sh` stops on it unless
+given `--allow-init-change`, because v2/v3 (on BOOT) both reset-looped and
+needed a Download-mode rescue (`notes/stage2/V2-BOOTLOOP-ROOTCAUSE.md`,
+`V3-BOOTLOOP-ROOTCAUSE.md`).
 
 ## `oss-init` v4 — containment
 

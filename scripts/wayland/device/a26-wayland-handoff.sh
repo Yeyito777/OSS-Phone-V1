@@ -4,6 +4,7 @@
 # fallbacks hand the phone to Android meanwhile.
 #
 #   su -c 'sh /data/local/tmp/a26-wayland/a26-wayland-handoff.sh'
+#   su -c 'WL_FORCE=1 sh .../a26-wayland-handoff.sh'   # skip the preconditions
 #
 # Nothing on /data/adb or the boot path changes. The supervisor is only
 # SIGSTOPped (so its liveness loop cannot see Xorg gone and restore Android);
@@ -19,15 +20,23 @@ mkdir -p /data/local/tmp/a26-wayland
 exec >>"$LOG" 2>&1
 echo "handoff begin $(date) up=$(cut -d' ' -f1 /proc/uptime)"
 
-fail() { echo "refusing: $*"; echo "refusing: $*" >&2; exit 1; }
+fail() { echo "failed: $*"; echo "failed: $*" >&2; exit 1; }
+# A precondition: WL_FORCE=1 (the owner's call) continues past it.
+need() {
+    if [ "${WL_FORCE:-0}" = 1 ]; then
+        echo "WARNING: $* (continuing: WL_FORCE=1)"; echo "WARNING: $* (continuing: WL_FORCE=1)" >&2
+    else
+        echo "refusing: $* (override: WL_FORCE=1)"; echo "refusing: $* (override: WL_FORCE=1)" >&2; exit 1
+    fi
+}
 
-[ "$(getprop moon.boot.mode)" = moon ] || fail "moon.boot.mode is not moon"
-[ "$(getprop moon.session.ready)" = 1 ] || fail "Moon session is not ready"
+[ "$(getprop moon.boot.mode)" = moon ] || need "moon.boot.mode is not moon"
+[ "$(getprop moon.session.ready)" = 1 ] || need "Moon session is not ready"
 xorg="$(pidof Xorg 2>/dev/null | cut -d' ' -f1)"
-[ -n "$xorg" ] || fail "Xorg is not running"
+[ -n "$xorg" ] || need "Xorg is not running"
 sup="$(getprop moon.supervisor.pid)"
-case "$sup" in ''|*[!0-9]*) fail "no supervisor pid" ;; esac
-[ -d "/proc/$sup" ] || fail "supervisor $sup is gone"
+case "$sup" in ''|*[!0-9]*) need "no supervisor pid"; sup='' ;; esac
+[ -z "$sup" ] || [ -d "/proc/$sup" ] || { need "supervisor $sup is gone"; sup=''; }
 
 # Wake the panel through Moon first: Moon's screen-off is DPMS off, and the
 # compositor should start from an active CRTC with the backlight on.
@@ -37,8 +46,10 @@ brightness="$(cat /sys/class/backlight/panel/brightness 2>/dev/null || echo 0)"
 echo "brightness after wake: $brightness"
 
 # 1. Freeze the supervisor (no file markers that could outlive a reboot).
-kill -STOP "$sup" || fail "cannot stop supervisor"
-echo "supervisor $sup stopped"
+if [ -n "$sup" ]; then
+    kill -STOP "$sup" || fail "cannot stop supervisor"
+    echo "supervisor $sup stopped"
+fi
 
 # 2. Kill, without traps, every shell in the Xorg takeover chain.
 args_of() { "$BB" timeout -s KILL 2 cat "/proc/$1/cmdline" 2>/dev/null | tr '\000' ' '; }
@@ -66,16 +77,18 @@ case "$session" in
 esac
 
 # 4. Stop Xorg and wait until nothing holds the DRM card.
-kill -TERM "$xorg" 2>/dev/null
-for _ in $(seq 1 25); do [ -d "/proc/$xorg" ] || break; sleep 0.2; done
-[ -d "/proc/$xorg" ] && kill -KILL "$xorg" 2>/dev/null
+if [ -n "$xorg" ]; then
+    kill -TERM "$xorg" 2>/dev/null
+    for _ in $(seq 1 25); do [ -d "/proc/$xorg" ] || break; sleep 0.2; done
+    [ -d "/proc/$xorg" ] && kill -KILL "$xorg" 2>/dev/null
+fi
 for _ in $(seq 1 25); do
     /system/bin/toybox lsof /dev/dri/card0 2>/dev/null | grep -q /dev/dri/card0 || break
     sleep 0.2
 done
 if /system/bin/toybox lsof /dev/dri/card0 2>/dev/null | grep -q /dev/dri/card0; then
     /system/bin/toybox lsof /dev/dri/card0
-    fail "DRM card still open"
+    need "DRM card still open"
 fi
 [ "$brightness" -gt 0 ] 2>/dev/null || echo 128 >/sys/class/backlight/panel/brightness
 
