@@ -195,7 +195,7 @@ Its option C *is* this design.
 | Shell animations | Identical: the same tiered compositor shows Moon's frames | Identical |
 | Latency, shell | A frame is on screen at the next vblank after Moon submits it; touch goes evdev → Xorg (XI2) → Moon, one local socket hop more than libinput in Moon | Next vblank; touch read by Moon directly |
 | Latency, apps | App → X server (CPU, pixman) → CopyArea into the mirror (about 1.6 ms for a full 10 MB frame, cached to cached) → next vblank, scanned out directly | X11 apps: the same copy (Xwayland's `wl_shm` buffer into a dmabuf). Native Wayland apps with dmabufs: none |
-| Tearing | The mirror is one buffer the display scans while Xorg writes it (as Xorg tears today); double-buffering it is a known step | Client buffers are released per frame: no tearing |
+| Tearing | Since protocol v5 the mirror is two buffers: the display scans one while Xorg writes the other (below) | Client buffers are released per frame: no tearing |
 | Robustness | More processes (Xorg, moon-compositor, Moon); each failure lands on today's software path, in place (measured: a compositor-to-Xorg handoff without a reboot) | Fewer processes, but the new code sits in the most fragile layers (input, focus, Xwayland window management) |
 | Migration cost | Built on `gpu-compositor`: about 2.1k lines of C, 1.2k of Rust and 0.5k of scripts; no app, input or keyboard code changes | 5-8k lines changed, 4-8 weeks (its estimate), mostly input, focus, keyboard and Xwayland |
 | App compatibility | System and CEF unchanged: same X server, same XTEST keyboard and taps | System ran under Xwayland; CEF under Xwayland or ozone-wayland untested; text-input-v3 would replace the XTEST keyboard |
@@ -432,7 +432,35 @@ hello.
   - Tested on the phone by `scripts/gpu/proto-test.sh`
     (`src/moon-gpu/proto-test.c`), which stops Moon for a few seconds and
     talks to the running compositor itself.
-- **Later (v5): acquire fences** for GPU-rendering clients: an optional
+- **v5: a double-buffered X mirror** (no tearing). With one buffer the
+  display scanned the mirror while Xorg wrote it: in the simulator below,
+  most refreshes of a scroll were torn (36-115 of 120 a second). The
+  compositor now allocates two and sends `MG_MIRROR` once per buffer
+  (`mg_surface_shm.id` = its index). Moon copies only into a buffer it got
+  with `MG_MIRROR_RELEASED`, together with the damage that buffer missed
+  while the other was written, then names it in `MG_MIRROR_DAMAGE`
+  (`mg_damage.reserved` = the index); frames show that buffer from the next
+  flip, and the other comes back released once no plane scans it and no
+  frame in flight samples it (after the hello: every buffer not on
+  screen). A v4 client gets buffer 0 alone and writes it in place, as
+  before; Moon offers v5 and steps down to v4 with an older compositor;
+  `MOON_GPU_PROTO=4` keeps the single buffer. Measured in the simulator
+  (sandbox Xorg, touches through Xorg's evdev driver, a 1 s scroll of a
+  long conversation at 120 Hz, four drags twice): torn refreshes 21-115 of
+  120 with one buffer, 0-2 with two; new frames 107-115 against 111-114 a
+  second; finger to the first refresh showing the frame, median 7-15 ms
+  against 11-15. A third buffer changed nothing. Moon also copies each
+  pixel once now (rectangles inside others are dropped, mostly
+  overlapping ones become their bounds): a scroll's window copy holds its
+  strips, and a buffer's stale rows repeat the fresh ones.
+- **The simulator** (`src/moon-gpu/sim.c`, `scripts/gpu/sim-build.sh`):
+  this compositor's own code with KMS and the GPU simulated, built for the
+  host. The panel flips at 120 Hz and scans out: each refresh it reads the
+  rows of the buffers on its planes at the times a panel would, and counts
+  the refresh torn when a row changed after it began (`MOON_SIM_STATS`,
+  `MOON_SIM_FRAMES`). Moon runs against it in a sandbox Xorg like against
+  the real one (the CPU tier runs; buffers are memfds).
+- **Later (v6): acquire fences** for GPU-rendering clients: an optional
   sync_file with `MG_SURFACE_DAMAGE`, kept on the surface until the next
   damage; the planes path passes it as the layer's `IN_FENCE_FD`, the GPU
   tier waits on it server-side (`EGL_ANDROID_native_fence_sync`, then
@@ -546,8 +574,8 @@ reboot. A reboot with `GPU_COMPOSITOR=0` returned the plain software path.
 2. **Default on** (done, approved by the user after the opt-in round):
    `GPU_COMPOSITOR` unset means GPU mode; the software session remains the
    fallback and `--disable` the opt-out.
-3. **Fewer copies and more planes:** double-buffer the X mirror (no
-   tearing); the status strip, keyboard, volume and banner windows as Moon
+3. **Fewer copies and more planes:** double-buffer the X mirror (done,
+   v5); the status strip, keyboard, volume and banner windows as Moon
    layers on planes instead of X windows; the foreground app's region of the
    mirror on its own plane; AFBC for GPU output (DPP1/2/4/7 scan it out).
 4. **Wayland front end** (the Wayland agent's option A): Moon as the
