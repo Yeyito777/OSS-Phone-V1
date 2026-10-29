@@ -51,6 +51,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
@@ -60,6 +61,12 @@
 
 #define NBUF 3
 #define MAX_FDS 4
+/* X mirror buffers (protocol v5): the display shows one while Xorg writes
+ * the other. A third made no difference in the simulator (sim.c): Moon's
+ * copy lands well within a refresh. */
+#ifndef MIRRORS
+#define MIRRORS 2
+#endif
 /* A flip that has not completed after this long is presumed lost. */
 #define FLIP_TIMEOUT_NS 250000000ull
 /* The loop wakes at least this often when idle, to re-arm its watchdog,
@@ -155,7 +162,17 @@ struct comp {
 
     struct surface *surf;
     size_t nsurf, capsurf;
-    struct surface mirror;
+    /* The X mirror (v5: several buffers, mirror_init). Frames show
+     * `mirror_front`, the newest the client damaged; a plane may scan out
+     * `mirror_scan` (the frame on screen's, -1 if it does not show the
+     * mirror on a plane), and the frame in flight uses `flight_mirror`.
+     * The client may write the buffers in `mirror_client` (released to it),
+     * none of those. `mirror_stuck` is one a lost flip may have left on
+     * screen, busy until the next flip. */
+    struct surface mirrors[MIRRORS];
+    int nmirror, mirror_front, mirror_scan, mirror_stuck;
+    int flight_mirror, flight_mirror_scanned;
+    unsigned mirror_client;
 
     struct frame cur, pending;
     int have_pending, cur_valid, dirty;
@@ -202,9 +219,13 @@ static void dmabuf_sync(int fd, uint64_t flags) {
 }
 
 /* After the CPU wrote a cached buffer: clean its cache lines for the GPU and
- * the display. */
+ * the display. The end of a CPU access alone does that (arm64: a clean to
+ * the point of coherency for every attachment); a start first only
+ * invalidated the lines again, which doubled the cost of every mirror
+ * update (10 MB: 2.9 against 1.5 ms on a little core, 1.0 against 0.84 on
+ * a big one, measured on the phone with the buffer imported by the
+ * display). Nothing here reads what a device wrote into these buffers. */
 static void flush_for_device(int fd) {
-    dmabuf_sync(fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW);
     dmabuf_sync(fd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW);
 }
 
@@ -212,7 +233,9 @@ static void flush_for_device(int fd) {
 
 static struct surface *find_surface(struct comp *c, uint32_t id) {
     if (id == MG_MIRROR_ID)
-        return c->mirror.id ? &c->mirror : NULL;
+        return c->nmirror && c->mirrors[c->mirror_front].id
+                   ? &c->mirrors[c->mirror_front]
+                   : NULL;
     for (size_t i = 0; i < c->nsurf; i++)
         if (c->surf[i].id == id)
             return &c->surf[i];
@@ -422,29 +445,57 @@ static int adopt_dmabuf(struct comp *c, struct surface *s, int fd, int width,
 /* ---- the X mirror ---- */
 
 static int mirror_init(struct comp *c) {
-    struct surface *m = &c->mirror;
-    memset(m, 0, sizeof *m);
-    m->fd = -1;
     int stride = (c->width * 4 + 63) & ~63;
-    /* Cached: Xorg writes it with the CPU (fast), the compositor reads it in
-     * the CPU tier, and cleans the caches on every damage for the GPU and
-     * the display. */
-    int fd = gpu_dmabuf_alloc("system", (size_t)stride * c->height);
-    if (fd < 0) {
-        LOG("mirror: dma_heap system: %s", strerror(-fd));
-        return -1;
+    c->mirror_scan = c->mirror_stuck = c->flight_mirror = -1;
+    for (int i = 0; i < MIRRORS; i++) {
+        struct surface *m = &c->mirrors[i];
+        memset(m, 0, sizeof *m);
+        m->fd = -1;
+        /* Cached: Xorg writes it with the CPU (fast), the compositor reads
+         * it in the CPU tier, and cleans the caches on every damage for the
+         * GPU and the display. */
+        int fd = gpu_dmabuf_alloc("system", (size_t)stride * c->height);
+        if (fd < 0) {
+            LOG("mirror %d: dma_heap system: %s", i, strerror(-fd));
+            break;
+        }
+        if (adopt_dmabuf(c, m, fd, c->width, c->height, stride, DRM_FORMAT_XRGB8888,
+                         1, 1)) {
+            LOG("mirror %d: the dmabuf cannot be used", i);
+            release(c, m);
+            break;
+        }
+        memset(m->map, 0, m->map_len);
+        flush_for_device(fd);
+        m->id = MG_MIRROR_ID;
+        c->nmirror = i + 1;
     }
-    if (adopt_dmabuf(c, m, fd, c->width, c->height, stride, DRM_FORMAT_XRGB8888,
-                     1, 1)) {
-        LOG("mirror: the dmabuf cannot be used");
+    if (!c->nmirror)
         return -1;
-    }
-    memset(m->map, 0, m->map_len);
-    flush_for_device(fd);
-    m->id = MG_MIRROR_ID;
-    LOG("mirror: %dx%d stride %d%s%s", c->width, c->height, stride,
+    struct surface *m = &c->mirrors[0];
+    LOG("mirror: %d x %dx%d stride %d%s%s", c->nmirror, c->width, c->height, stride,
         m->tex.id ? ", GPU texture" : "", m->fb ? ", scanout" : "");
     return 0;
+}
+
+/* v5: gives the client every mirror buffer nothing uses any more: not the
+ * one frames show, the one in flight, the one on screen, or one a lost flip
+ * may have left there. */
+static void send_msg(struct comp *c, uint16_t type, const void *body,
+                     size_t len, int fd);
+
+static void release_mirrors(struct comp *c) {
+    if (c->client_version < 5 || c->client_fd < 0)
+        return;
+    for (int i = 0; i < c->nmirror; i++) {
+        if ((c->mirror_client & (1u << i)) || i == c->mirror_front ||
+            i == c->mirror_scan || i == c->mirror_stuck ||
+            (c->flip_pending && i == c->flight_mirror))
+            continue;
+        c->mirror_client |= 1u << i;
+        struct mg_id m = {.id = (uint32_t)i};
+        send_msg(c, MG_MIRROR_RELEASED, &m, sizeof m, -1);
+    }
 }
 
 /* ---- snapshots ---- */
@@ -671,13 +722,24 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
                     (c->planes ? MG_CAP_PLANES : 0),
         };
         send_msg(c, MG_WELCOME, &w, sizeof w, -1);
-        struct mg_surface_shm mi = {.width = (uint32_t)c->width,
-                                    .height = (uint32_t)c->height,
-                                    .stride = (uint32_t)c->mirror.stride,
-                                    .format = MG_XRGB8888,
-                                    .flags = MG_SURFACE_DMABUF};
-        send_msg(c, MG_MIRROR, &mi, sizeof mi, c->mirror.fd);
-        LOG("client hello");
+        /* v5: every buffer, then those it may write. Older: buffer 0, which
+         * it writes in place. */
+        int count = m->version >= 5 ? c->nmirror : 1;
+        if (m->version < 5)
+            c->mirror_front = 0;
+        c->mirror_client = 0;
+        for (int i = 0; i < count; i++) {
+            struct mg_surface_shm mi = {.id = (uint32_t)i,
+                                        .width = (uint32_t)c->width,
+                                        .height = (uint32_t)c->height,
+                                        .stride = (uint32_t)c->mirrors[i].stride,
+                                        .format = MG_XRGB8888,
+                                        .flags = MG_SURFACE_DMABUF};
+            send_msg(c, MG_MIRROR, &mi, sizeof mi, c->mirrors[i].fd);
+        }
+        release_mirrors(c);
+        LOG("client hello (v%u, %d mirror buffer%s)", m->version, count,
+            count == 1 ? "" : "s");
         break;
     }
     case MG_SURFACE_SHM: {
@@ -822,13 +884,28 @@ static void handle(struct comp *c, const char *p, size_t len, int *fds,
         }
         break;
     }
-    case MG_MIRROR_DAMAGE:
+    case MG_MIRROR_DAMAGE: {
+        /* v5: which buffer Xorg wrote; frames show it from now on. */
+        uint32_t index = 0;
+        if (c->client_version >= 5 && blen >= sizeof(struct mg_damage))
+            index = ((const struct mg_damage *)body)->reserved;
+        if (index >= (uint32_t)c->nmirror) {
+            LOG("damage for mirror buffer %u of %d", index, c->nmirror);
+            break;
+        }
+        if (c->client_version >= 5 && !(c->mirror_client & (1u << index)))
+            LOG("mirror buffer %u written while not released", index);
         /* Xorg wrote it with the CPU: clean the caches for the GPU and the
          * display before either reads it. */
-        flush_for_device(c->mirror.fd);
+        flush_for_device(c->mirrors[index].fd);
+        c->mirror_client &= ~(1u << index);
+        c->mirror_front = (int)index;
         if (c->cur_valid && frame_uses(&c->cur, MG_MIRROR_ID))
             c->dirty = 1;
+        /* The buffer frames showed before is free unless still in use. */
+        release_mirrors(c);
         break;
+    }
     case MG_FRAME: {
         NEED(struct mg_frame);
         const struct mg_frame *m = (const void *)body;
@@ -1114,6 +1191,8 @@ static void submit(struct comp *c, uint32_t serial) {
         return;
     }
     c->flip_pending = 1;
+    c->flight_mirror = frame_uses(&c->cur, MG_MIRROR_ID) ? c->mirror_front : -1;
+    c->flight_mirror_scanned = path == MG_PATH_PLANES;
     c->flight_serial = serial;
     c->flight_path = (uint32_t)path;
     c->flight_tag = tag;
@@ -1167,6 +1246,12 @@ static void flip_done(struct comp *c, const struct kms_flip *ev) {
     c->flight_fence = -1;
     c->flip_pending = 0;
     shown_is_cur(c);
+    /* A plane now scans this mirror buffer (or none); the GPU and CPU tiers
+     * finished reading theirs before the flip. */
+    c->mirror_scan = c->flight_mirror_scanned ? c->flight_mirror : -1;
+    c->mirror_stuck = -1;
+    c->flight_mirror = -1;
+    release_mirrors(c);
     if (p.serial)
         send_msg(c, MG_PRESENTED, &p, sizeof p, -1);
     if (p.path != MG_PATH_PLANES && p.render_ns) {
@@ -1203,6 +1288,8 @@ static void wait_flip(struct comp *c) {
         close(c->flight_fence);
         c->flight_fence = -1;
     }
+    if (c->flip_pending && c->flight_mirror >= 0)
+        c->mirror_stuck = c->flight_mirror;
     c->flip_pending = 0;
 }
 
@@ -1251,6 +1338,10 @@ static void power(struct comp *c, int on) {
         (now_ns() - t0) / 1e6);
     if (!r) {
         c->powered = on;
+        /* Off, nothing is scanned out; on, the panel shows a composed
+         * output buffer: no mirror buffer is held either way. */
+        c->mirror_scan = c->mirror_stuck = -1;
+        release_mirrors(c);
         if (on)
             shown_is_cur(c);
         if (on && c->cur_valid && c->cur.serial) {
@@ -1560,6 +1651,27 @@ static int outputs_init(struct comp *c) {
     return 0;
 }
 
+/* Without the framework nothing boosts the display path, so the scheduler
+ * ran this loop's short bursts (a 10 MB cache clean, the commits) on slow
+ * cores at low clocks. Like Moon's thread and Xorg's group, a 60 %
+ * utilization floor for this thread while it runs (not for the threads it
+ * starts, SCHED_FLAG_RESET_ON_FORK). Best effort. */
+static void boost_self(void) {
+    struct {
+        uint32_t size, policy;
+        uint64_t flags;
+        int32_t nice;
+        uint32_t priority;
+        uint64_t runtime, deadline, period;
+        uint32_t util_min, util_max;
+    } attr = {.size = sizeof attr,
+              .policy = 0, /* SCHED_OTHER */
+              .flags = 0x01 | 0x20, /* RESET_ON_FORK | UTIL_CLAMP_MIN */
+              .util_min = 614}; /* 60 % of 1024 */
+    if (syscall(__NR_sched_setattr, 0, &attr, 0))
+        LOG("utilization floor: %s", strerror(errno));
+}
+
 static int listen_on(const char *path) {
     int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (fd < 0)
@@ -1708,6 +1820,7 @@ int main(int argc, char **argv) {
     c.listen_fd = listen_on(socket_path);
     if (c.listen_fd < 0)
         return 15;
+    boost_self();
     LOG("ready in %.0f ms: %dx%d, %s tier, planes %s, socket %s",
         (now_ns() - t_start) / 1e6, c.width, c.height,
         c.tier == TIER_GPU ? "GPU" : "CPU", c.planes ? "on" : "off", socket_path);
@@ -1743,6 +1856,8 @@ int main(int argc, char **argv) {
             if (c.flight_fence >= 0)
                 close(c.flight_fence);
             c.flight_fence = -1;
+            if (c.flight_mirror >= 0)
+                c.mirror_stuck = c.flight_mirror;
             c.flip_pending = 0;
             c.dirty = 1;
             /* The display stopped flipping: let the session restart us. */

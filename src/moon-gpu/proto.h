@@ -24,11 +24,20 @@
  *       for surfaces that ask (MG_SURFACE_REPORT_IDLE), MG_SURFACE_FAILED.
  *       The compositor sends v4 messages and honours v4 flags only to and
  *       from a client that said v4.
+ *   v5: the X mirror is several buffers, so Xorg never writes the one the
+ *       display scans out (no tearing). MG_MIRROR comes once per buffer,
+ *       mg_surface_shm.id holding its index. The client writes only a
+ *       buffer the compositor gave it with MG_MIRROR_RELEASED, then names
+ *       it in MG_MIRROR_DAMAGE (mg_damage.reserved = its index, with the
+ *       rectangles written); frames show that buffer from then on, and the
+ *       one they showed before comes back released once nothing scans or
+ *       samples it. After the hello every buffer the client may write is
+ *       released. A v4 client gets buffer 0 alone, written in place.
  * Compatibility: an older client works with a newer compositor unchanged;
  * a newer client needs a compositor that speaks its version (deploy the
  * compositor first). Compositors before v4 drop a client whose version
  * differs from theirs, so a client steps down when its hello is refused. */
-#define MG_PROTO_VERSION 4
+#define MG_PROTO_VERSION 5
 #define MG_PROTO_MIN_VERSION 2
 #define MG_MIRROR_ID 0xffffffffu
 #define MG_MAX_PACKET (64 * 1024)
@@ -51,6 +60,7 @@ enum mg_type {
     MG_POWERED = 68,        /* mg_power: the panel state took effect */
     MG_SURFACE_IDLE = 69,   /* v4, mg_id: nothing references it any more */
     MG_SURFACE_FAILED = 70, /* v4, mg_failed: the surface is gone */
+    MG_MIRROR_RELEASED = 71, /* v5, mg_id: a mirror buffer (index) to write */
 };
 
 struct mg_header {

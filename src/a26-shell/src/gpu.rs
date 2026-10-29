@@ -50,11 +50,13 @@ use crate::present::Damage;
 /// v2, only when the compositor closes the link after the hello: a
 /// compositor older than v3 drops a client whose version differs from its
 /// own. Timeouts and connect errors are plain failures, retried at the top.
-const PROTO_VERSION: u32 = 4;
+const PROTO_VERSION: u32 = 5;
 const PROTO_MIN_VERSION: u32 = 2;
 /// The newest version Moon can speak; MOON_GPU_PROTO offers an older one
-/// (to test the v2/v3 paths).
-const PROTO_MAX_KNOWN: u32 = 4;
+/// (to test the older paths; 4 keeps the single, torn mirror).
+const PROTO_MAX_KNOWN: u32 = 5;
+/// v5: the X mirror is several buffers, written only once released.
+const MIRROR_BUFFERS_VERSION: u32 = 5;
 
 fn offered_version() -> u32 {
     std::env::var("MOON_GPU_PROTO")
@@ -94,6 +96,7 @@ const SURFACE_FOREIGN: u32 = 2;
 const FOREIGN_VERSION: u32 = 4;
 const MSG_SURFACE_IDLE: u16 = 69;
 const MSG_SURFACE_FAILED: u16 = 70;
+const MSG_MIRROR_RELEASED: u16 = 71;
 const CAP_GPU: u32 = 1;
 const CAP_PLANES: u32 = 2;
 /// Corner radius baked into switcher card copies (see `prescale`).
@@ -499,6 +502,33 @@ enum Surface {
     Mirror,
 }
 
+/// Rectangles to copy, each pixel once where it is cheap to tell: none
+/// inside another (a scroll's window copy holds the strips drawn into it,
+/// and a buffer's stale rows repeat the fresh ones), and their bounding box
+/// when they cover most of it anyway or are many.
+fn coalesce(mut rects: Vec<Damage>) -> Vec<Damage> {
+    rects.retain(|r| r.x1 > r.x0 && r.y1 > r.y0);
+    let inside =
+        |a: &Damage, b: &Damage| a.x0 >= b.x0 && a.y0 >= b.y0 && a.x1 <= b.x1 && a.y1 <= b.y1;
+    let mut kept: Vec<Damage> = Vec::with_capacity(rects.len());
+    for r in rects {
+        if kept.iter().any(|k| inside(&r, k)) {
+            continue;
+        }
+        kept.retain(|k| !inside(k, &r));
+        kept.push(r);
+    }
+    let Some(bounds) = kept.iter().copied().reduce(Damage::union) else {
+        return kept;
+    };
+    let area = |r: &Damage| i64::from(r.x1 - r.x0) * i64::from(r.y1 - r.y0);
+    let sum: i64 = kept.iter().map(area).sum();
+    if kept.len() > 64 || sum * 4 >= area(&bounds) * 3 {
+        return vec![bounds];
+    }
+    kept
+}
+
 /// One surface of a Wayland app shown directly over the X mirror while the
 /// app is in front: its buffer's `src` rectangle drawn at `dst` on the
 /// screen (the toplevel, then its subsurfaces and popups in stacking order).
@@ -537,15 +567,23 @@ pub struct GpuBackend {
     height: u16,
     period_us: u64,
     surfaces: Vec<Option<Surface>>,
-    mirror: Option<Mirror>,
+    /// The X mirror's buffers by index (v5: several; older: one).
+    mirrors: Vec<Option<Mirror>>,
+    /// v5: buffers the compositor released for writing (it shows none of
+    /// them); older compositors: buffer 0, always written in place.
+    mirror_free: Vec<usize>,
+    /// Per buffer, root damage copied into the other buffers since this one
+    /// was last written: it owes that too.
+    mirror_stale: Vec<Vec<Damage>>,
     capture_gc: Gcontext,
     marker: Pixmap,
     marker_gc: Gcontext,
     damage: damage::Damage,
     /// Root damage not yet copied into the mirror.
     mirror_damage: Vec<Damage>,
-    /// Rectangles of the copy whose completion marker is outstanding.
-    flushing: Option<Vec<Damage>>,
+    /// The buffer and rectangles of the copy whose completion marker is
+    /// outstanding.
+    flushing: Option<(usize, Vec<Damage>)>,
     /// Snapshots to take once the outstanding copy completes.
     captures_after_flush: Vec<SurfaceId>,
     captures_waiting: Vec<SurfaceId>,
@@ -628,7 +666,9 @@ impl GpuBackend {
             height,
             period_us: 8_333,
             surfaces: Vec::new(),
-            mirror: None,
+            mirrors: Vec::new(),
+            mirror_free: Vec::new(),
+            mirror_stale: Vec::new(),
             capture_gc,
             marker,
             marker_gc,
@@ -744,6 +784,8 @@ impl GpuBackend {
             .borrow_mut()
             .connect()
             .map_err(|error| HandshakeError::Failed(error.into()))?;
+        // The compositor hands out its mirror buffers anew.
+        self.detach_mirrors(conn);
         let mut hello = Msg::new(MSG_HELLO);
         hello.u32(version);
         if !self.link.borrow_mut().send(hello.finish(), None) {
@@ -798,6 +840,10 @@ impl GpuBackend {
                             Ok(false)
                         }
                         MSG_MIRROR => self.attach_mirror(conn, &buffer[..len], fds).map(|()| true),
+                        MSG_MIRROR_RELEASED => {
+                            self.mirror_released(le_u32(&buffer, 8));
+                            Ok(false)
+                        }
                         _ => Ok(false),
                     }
                 }
@@ -820,11 +866,20 @@ impl GpuBackend {
         msg: &[u8],
         mut fds: Vec<OwnedFd>,
     ) -> Result<(), Box<dyn Error>> {
+        // v5: the buffer's index; older compositors send one, with id 0.
+        let index = le_u32(msg, 8) as usize;
         let (width, height, stride) = (le_u32(msg, 12), le_u32(msg, 16), le_u32(msg, 20));
         let Some(fd) = fds.pop() else {
             return Err("mirror without a buffer".into());
         };
-        if let Some(old) = self.mirror.take() {
+        if index >= 8 {
+            return Err(format!("mirror buffer {index}").into());
+        }
+        if self.mirrors.len() <= index {
+            self.mirrors.resize_with(index + 1, || None);
+            self.mirror_stale.resize_with(index + 1, Vec::new);
+        }
+        if let Some(old) = self.mirrors[index].take() {
             conn.free_pixmap(old.pixmap)?;
             conn.shm_detach(old.seg)?;
         }
@@ -842,15 +897,46 @@ impl GpuBackend {
             seg,
             0,
         )?;
-        self.mirror = Some(Mirror {
+        self.mirrors[index] = Some(Mirror {
             seg,
             pixmap,
             width: width.min(u32::from(self.width)) as u16,
             height: height.min(u32::from(self.height)) as u16,
         });
+        // Everything must reach a buffer before it is shown.
+        self.mirror_stale[index] = vec![self.screen()];
         conn.flush()?;
-        eprintln!("gpu: X mirror attached ({width}x{height}, stride {stride})");
+        eprintln!("gpu: X mirror buffer {index} attached ({width}x{height}, stride {stride})");
         Ok(())
+    }
+
+    fn detach_mirrors<C: Connection>(&mut self, conn: &C) {
+        for mirror in std::mem::take(&mut self.mirrors).into_iter().flatten() {
+            let _ = conn.free_pixmap(mirror.pixmap);
+            let _ = conn.shm_detach(mirror.seg);
+        }
+        self.mirror_free.clear();
+        self.mirror_stale.clear();
+        self.flushing = None;
+    }
+
+    /// v5: the compositor no longer shows buffer `index`; it may be written.
+    fn mirror_released(&mut self, index: u32) {
+        let index = index as usize;
+        if !self.mirror_free.contains(&index) {
+            self.mirror_free.push(index);
+        }
+    }
+
+    /// The buffer the next copy goes into, if one may be written now.
+    fn writable_mirror(&self) -> Option<usize> {
+        if self.version < MIRROR_BUFFERS_VERSION {
+            return self.mirrors.first().and_then(Option::as_ref).map(|_| 0);
+        }
+        self.mirror_free
+            .iter()
+            .copied()
+            .find(|index| self.mirrors.get(*index).is_some_and(Option::is_some))
     }
 
     pub fn set_profile(&mut self, enabled: bool) {
@@ -884,6 +970,8 @@ impl GpuBackend {
         self.in_flight = None;
         self.held_frame = None;
         self.flushing = None;
+        // A new compositor releases its buffers itself.
+        self.mirror_free.clear();
     }
 
     fn announce_layer(&mut self, id: SurfaceId) {
@@ -971,6 +1059,11 @@ impl GpuBackend {
     }
 
     fn send_damage(&mut self, kind: u16, id: u32, damage: &[Damage]) {
+        self.send_damage_to(kind, id, 0, damage);
+    }
+
+    /// `reserved`: v5 mirror damage names the buffer written.
+    fn send_damage_to(&mut self, kind: u16, id: u32, reserved: u32, damage: &[Damage]) {
         let bounds;
         let rects = if damage.len() > MAX_RECTS {
             bounds = [damage.iter().copied().reduce(Damage::union).unwrap()];
@@ -979,7 +1072,7 @@ impl GpuBackend {
             damage
         };
         let mut msg = Msg::new(kind);
-        msg.u32(id).u32(0).u32(rects.len() as u32).u32(0);
+        msg.u32(id).u32(0).u32(rects.len() as u32).u32(reserved);
         for r in rects {
             msg.i32(r.x0).i32(r.y0).i32(r.x1).i32(r.y1);
         }
@@ -1122,6 +1215,8 @@ impl GpuBackend {
 
     /// Copies pending root damage into the mirror, followed by the marker
     /// whose completion releases it to the compositor. One copy at a time.
+    /// v5: into a buffer the compositor released (it shows another), with
+    /// the damage that buffer missed while the others were written.
     fn flush_mirror<C: Connection>(&mut self, conn: &C) -> Result<(), Box<dyn Error>> {
         if self.flushing.is_some()
             || self.mirror_damage.is_empty()
@@ -1129,21 +1224,31 @@ impl GpuBackend {
         {
             return Ok(());
         }
-        let Some(mirror) = self.mirror.as_ref() else {
+        let Some(index) = self.writable_mirror() else {
             return Ok(());
         };
-        let mut rects = std::mem::take(&mut self.mirror_damage);
-        let screen = self.screen();
-        if rects.len() > 64 {
-            rects = vec![rects.iter().copied().reduce(Damage::union).unwrap()];
+        let Some(mirror) = self.mirrors[index].as_ref() else {
+            return Ok(());
+        };
+        let fresh = std::mem::take(&mut self.mirror_damage);
+        let mut rects = std::mem::take(&mut self.mirror_stale[index]);
+        rects.extend(fresh.iter().copied());
+        for (other, stale) in self.mirror_stale.iter_mut().enumerate() {
+            if other != index {
+                stale.extend(fresh.iter().copied());
+                if stale.len() > 64 {
+                    *stale = vec![stale.iter().copied().reduce(Damage::union).unwrap()];
+                }
+            }
         }
+        let screen = self.screen();
         for r in &mut rects {
             r.x0 = r.x0.clamp(0, screen.x1);
             r.x1 = r.x1.clamp(0, screen.x1).min(i32::from(mirror.width));
             r.y0 = r.y0.clamp(0, screen.y1);
             r.y1 = r.y1.clamp(0, screen.y1).min(i32::from(mirror.height));
         }
-        rects.retain(|r| r.x1 > r.x0 && r.y1 > r.y0);
+        let rects = coalesce(rects);
         for r in &rects {
             conn.copy_area(
                 self.root,
@@ -1175,10 +1280,21 @@ impl GpuBackend {
             0,
         )?;
         conn.flush()?;
+        if self.version >= MIRROR_BUFFERS_VERSION {
+            self.mirror_free.retain(|free| *free != index);
+        }
+        if self.profile {
+            let rows: i32 = rects.iter().map(|r| r.y1 - r.y0).sum();
+            eprintln!(
+                "gpu mirror: copy {} into buffer {index} ({rows} rows) at {:.3}",
+                self.flushes_issued + 1,
+                monotonic_ns() as f64 / 1e6
+            );
+        }
         self.captures_waiting
             .extend(std::mem::take(&mut self.captures_after_flush));
         self.flushes_issued += 1;
-        self.flushing = Some(rects);
+        self.flushing = Some((index, rects));
         Ok(())
     }
 
@@ -1200,10 +1316,19 @@ impl GpuBackend {
                 true
             }
             Event::ShmCompletion(event) if event.drawable == self.marker => {
-                if let Some(rects) = self.flushing.take()
-                    && !rects.is_empty()
-                {
-                    self.send_damage(MSG_MIRROR_DAMAGE, 0, &rects);
+                if let Some((index, rects)) = self.flushing.take() {
+                    if self.profile {
+                        eprintln!(
+                            "gpu mirror: copy {} landed at {:.3}",
+                            self.flushes_issued,
+                            monotonic_ns() as f64 / 1e6
+                        );
+                    }
+                    if !rects.is_empty() || self.version >= MIRROR_BUFFERS_VERSION {
+                        // v5: the buffer is the newest even with nothing
+                        // copied (its stale rows were all off screen).
+                        self.send_damage_to(MSG_MIRROR_DAMAGE, 0, index as u32, &rects);
+                    }
                 }
                 for id in std::mem::take(&mut self.captures_waiting) {
                     let mut msg = Msg::new(MSG_SURFACE_COPY);
@@ -1277,6 +1402,7 @@ impl GpuBackend {
                     }
                 }
                 MSG_UPLOADED => self.uploaded_ns = monotonic_ns(),
+                MSG_MIRROR_RELEASED => self.mirror_released(le_u32(msg, 8)),
                 MSG_POWERED | MSG_WELCOME | MSG_SURFACE_IDLE => {}
                 other => eprintln!("gpu: unexpected message {other}"),
             }
@@ -1561,7 +1687,10 @@ impl GpuBackend {
             return None;
         }
         self.direct = direct;
-        if self.mirror_mode && self.mirror.is_some() && self.link.borrow().connected() {
+        if self.mirror_mode
+            && self.mirrors.iter().any(Option::is_some)
+            && self.link.borrow().connected()
+        {
             self.send_mirror_frame();
             return Some(self.serial);
         }
@@ -1901,6 +2030,31 @@ fn monotonic_ns() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::coalesce;
+    use crate::present::Damage;
+
+    #[test]
+    fn mirror_copies_each_pixel_once() {
+        let d = |x0, y0, x1, y1| Damage { x0, y0, x1, y1 };
+        // A scroll: the window copy, the strip drawn into it, and the same
+        // copy owed from the frame before.
+        let scroll = d(0, 274, 1080, 1924);
+        assert_eq!(
+            coalesce(vec![scroll, d(0, 1900, 1080, 1924), scroll]),
+            vec![scroll]
+        );
+        // Two small, far apart: kept apart.
+        let caret = d(100, 2100, 110, 2160);
+        let clock = d(900, 30, 1000, 80);
+        assert_eq!(coalesce(vec![caret, clock]), vec![caret, clock]);
+        // Mostly overlapping: their bounding box.
+        assert_eq!(
+            coalesce(vec![d(0, 0, 100, 100), d(10, 10, 110, 110)]),
+            vec![d(0, 0, 110, 110)]
+        );
+        assert!(coalesce(vec![d(5, 5, 5, 9)]).is_empty());
+    }
+
     use super::*;
 
     #[test]
