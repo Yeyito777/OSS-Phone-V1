@@ -1,0 +1,28 @@
+#!/bin/sh
+# The phone's reverse SSH tunnel (docs/SSH.md): whale's 127.0.0.1:TUNNEL_PORT
+# reaches this phone's sshd, whatever network the phone is on. Run by the
+# keeper (exocortex-ns.sh tunnel), which restarts it with backoff whenever it
+# exits: when the link dies (ServerAlive) or the forward cannot be set up
+# (ExitOnForwardFailure).
+#
+# A phone that vanishes (power loss, a network change) leaves its old session
+# on whale holding the port, and whale's sshd would only notice hours later.
+# So the session on whale runs a watchdog fed by a heartbeat from here (a
+# line every 5 s, which also ends this script within 5 s of ssh exiting): with
+# no line for 60 s it ends its own session (its parent, an sshd-session of
+# this login), which frees the port. A new tunnel also ends the previous
+# tunnel's session first (recorded in ~/.cache/oss-phone-tunnel.ppid there).
+set -u
+. /etc/oss-phone/tunnel.conf
+: "${TUNNEL_HOST:=whale}" "${TUNNEL_PORT:=2290}" "${SSHD_PORT:=2222}"
+SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
+RECORD='~/.cache/oss-phone-tunnel.ppid'
+
+# shellcheck disable=SC2086
+ssh $SSH_OPTS "$TUNNEL_HOST" "p=\$(cat $RECORD 2>/dev/null)
+if [ -n \"\$p\" ] && [ \"\$(ps -o comm= -p \"\$p\")\" = sshd-session ]; then kill \"\$p\" && echo \"ended the previous tunnel session \$p\"; sleep 1; fi" || exit 1
+
+# shellcheck disable=SC2086
+while :; do echo; sleep 5; done | ssh $SSH_OPTS -o ExitOnForwardFailure=yes \
+    -R "127.0.0.1:$TUNNEL_PORT:127.0.0.1:$SSHD_PORT" "$TUNNEL_HOST" \
+    "mkdir -p ~/.cache; echo \$PPID >$RECORD; while read -r -t 60 line; do :; done; kill \$PPID"

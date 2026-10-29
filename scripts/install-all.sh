@@ -157,6 +157,8 @@ if [[ "$SKIP_EXOCORTEX" == 0 ]]; then
         "$EXO/exocortex-supervisor:$ROOT/usr/local/bin/exocortex-supervisor"
         "$EXO/exocortexd:$ROOT/usr/local/bin/exocortexd"
         "$EXO/android-sh:$ROOT/usr/local/bin/android-sh"
+        "$EXO/oss-phone-tunnel:$ROOT/usr/local/bin/oss-phone-tunnel"
+        "$EXO/oss-phone-sshd.conf:$ROOT/etc/ssh/oss-phone-sshd.conf"
     )
 fi
 if [[ "$SKIP_SYSTEM" == 0 && -n "$A26_SYSTEM" ]]; then

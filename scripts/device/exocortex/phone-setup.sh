@@ -21,7 +21,7 @@ if ! grep -q '^https\?://' /etc/apk/repositories 2>/dev/null; then
     say "apk: added the $release repositories"
 fi
 need=()
-for pkg in bash curl git openssh-client openssh-keygen ripgrep libstdc++ libgcc ca-certificates unzip procps coreutils; do
+for pkg in bash curl git openssh-client openssh-keygen openssh-server ripgrep libstdc++ libgcc ca-certificates unzip procps coreutils; do
     apk info -e "$pkg" >/dev/null 2>&1 || need+=("$pkg")
 done
 if ((${#need[@]})); then
@@ -116,12 +116,26 @@ if ! grep -qF "$WHALE_HOST_KEY" /root/.ssh/known_hosts 2>/dev/null; then
 fi
 chmod 0600 /root/.ssh/config /root/.ssh/known_hosts
 
+# --- SSH server (docs/SSH.md) ----------------------------------------------------
+# Host keys made once, on /data: the phone keeps its identity across updates.
+ssh-keygen -A >/dev/null
+# Root's login shell is bash (sessions over SSH, like Moon's chroot shell).
+if grep -q '^root:.*:/bin/sh$' /etc/passwd && [ -x /bin/bash ]; then
+    sed -i 's|^\(root:.*\):/bin/sh$|\1:/bin/bash|' /etc/passwd
+fi
+touch /root/.ssh/authorized_keys
+chmod 0700 /root/.ssh
+chmod 0600 /root/.ssh/authorized_keys
+say "sshd: $(ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub | cut -d' ' -f2)"
+
 # --- OSS Phone sources, for the agent to read and redeploy from ---------------------------
 umask 022
 mkdir -p /opt/src
 for repo in OSS-Phone-V1 a26-system; do
     if [[ -d "/opt/src/$repo/.git" ]]; then
-        git -C "/opt/src/$repo" pull -q --ff-only 2>/dev/null || say "/opt/src/$repo: not updated (local changes or offline)"
+        # The phone's own working copies (the user and the agent work in
+        # them): left exactly as they are.
+        :
     else
         git clone -q "https://github.com/Yeyito777/$repo.git" "/opt/src/$repo"
     fi

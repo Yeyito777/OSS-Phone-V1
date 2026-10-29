@@ -51,6 +51,9 @@ then starts the keeper, or restarts the daemon when it runs. The phone can
 also update itself: `git pull --ff-only && bun install` in `/opt/exocortex`,
 then `exocortexd restart` (or the agent's own restart action).
 
+SSH into the phone (`ssh oss-phone` from the Mac or whale) is the keeper's
+too: [SSH.md](SSH.md).
+
 ## Credentials
 
 - **OpenAI: an API key.** Exocortex's API-key login (`exocortexd login
@@ -122,6 +125,9 @@ session dies with the `moon-session` init service's cgroup.
   `touch /data/adb/exocortex/disabled` stops everything and keeps it stopped.
 - **Logs.** `/var/log/exocortex/` in the chroot (`keeper.log`, `daemon.out`,
   `notify.out`) and the daemon's own `/opt/exocortex/config/runtime/exocortex.log`.
+
+The keeper also keeps the phone's SSH server and its reverse tunnel to whale
+running, each in its own namespace the same way ([SSH.md](SSH.md)).
 
 | What dies | What happens |
 | --- | --- |
