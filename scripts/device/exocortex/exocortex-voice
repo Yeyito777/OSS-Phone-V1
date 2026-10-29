@@ -14,11 +14,11 @@
 // The microphone is Android's: moon-voice-capture (AAudio, 16 kHz mono) runs
 // outside the chroot through /proc/1/root, as moon-power does. The daemon
 // transcribes (`transcribe_audio`, its OpenAI login), then the text goes to the
-// voice conversation named in /etc/exocortex-voice.json (queued if it is
-// working), which the app then shows. Without one: to the conversation the
-// Exocortex app shows in front, or a new conversation with Claude. Problems
-// become a notification (app exocortex, tag voice).
-// Logs (to Moon's log) never carry what was said.
+// voice conversation named in /etc/exocortex-voice.json (into its running
+// turn if it is working), which the app then shows. Without one: to the
+// conversation the Exocortex app shows in front, or a new conversation with
+// Claude. Problems become a notification (app exocortex, tag voice). Logs (to
+// Moon's log) never carry what was said.
 
 import { createConnection } from "node:net";
 import { mkdtempSync, readFileSync, rmSync, writeSync } from "node:fs";
@@ -271,7 +271,9 @@ async function sendTo(daemon: Daemon, convId: string, text: string): Promise<boo
     return false;
   }
   const queued = await daemon.request(
-    { type: "queue_message", queueId: `voice-${Date.now()}`, convId, text, timing: "message-end" },
+    // next-turn: the words join the turn that is running (Claude takes them in
+    // at its next tool boundary), rather than waiting for it to end.
+    { type: "queue_message", queueId: `voice-${Date.now()}`, convId, text, timing: "next-turn" },
     3000,
     event => event.type === "queue_updated",
   );

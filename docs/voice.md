@@ -14,8 +14,10 @@ plus either volume key.
 
 Where it goes: always to the phone's voice conversation, named in
 `/etc/exocortex-voice.json` (`{"conversation": "ID"}`; on this phone the
-pinned main conversation, EXO), queued as with the app's own send when that
-conversation is working, and the app then shows it. A voice conversation
+pinned main conversation, EXO); when that conversation is working the words
+join its running turn (queue timing `next-turn`: Claude takes them in at its
+next tool boundary) rather than waiting for the turn to end, and the app then
+shows it. A voice conversation
 that is gone means a new conversation with Claude instead. Without the file:
 the conversation the Exocortex app shows, when the app is in front on an
 unlocked screen, else a new conversation with Claude that the app opens
