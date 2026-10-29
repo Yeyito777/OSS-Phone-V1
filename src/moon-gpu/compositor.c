@@ -51,6 +51,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
@@ -202,9 +203,13 @@ static void dmabuf_sync(int fd, uint64_t flags) {
 }
 
 /* After the CPU wrote a cached buffer: clean its cache lines for the GPU and
- * the display. */
+ * the display. The end of a CPU access alone does that (arm64: a clean to
+ * the point of coherency for every attachment); a start first only
+ * invalidated the lines again, which doubled the cost of every mirror
+ * update (10 MB: 2.9 against 1.5 ms on a little core, 1.0 against 0.84 on
+ * a big one, measured on the phone with the buffer imported by the
+ * display). Nothing here reads what a device wrote into these buffers. */
 static void flush_for_device(int fd) {
-    dmabuf_sync(fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW);
     dmabuf_sync(fd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW);
 }
 
@@ -1560,6 +1565,27 @@ static int outputs_init(struct comp *c) {
     return 0;
 }
 
+/* Without the framework nothing boosts the display path, so the scheduler
+ * ran this loop's short bursts (a 10 MB cache clean, the commits) on slow
+ * cores at low clocks. Like Moon's thread and Xorg's group, a 60 %
+ * utilization floor for this thread while it runs (not for the threads it
+ * starts, SCHED_FLAG_RESET_ON_FORK). Best effort. */
+static void boost_self(void) {
+    struct {
+        uint32_t size, policy;
+        uint64_t flags;
+        int32_t nice;
+        uint32_t priority;
+        uint64_t runtime, deadline, period;
+        uint32_t util_min, util_max;
+    } attr = {.size = sizeof attr,
+              .policy = 0, /* SCHED_OTHER */
+              .flags = 0x01 | 0x20, /* RESET_ON_FORK | UTIL_CLAMP_MIN */
+              .util_min = 614}; /* 60 % of 1024 */
+    if (syscall(__NR_sched_setattr, 0, &attr, 0))
+        LOG("utilization floor: %s", strerror(errno));
+}
+
 static int listen_on(const char *path) {
     int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (fd < 0)
@@ -1708,6 +1734,7 @@ int main(int argc, char **argv) {
     c.listen_fd = listen_on(socket_path);
     if (c.listen_fd < 0)
         return 15;
+    boost_self();
     LOG("ready in %.0f ms: %dx%d, %s tier, planes %s, socket %s",
         (now_ns() - t_start) / 1e6, c.width, c.height,
         c.tier == TIER_GPU ? "GPU" : "CPU", c.planes ? "on" : "off", socket_path);
