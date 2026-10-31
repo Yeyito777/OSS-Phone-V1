@@ -1,4 +1,4 @@
-# App services: text areas, the clipboard, links, status bar colour, keeping the screen awake, icon badges
+# App services: text areas, the clipboard, links, status bar colour, keeping the screen awake, icon badges, touches
 
 What Moon does for any app that asks, over its control socket
 (`/run/a26-shell/control.sock`, one command per connection, a JSON reply
@@ -21,6 +21,9 @@ an in-app mic button is the voice hook's, not Moon's (`voice.md`).
 | `awake APP on` / `awake APP off` | the same for a named app: tools and tests |
 | `badge N` | the app that asks shows N on its home screen icon (0 to 99999; `0` removes it) |
 | `badge APP N` | the same for a named app: a helper keeping a closed app's count, tools and tests |
+| `touch stream` | the app that asks reads its own touches from this connection, every finger, instead of XTEST taps (below) |
+| `touch stream APP` | the same for a named app: tools and tests |
+| `touch begin ID X Y` / `touch move ID X Y` / `touch end ID` | a touchscreen contact, as if Xorg had reported it: sandboxes and tests |
 
 `state` carries `keyboard.purpose` (`"multiline"`), `status_bar`, the
 running apps' colours (`{"exocortex": {"color": "#00050f", "content":
@@ -149,6 +152,36 @@ and reboots (Moon keeps the counts in `badges.json` beside its settings,
 show. While the app is closed, a helper running for it names the app
 (`badge exocortex 2`). Asked by something that is not an app, without
 naming one: refused (`badge: not asked by an app (name one)`).
+
+## Touches for the app itself
+
+The Browser's engine wants every finger with its own id, to scroll with
+momentum, pinch and long-press; XTEST gives an X app only a tap.
+`touch stream` hands the asking app (found from the connection, as for
+`statusbar`) the touches Moon would otherwise turn into taps: Moon answers
+`{"ok": true, "result": {"touch_stream": "browser"}}` and keeps the
+connection, writing one line per contact change in physical screen pixels:
+
+    begin ID X Y
+    move ID X Y
+    end ID X Y
+    cancel ID
+
+A touch is the app's when it starts while the app is in front, off Moon's
+keyboard, off the bottom-edge gesture zone (180 px, whose taps still come as
+XTEST, and whose swipes still go home or to the other app) and with nothing
+of Moon's over the app (a banner, the control centre, the power menu, the
+call screen, the app switcher). Further fingers while the app has a touch
+are its too (a pinch). `cancel` replaces `end` when the touch stopped being
+the app's: another app came to the front, or Moon recovered a lost release.
+Moon never waits for the app: a subscriber that cannot take a line is
+dropped (`touch stream: browser stopped reading` in Moon's log) and gets
+XTEST taps again; an app that exits or reconnects replaces its stream. Only
+an app that asks changes: the others get taps and drags as before.
+
+The Browser (vimbrowser) gives page touches to Chromium as real touch and
+asks Moon to `tap` the rest of its window (its navigation row above the
+keyboard, menus, Chromium's popups) as before.
 
 ## Verified (2026-10-29)
 
