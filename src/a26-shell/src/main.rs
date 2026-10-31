@@ -1440,9 +1440,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             state.redraw = true;
             next_clock_tick = clock::next_minute_boundary(Instant::now());
         }
-        // A dynamic wallpaper on the lock screen follows the phone's tilt.
+        // A dynamic wallpaper on the lock and home screens follows the
+        // phone's tilt (not behind the app switcher's cards).
         let tilt_active = state.screen_awake
-            && state.view == View::Locked
+            && matches!(state.view, View::Locked | View::Launcher)
+            && state.switcher.is_none()
             && renderer.compositor.gpu()
             && wallpaper::is_dynamic(&state.settings.wallpaper);
         if tilt.update(tilt_active, Instant::now()) {

@@ -9,7 +9,7 @@ with their own commands: see `display-brightness.md`.
 
 | Command | Effect |
 | --- | --- |
-| `settings set wallpaper ID` | shows a built-in wallpaper (below) on the lock and home screens |
+| `settings set wallpaper ID` | shows a built-in wallpaper (below), or a saved picture (`saved:NAME.png`), on the lock and home screens |
 | `settings set auto_lock_s N` | Auto-Lock after `N` seconds untouched: `15`, `30` (default), `60`, `120`, `300`, or `0` (never) |
 | `settings set timezone ZONE` | the local time zone, an IANA id from `src/a26-shell/src/tz.rs` (88 zones with their POSIX rules from tzdata 2026b; the chroot has no zoneinfo). Applied at once to Moon and to apps started afterwards; running apps follow `state.time` (`zone`, `tz` rule, `clock_24h`). Unset: config.json's `timezone` |
 | `settings set clock_24h on\|off` | the 24-hour clock (unset: config.json's `clock_24h`) |
@@ -87,6 +87,40 @@ app's picker (`a26-system/src/wallpapers.rs`) carry the same table.
 | `dusk` | Dusk | plum with orange, magenta and violet glows | brightest of the set |
 | `ocean` | Ocean | deep teal with cyan and blue glows | like `moon` |
 | `forest` | Forest | deep green with green, lime and teal glows | like `moon` |
+| `orbit` | Orbit | dynamic: stars and a lit crescent moon (earthshine on its night side) over night blue | like `moon` |
+| `ridge` | Ridge | dynamic: four mountain ranges at dusk, haze in their valleys, a sunset glow and its light on the crests | like `dusk` |
+
+### Dynamic wallpapers
+
+`orbit`, `ridge` and every saved picture move with the phone's tilt. Over
+their still picture (the table above) they have layers, drawn once when the
+wallpaper is set and listed back to front, each moved by its own amount:
+`orbit` moves its stars ±32 px and its moon ±90 px; `ridge` its ranges ±23
+to ±152 px, nearer ones more; a saved picture slides ±32 px under the
+screen, like a window onto it. The motion is the tilt away from how the
+phone has been held over the last few seconds (`src/a26-shell/src/tilt.rs`):
+any pose looks centred and only moving the phone moves the picture.
+
+- **Where**: the lock and home screens (home: the widgets, dock and icons
+  stay put above the moving picture; not behind the app switcher), in GPU
+  mode. The CPU compositor shows the layers at rest, as one picture.
+- **Cost**: the accelerometer on the sensor hub (`ssp_sensor/enable` type 1,
+  `accelerometer_sensor/raw_data`, read 50 times a second) runs only while
+  a dynamic wallpaper is on screen with the screen on. A still phone draws
+  no frames: Moon redraws only when the picture would move by a third of a
+  pixel or more. The layers take GPU memory: `orbit` ~13 MB, `ridge`
+  ~30 MB, a saved picture ~11 MB, plus the home screen's parts (~10 MB).
+- Setting a wallpaper draws it on Moon's thread: 60-180 ms here; a saved
+  picture that is not already 1160x2420 is scaled first (~0.5 s for 12 Mpx).
+
+### Saved wallpapers
+
+PNGs in `/var/lib/a26-shell/wallpapers/`, shown as `saved:NAME.png`: best
+1160x2420 (the screen with 40 px to slide in on every side); others are
+scaled to cover it, centred. `scripts/a26-shell/wallpaper-add.sh PICTURE
+[NAME] [--set]` (installed as `moon-wallpaper-add`) converts any picture
+ImageMagick reads to that and can set it. A saved wallpaper whose file is
+gone falls back to `moon` when Moon next starts.
 
 ## Auto-Lock
 

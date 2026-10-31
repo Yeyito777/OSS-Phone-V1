@@ -281,6 +281,16 @@ struct PasscodeKey {
     enabled: bool,
 }
 
+/// One of a dynamic wallpaper's moving layers (wallpaper::Layer), with
+/// its darkened views for the home screen and the lock screen.
+struct SkyLayer {
+    surface: SurfaceId,
+    dimmed: [SurfaceId; 2],
+    /// Where it is at rest.
+    rest: RectF,
+    travel: f32,
+}
+
 /// A layer drawn on the CPU and uploaded when its content key changes.
 struct Layer<K> {
     id: SurfaceId,
@@ -324,6 +334,42 @@ impl<K: PartialEq> Layer<K> {
     }
 }
 
+/// The home screen's widgets, dock, icons and status bar.
+fn draw_home_parts(
+    canvas: &mut Canvas,
+    state: &ShellState,
+    status: &StatusInfo,
+    time: LocalTime,
+    icons: &[AppIcon; AppId::COUNT],
+) {
+    let layout = &state.settings.home;
+    for widget in &layout.widgets {
+        if let Some(rect) = layout.widget_rect(*widget) {
+            draw_widget(canvas, *widget, rect, time, state);
+        }
+    }
+    canvas.fill_rrect(DOCK, DOCK_RADIUS, WHITE, 0.14);
+    for (app, slot) in layout.slots() {
+        let rect = layout.rect(slot);
+        draw_icon_shadow(canvas, rect);
+        canvas.draw_image(&icons[app.index()].home, rect.x as i32, rect.y as i32, 1.0);
+        if let Slot::Grid(_) = slot {
+            draw_app_name(
+                canvas,
+                app.display_name(),
+                rect.center().0,
+                rect.y + rect.h + home::LABEL_DROP,
+            );
+        }
+        let count = state.badges.get(app);
+        if count > 0 {
+            let (x, y) = badges::anchor(rect, 0.0);
+            badges::draw(canvas, count, x.round(), y.round(), 1.0);
+        }
+    }
+    draw_status_bar(canvas, status, None);
+}
+
 /// What an app's card shows while it moves.
 #[derive(Debug, Clone, Copy)]
 enum CardFace {
@@ -344,8 +390,14 @@ pub struct Renderer {
     control: Layer<u64>,
     sliders: [Layer<u64>; 2],
     wall: SurfaceId,
-    /// A dynamic wallpaper's moving layers (stars, moon), GPU mode only.
-    sky: Option<[SurfaceId; 2]>,
+    /// A dynamic wallpaper's moving layers, GPU mode only (`sky_nodes`).
+    sky: Vec<SkyLayer>,
+    /// Over a dynamic wallpaper (GPU mode), the home screen is its parts
+    /// (widgets, dock, icons, status bar) on transparency over the moving
+    /// wallpaper, rather than one picture.
+    home_parts: Option<Layer<HomeKey>>,
+    /// The wallpaper and `home_parts` darkened for the home screen.
+    gpu_home_parts: Option<[SurfaceId; 2]>,
     /// The wallpaper darkened toward the keypad's dim.
     wall_levels: DimLevels,
     /// The home screen darkened toward the switcher's dim.
@@ -429,14 +481,6 @@ pub struct Renderer {
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
 /// How much the passcode keypad darkens the wallpaper.
 const DIMMED: f32 = 0.42;
-/// A dynamic wallpaper's star layer: this much larger than the screen on
-/// every side, room for it to move (far, so it moves least).
-const SKY_MARGIN: f32 = 40.0;
-/// Its moon: the layer's size (the disc is half of it), centre on screen,
-/// and how far it moves (near, so the most).
-const MOON_SIZE: f32 = 640.0;
-const MOON_CENTER: (f32, f32) = (770.0, 1180.0);
-const MOON_TRAVEL: f32 = 90.0;
 /// Unlock progress, 1 at unlock falling to 0 as the keypad fades away.
 fn unlock_progress(state: &ShellState, t: Instant) -> f32 {
     state.unlock_at.map_or(0.0, |at| {
@@ -686,7 +730,9 @@ impl Renderer {
             wallpaper,
             wallpaper_id: "moon".into(),
             wall,
-            sky: None,
+            sky: Vec::new(),
+            home_parts: None,
+            gpu_home_parts: None,
             wall_levels,
             home_levels: DimLevels::new(wall, Vec::new()),
             lock_fade: RowFade::new(usize::from(height)),
@@ -908,34 +954,22 @@ impl Renderer {
             };
             let wallpaper = &self.wallpaper;
             let icons = &self.icons;
+            if !self.sky.is_empty() {
+                // Over a moving wallpaper: the parts alone.
+                if self.home_parts.is_none() {
+                    let (w, h) = (wallpaper.width, wallpaper.height);
+                    self.home_parts = Some(Layer::new(conn, compositor, w, h, true)?);
+                }
+                if let Some(parts) = self.home_parts.as_mut() {
+                    parts.update(conn, compositor, key.clone(), |canvas| {
+                        canvas.pixels.fill(0);
+                        draw_home_parts(canvas, state, &status, time, icons);
+                    })?;
+                }
+            }
             let redrawn = self.home.update(conn, compositor, key, |canvas| {
                 canvas.copy_from(wallpaper);
-                let layout = &state.settings.home;
-                for widget in &layout.widgets {
-                    if let Some(rect) = layout.widget_rect(*widget) {
-                        draw_widget(canvas, *widget, rect, time, state);
-                    }
-                }
-                canvas.fill_rrect(DOCK, DOCK_RADIUS, WHITE, 0.14);
-                for (app, slot) in layout.slots() {
-                    let rect = layout.rect(slot);
-                    draw_icon_shadow(canvas, rect);
-                    canvas.draw_image(&icons[app.index()].home, rect.x as i32, rect.y as i32, 1.0);
-                    if let Slot::Grid(_) = slot {
-                        draw_app_name(
-                            canvas,
-                            app.display_name(),
-                            rect.center().0,
-                            rect.y + rect.h + home::LABEL_DROP,
-                        );
-                    }
-                    let count = state.badges.get(app);
-                    if count > 0 {
-                        let (x, y) = badges::anchor(rect, 0.0);
-                        badges::draw(canvas, count, x.round(), y.round(), 1.0);
-                    }
-                }
-                draw_status_bar(canvas, &status, None);
+                draw_home_parts(canvas, state, &status, time, icons);
             })?;
             if redrawn {
                 // Marked only: copies are brought up to date when a fade
@@ -1604,24 +1638,56 @@ impl Renderer {
         if self.wallpaper_id == id {
             return Ok(());
         }
-        self.wallpaper = crate::wallpaper::render(id, self.wallpaper.width, self.wallpaper.height);
+        let started = Instant::now();
+        let (mut still, mut layers) =
+            crate::wallpaper::build(id, self.wallpaper.width, self.wallpaper.height);
+        if !self.compositor.gpu() {
+            // Nothing moves without the GPU: one picture.
+            crate::wallpaper::flatten(&mut still, &layers);
+            layers.clear();
+        }
+        self.wallpaper = still;
         self.compositor.upload(conn, self.wall, &self.wallpaper)?;
         self.wallpaper_id = id.to_owned();
-        if crate::wallpaper::is_dynamic(id) && self.compositor.gpu() && self.sky.is_none() {
-            let (w, h) = (self.wallpaper.width, self.wallpaper.height);
-            let (sw, sh) = (w + 2 * SKY_MARGIN as i32, h + 2 * SKY_MARGIN as i32);
-            let stars = self
-                .compositor
-                .create_layer(conn, sw as u16, sh as u16, true)?;
-            self.compositor
-                .upload(conn, stars, &crate::wallpaper::sky_stars(sw, sh))?;
-            let moon =
-                self.compositor
-                    .create_layer(conn, MOON_SIZE as u16, MOON_SIZE as u16, true)?;
-            self.compositor
-                .upload(conn, moon, &crate::wallpaper::sky_moon(MOON_SIZE as i32))?;
-            self.sky = Some([stars, moon]);
+        for layer in self.sky.drain(..) {
+            for dimmed in layer.dimmed {
+                self.compositor.free(conn, dimmed);
+            }
+            self.compositor.free(conn, layer.surface);
         }
+        if layers.is_empty() {
+            // A still wallpaper: the home screen is one picture again.
+            for id in self.gpu_home_parts.take().into_iter().flatten() {
+                self.compositor.free(conn, id);
+            }
+            if let Some(parts) = self.home_parts.take() {
+                self.compositor.free(conn, parts.id);
+            }
+        }
+        if self.compositor.gpu() {
+            for layer in layers {
+                let (w, h) = (layer.canvas.width, layer.canvas.height);
+                let surface = self
+                    .compositor
+                    .create_layer(conn, w as u16, h as u16, true)?;
+                self.compositor.upload(conn, surface, &layer.canvas)?;
+                let dimmed = [
+                    self.compositor.create_dimmed(conn, surface, 1.0)?,
+                    self.compositor.create_dimmed(conn, surface, 1.0)?,
+                ];
+                self.sky.push(SkyLayer {
+                    surface,
+                    dimmed,
+                    rest: RectF::new(layer.x, layer.y, w as f32, h as f32),
+                    travel: layer.travel,
+                });
+            }
+        }
+        eprintln!(
+            "wallpaper {id}: {} layers in {} ms",
+            self.sky.len(),
+            started.elapsed().as_millis()
+        );
         if !self.compositor.gpu() {
             self.wall_levels.invalidate_all();
             self.home_levels.invalidate_all();
@@ -1877,6 +1943,23 @@ impl Renderer {
                 }
             };
             self.compositor.set_dim(id, dim);
+            if !locked
+                && self.gpu_home_parts.is_none()
+                && let Some(parts) = self.home_parts.as_ref()
+            {
+                self.gpu_home_parts = Some([
+                    self.compositor.create_dimmed(conn, self.wall, dim)?,
+                    self.compositor.create_dimmed(conn, parts.id, dim)?,
+                ]);
+            }
+            for layer in &self.sky {
+                self.compositor.set_dim(layer.dimmed[slot], dim);
+            }
+            if !locked && let Some(parts) = self.gpu_home_parts {
+                for id in parts {
+                    self.compositor.set_dim(id, dim);
+                }
+            }
             self.last_locked = Some(locked);
             return Ok(());
         }
@@ -1912,45 +1995,35 @@ impl Renderer {
         levels.ensure(conn, &mut self.compositor, fade.span())
     }
 
-    /// A dynamic wallpaper's layers over its base, each shifted by the
-    /// phone's tilt in proportion to its depth (tilt.rs).
-    fn sky_nodes(&self, alpha: f32, nodes: &mut Vec<Node>) {
-        let Some([stars, moon]) = self.sky else {
-            return;
-        };
-        if !crate::wallpaper::is_dynamic(&self.wallpaper_id) || !self.compositor.gpu() {
-            return;
-        }
+    /// A dynamic wallpaper's layers over its still picture, each shifted
+    /// by the phone's tilt (tilt.rs) and darkened like the background of
+    /// `slot` (0 home, 1 lock).
+    fn sky_nodes(&self, slot: usize, nodes: &mut Vec<Node>) {
         let (tx, ty) = crate::tilt::offset();
-        let alpha = quantized(alpha);
-        let far = SKY_MARGIN * 0.8;
-        nodes.push(Node::Image {
-            surface: stars,
-            src: RectF::new(
-                SKY_MARGIN - tx * far,
-                SKY_MARGIN - ty * far,
-                SCREEN_W,
-                SCREEN_H,
-            ),
-            dst: SCREEN,
-            alpha,
-            radius: 0.0,
-            smooth: true,
-        });
-        let (cx, cy) = MOON_CENTER;
-        nodes.push(Node::Image {
-            surface: moon,
-            src: RectF::new(0.0, 0.0, MOON_SIZE, MOON_SIZE),
-            dst: RectF::new(
-                cx - MOON_SIZE / 2.0 + tx * MOON_TRAVEL,
-                cy - MOON_SIZE / 2.0 + ty * MOON_TRAVEL,
-                MOON_SIZE,
-                MOON_SIZE,
-            ),
-            alpha,
-            radius: 0.0,
-            smooth: true,
-        });
+        for layer in &self.sky {
+            let placed = RectF::new(
+                layer.rest.x + tx * layer.travel,
+                layer.rest.y + ty * layer.travel,
+                layer.rest.w,
+                layer.rest.h,
+            );
+            // Only the part on screen.
+            let x0 = placed.x.max(0.0);
+            let y0 = placed.y.max(0.0);
+            let x1 = (placed.x + placed.w).min(SCREEN_W);
+            let y1 = (placed.y + placed.h).min(SCREEN_H);
+            if x1 <= x0 || y1 <= y0 {
+                continue;
+            }
+            nodes.push(Node::Image {
+                surface: layer.dimmed[slot],
+                src: RectF::new(x0 - placed.x, y0 - placed.y, x1 - x0, y1 - y0),
+                dst: RectF::new(x0, y0, x1 - x0, y1 - y0),
+                alpha: 1.0,
+                radius: 0.0,
+                smooth: true,
+            });
+        }
     }
 
     /// The node showing a background's rows.
@@ -2085,7 +2158,9 @@ impl Renderer {
             Some(id) if self.compositor.gpu() => backdrop_node(id),
             _ => Self::background_node(&mut self.compositor, &self.wall_levels, &self.lock_fade),
         });
-        self.sky_nodes(1.0 - p.clamp(0.0, 1.0) * DIMMED, nodes);
+        if self.compositor.gpu() {
+            self.sky_nodes(1, nodes);
+        }
         // The clock rises with the finger and fades out first; then the
         // keypad cascades in a row at a time. Only a row or two change per
         // frame, which keeps the drag within a 120 Hz refresh.
@@ -2148,12 +2223,19 @@ impl Renderer {
         if live {
             self.live_home_nodes(state, t, nodes);
         } else {
-            nodes.push(match self.gpu_backdrops[0] {
-                Some(id) if self.compositor.gpu() => backdrop_node(id),
-                _ => {
-                    Self::background_node(&mut self.compositor, &self.home_levels, &self.home_fade)
+            match (self.gpu_home_parts, self.gpu_backdrops[0]) {
+                (Some([wall, parts]), _) if self.compositor.gpu() && !self.sky.is_empty() => {
+                    nodes.push(backdrop_node(wall));
+                    self.sky_nodes(0, nodes);
+                    nodes.push(backdrop_node(parts));
                 }
-            });
+                (_, Some(id)) if self.compositor.gpu() => nodes.push(backdrop_node(id)),
+                _ => nodes.push(Self::background_node(
+                    &mut self.compositor,
+                    &self.home_levels,
+                    &self.home_fade,
+                )),
+            }
         }
         // Unlock: the keypad cascades away over the home screen, bottom row
         // first (the lock swipe's cascade in reverse).
@@ -2302,6 +2384,9 @@ impl Renderer {
         let shown = page.clamp(0.0, 1.0);
         let shift = (page * SCREEN_W).round();
         nodes.push(backdrop_node(self.wall));
+        if self.compositor.gpu() {
+            self.sky_nodes(0, nodes);
+        }
         let widgets = home.widget_views(&state.settings.home, t);
         for index in 0..Widget::COUNT {
             self.widget_nodes(widgets.get(index), nodes);
