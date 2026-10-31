@@ -1196,7 +1196,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         if std::mem::take(&mut state.paste_requested) {
             let text = clipboard.as_ref().and_then(clipboard::Clipboard::text);
-            paste_clipboard(&conn, &mut state, text.as_deref(), &key_injector);
+            let unicode = wayland
+                .as_ref()
+                .is_some_and(wl_apps::WaylandApps::takes_text);
+            paste_clipboard(&conn, &mut state, text.as_deref(), &key_injector, unicode);
         }
         // `open browser URL` (or a notification's): the Browser gets the link.
         if let Some(open) = state.open_target.as_ref()
@@ -3663,6 +3666,7 @@ fn paste_clipboard(
     state: &mut ShellState,
     text: Option<&str>,
     key_injector: &XtestInjector,
+    unicode: bool,
 ) {
     let Some(text) = text.filter(|_| state.keyboard.is_visible()) else {
         state.last_action = "paste_empty".into();
@@ -3673,7 +3677,8 @@ fn paste_clipboard(
         .managed_windows
         .first()
         .is_some_and(|primary| state.wayland_windows.contains(primary));
-    let (inputs, mut skipped) = keyboard::paste_inputs(text, multiline, wayland);
+    // A Wayland app without text input gets keys, as through XTEST: ASCII.
+    let (inputs, mut skipped) = keyboard::paste_inputs(text, multiline, wayland && unicode);
     if wayland {
         state.wayland_keys.extend(inputs);
     } else {

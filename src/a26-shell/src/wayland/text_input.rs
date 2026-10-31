@@ -228,6 +228,15 @@ pub(crate) fn leave(state: &mut WlState, surface: &WlSurface) {
     }
 }
 
+/// Whether the focused client takes text (it enabled its text input).
+pub(crate) fn enabled(state: &WlState) -> bool {
+    state
+        .text_input
+        .inputs
+        .iter()
+        .any(|input| input.enabled && input.entered.is_some())
+}
+
 /// Commits one key as text to the focused, enabled text input. Enter is
 /// left to wl_keyboard (text-input-v3 has no "submit").
 pub(crate) fn deliver(state: &mut WlState, key: KeyboardInput) -> bool {

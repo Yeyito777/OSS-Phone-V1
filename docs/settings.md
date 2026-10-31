@@ -16,6 +16,7 @@ with their own commands: see `display-brightness.md`.
 | `settings set haptics on\|off` | tap haptics (keyboard keys, Control Centre toggles and slider ends, switches; **off** by default: the A26's coin motor is too faint for crisp taps). The wrong-passcode buzz plays either way |
 | `settings set haptic_STYLE_ms N` | the pulse length for `selection`, `light`, `medium` or `error` taps: 5–400 ms, or `0` for moon-notifyd's default (100, 120, 150, 300 ms) |
 | `settings set power_hold voice\|menu` | what holding the power key does: talk to Exocortex (`voice`, the default, when its hook is installed; the power menu is then power + a volume key) or open the power menu (`menu`). See `voice.md` |
+| `settings set wayland_apps exocortex` | Moon's own apps that start as Wayland clients of Moon (a comma-separated list of `system`, `phone`, `messages`, `exocortex`, or `none`; default none). Each takes it at its next start; Moon binds its Wayland server when one is named (no restart). In GPU mode their frames reach moon-compositor without X's copies. An app that dies on Wayland starts again on X and stays there until this is set again; `state.apps[].wayland` says which run on Wayland. `notes/wayland/MOON-WAYLAND.md` |
 | `haptic STYLE [MS]` | an app asks for a tap haptic (with `MS`: that length once, for tuning) (`selection`, `light`, `medium`, `error`); Moon plays it through moon-notifyd's `haptic` when `haptics` is on and the screen is on |
 
 An unknown key or value is refused (`ok: false`); nothing changes. Every
@@ -24,7 +25,7 @@ reply and `state` carry the current settings:
 ```json
 "settings": {"version": 1, "wallpaper": "moon", "auto_lock_s": 30, "haptics": false, "haptic_ms": [0, 0, 0, 0], "power_hold": "voice",
              "home": {"dock": ["phone", "browser", "messages", "system"], "grid": ["exocortex"], "removed": [],
-                      "widgets": ["calendar", "battery"]}}
+                      "widgets": ["calendar", "battery"]}, "wayland_apps": []}
 ```
 
 ## Home screen layout

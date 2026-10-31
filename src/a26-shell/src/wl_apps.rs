@@ -1376,6 +1376,12 @@ impl WaylandApps {
         self.parents.get(&key).copied()
     }
 
+    /// Whether the focused Wayland app takes any text (text-input-v3);
+    /// otherwise only what the US keymap has reaches it.
+    pub fn takes_text(&self) -> bool {
+        self.server.takes_text()
+    }
+
     /// Text from Moon's keyboard for the focused Wayland app.
     pub fn key_input(&mut self, input: KeyboardInput) -> bool {
         self.server.key_input(input, wayland::now_ms())
