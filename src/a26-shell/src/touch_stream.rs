@@ -5,12 +5,14 @@
 //! keyboard, a Moon overlay or the bottom-edge gesture zone stays Moon's.
 //!
 //! The subscriber's connection gets one reply line, as any command does, and
-//! then one line per contact change, in screen pixels:
+//! then one line per contact change, in screen pixels, with the time Moon
+//! got it (CLOCK_MONOTONIC milliseconds, so the app's fling velocity does not
+//! depend on when it gets to read the line):
 //!
 //! ```text
-//! begin ID X Y
-//! move ID X Y
-//! end ID X Y
+//! begin ID X Y MS
+//! move ID X Y MS
+//! end ID X Y MS
 //! cancel ID
 //! ```
 //!
@@ -23,6 +25,18 @@ use std::io::Write;
 use std::os::unix::net::UnixStream;
 
 use crate::model::AppId;
+
+/// CLOCK_MONOTONIC in milliseconds: the same clock in every process (and
+/// chroot) on the phone.
+fn now_ms() -> u64 {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime writes one timespec through a valid pointer.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) };
+    time.tv_sec as u64 * 1000 + time.tv_nsec as u64 / 1_000_000
+}
 
 #[derive(Debug, Clone, Copy)]
 struct Contact {
@@ -75,7 +89,7 @@ impl TouchStream {
     /// A finger came down on the app; false if it could not be told (the
     /// touch is then Moon's as usual).
     pub fn begin(&mut self, app: AppId, id: u32, x: i16, y: i16) -> bool {
-        if self.owns(id) || !self.send(app, &format!("begin {id} {x} {y}\n")) {
+        if self.owns(id) || !self.send(app, &format!("begin {id} {x} {y} {}\n", now_ms())) {
             return false;
         }
         self.contacts.push(Contact { id, app, x, y });
@@ -95,7 +109,7 @@ impl TouchStream {
             return;
         }
         let Contact { app, x, y, .. } = *contact;
-        if !self.send(app, &format!("move {id} {x} {y}\n")) {
+        if !self.send(app, &format!("move {id} {x} {y} {}\n", now_ms())) {
             self.forget_app(app);
         }
     }
@@ -108,7 +122,7 @@ impl TouchStream {
         };
         let Contact { app, x, y, .. } = self.contacts.remove(position);
         let line = if in_front == Some(app) {
-            format!("end {id} {x} {y}\n")
+            format!("end {id} {x} {y} {}\n", now_ms())
         } else {
             format!("cancel {id}\n")
         };
@@ -172,10 +186,16 @@ mod tests {
         (stream, reader)
     }
 
+    /// A line without its time, which is checked to be a plausible one.
     fn line(reader: &mut BufReader<UnixStream>) -> String {
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
-        line.trim_end().to_string()
+        let mut words: Vec<&str> = line.split_whitespace().collect();
+        if words[0] != "cancel" {
+            let ms: u64 = words.pop().unwrap().parse().unwrap();
+            assert!(ms.abs_diff(now_ms()) < 5_000, "{line}");
+        }
+        words.join(" ")
     }
 
     #[test]

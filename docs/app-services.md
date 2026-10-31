@@ -160,11 +160,13 @@ momentum, pinch and long-press; XTEST gives an X app only a tap.
 `touch stream` hands the asking app (found from the connection, as for
 `statusbar`) the touches Moon would otherwise turn into taps: Moon answers
 `{"ok": true, "result": {"touch_stream": "browser"}}` and keeps the
-connection, writing one line per contact change in physical screen pixels:
+connection, writing one line per contact change in physical screen pixels,
+with the time Moon got it (CLOCK_MONOTONIC milliseconds, so an app's fling
+velocity does not depend on when it reads the line):
 
-    begin ID X Y
-    move ID X Y
-    end ID X Y
+    begin ID X Y MS
+    move ID X Y MS
+    end ID X Y MS
     cancel ID
 
 A touch is the app's when it starts while the app is in front, off Moon's

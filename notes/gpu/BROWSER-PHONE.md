@@ -143,11 +143,12 @@ Route (a), on stock CEF 147 arm64. vimbrowser's work is on branch
 
 - **Moon** (`src/a26-shell/src/touch_stream.rs`, `docs/app-services.md`):
   `touch stream` hands an app that asks every finger of the touches Moon
-  would turn into XTEST taps, as `begin/move/end/cancel ID X Y` lines. Moon
-  keeps its keyboard, overlays and the bottom 180 px. A subscriber that
-  can't take a line is dropped, and apps that never ask are unchanged.
-  `touch begin|move|end` inject contacts, so sandboxes can drive real
-  multi-touch.
+  would turn into XTEST taps, as `begin/move/end ID X Y MS` and `cancel ID`
+  lines. MS is when Moon got the contact, so fling velocity follows the
+  finger. Moon keeps its keyboard, overlays and the bottom 180 px. A
+  subscriber that can't take a line is dropped, and apps that never ask are
+  unchanged. `touch begin|move|end` inject contacts, so sandboxes can drive
+  real multi-touch.
 - **vimbrowser** (`src/a26_touch.cc`, `docs/a26-phone-shell.md`):
   - Page fingers go to Chromium through in-process DevTools
     `Input.dispatchTouchEvent`. A still 500 ms hold opens the context menu.
@@ -162,7 +163,8 @@ Route (a), on stock CEF 147 arm64. vimbrowser's work is on branch
 
 Verified in sandbox 6, with Moon's `touch` injection standing in for fingers:
 
-- A 700 px drag flung on to 2748 CSS px.
+- Drags flung in proportion to their speed: a 700 px drag over about 0.4 s
+  carried on to about 650 CSS px, and a quick flick to 2757.
 - A spread pinched to scale 5 and back to 1, with `innerWidth` unchanged.
 - A 900 ms hold on a link opened the menu with the link items and
   Desktop site. Tapping Desktop site gave a desktop user agent and client
