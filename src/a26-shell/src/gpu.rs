@@ -1697,6 +1697,22 @@ impl GpuBackend {
         None
     }
 
+    /// A Wayland app stops being shown from its own buffers: once the
+    /// mirror has `area` again (where its X proxy was just brought up to
+    /// date, queued before this copy), the mirror is shown alone. Until
+    /// then the panel keeps the last direct frame, never the proxy's stale
+    /// pixels.
+    pub fn leave_direct<C: Connection>(&mut self, conn: &C, area: Damage) {
+        self.direct.clear();
+        if self.mirror_mode {
+            self.mirror_damage.push(area);
+            self.mirror_frame_after = Some(self.flushes_issued + 1);
+            if let Err(error) = self.flush_mirror(conn) {
+                eprintln!("gpu: mirror copy failed: {error}");
+            }
+        }
+    }
+
     pub fn presented_serial(&self) -> u32 {
         self.presented_serial
     }

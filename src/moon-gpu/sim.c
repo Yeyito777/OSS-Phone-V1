@@ -14,7 +14,12 @@
  * wrote the buffer the display was showing). MOON_SIM_STATS=PATH appends a
  * line per second: refreshes, refreshes showing a new frame, torn ones;
  * MOON_SIM_FRAMES=PATH a line per refresh that showed a new frame or tore:
- * its vblank time (CLOCK_MONOTONIC seconds), "new" and/or "torn". */
+ * its vblank time (CLOCK_MONOTONIC seconds), "new" and/or "torn".
+ * MOON_SIM_PROBE=PATH:X,Y a line per refresh whose pixel at (X, Y) changed:
+ * its vblank time and the pixel (hex XRGB), what the topmost plane there
+ * shows (an app can write a value there to time when its frames reach the
+ * panel). MOON_SIM_DUMP=PREFIX: on SIGUSR1 the next refresh is written as
+ * PREFIX.N.ppm, the planes composed (nearest sampling, plane alpha). */
 #define _GNU_SOURCE
 #include "gpu.h"
 #include "kms.h"
@@ -24,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/mman.h>
 #include <sys/timerfd.h>
 #include <time.h>
@@ -142,6 +148,69 @@ static uint64_t row_hash(const struct kms_layer *l, int screen_y) {
     return h;
 }
 
+/* The pixel the topmost plane shows at screen (x, y), 0 if none. */
+static uint32_t pixel_at(const struct kms_layer *layers, int n, int x, int y) {
+    for (int i = n - 1; i >= 0; i--) {
+        const struct kms_layer *l = &layers[i];
+        if (x < l->dx || y < l->dy || x >= l->dx + l->dw || y >= l->dy + l->dh)
+            continue;
+        struct fb *f = fb_find(l->fb);
+        if (!f)
+            continue;
+        int sx = (int)(l->sx + (float)(x - l->dx) * l->sw / (float)l->dw);
+        int sy = (int)(l->sy + (float)(y - l->dy) * l->sh / (float)l->dh);
+        if (sx < 0 || sy < 0 || (uint32_t)sx >= f->width || (uint32_t)sy >= f->height)
+            continue;
+        uint32_t v;
+        memcpy(&v, f->map + f->offset + (size_t)sy * f->pitch + (size_t)sx * 4, sizeof v);
+        return v & 0xffffff;
+    }
+    return 0;
+}
+
+static volatile sig_atomic_t dump_wanted;
+static void on_usr1(int sig) {
+    (void)sig;
+    dump_wanted = 1;
+}
+
+/* The planes composed into PREFIX.N.ppm (bottom to top, plane alpha). */
+static void dump(const struct kms_layer *layers, int n, const char *prefix, int count) {
+    enum { W = 1080, H = 2340 };
+    static uint8_t rgb[W * H * 3];
+    memset(rgb, 0, sizeof rgb);
+    for (int i = 0; i < n; i++) {
+        const struct kms_layer *l = &layers[i];
+        struct fb *f = fb_find(l->fb);
+        if (!f || l->dw <= 0 || l->dh <= 0)
+            continue;
+        uint32_t a = l->alpha >> 8;
+        for (int y = l->dy < 0 ? 0 : l->dy; y < l->dy + l->dh && y < H; y++) {
+            int sy = (int)(l->sy + (float)(y - l->dy) * l->sh / (float)l->dh);
+            if (sy < 0 || (uint32_t)sy >= f->height)
+                continue;
+            const uint8_t *row = f->map + f->offset + (size_t)sy * f->pitch;
+            for (int x = l->dx < 0 ? 0 : l->dx; x < l->dx + l->dw && x < W; x++) {
+                int sx = (int)(l->sx + (float)(x - l->dx) * l->sw / (float)l->dw);
+                if (sx < 0 || (uint32_t)sx >= f->width)
+                    continue;
+                const uint8_t *p = row + (size_t)sx * 4;
+                uint8_t *o = rgb + ((size_t)y * W + (size_t)x) * 3;
+                for (int c = 0; c < 3; c++)
+                    o[c] = (uint8_t)((p[2 - c] * a + o[c] * (255 - a)) / 255);
+            }
+        }
+    }
+    char path[512];
+    snprintf(path, sizeof path, "%s.%d.ppm", prefix, count);
+    FILE *out = fopen(path, "wb");
+    if (!out)
+        return;
+    fprintf(out, "P6\n%d %d\n255\n", W, H);
+    fwrite(rgb, 1, sizeof rgb, out);
+    fclose(out);
+}
+
 /* One refresh after another: what the planes show is read row by row at
  * the time the panel would scan that row. */
 static void *scanout(void *arg) {
@@ -150,6 +219,18 @@ static void *scanout(void *arg) {
     static uint64_t start[KMS_MAX_PLANES][ROWS], last[KMS_MAX_PLANES][ROWS];
     FILE *stats = getenv("MOON_SIM_STATS") ? fopen(getenv("MOON_SIM_STATS"), "a") : NULL;
     FILE *frames = getenv("MOON_SIM_FRAMES") ? fopen(getenv("MOON_SIM_FRAMES"), "a") : NULL;
+    FILE *probe = NULL;
+    int probe_x = 0, probe_y = 0;
+    uint32_t probe_last = 0xffffffff;
+    if (getenv("MOON_SIM_PROBE")) {
+        char path[512];
+        if (sscanf(getenv("MOON_SIM_PROBE"), "%511[^:]:%d,%d", path, &probe_x, &probe_y) == 3)
+            probe = fopen(path, "a");
+    }
+    const char *dump_prefix = getenv("MOON_SIM_DUMP");
+    int dumps = 0;
+    if (dump_prefix)
+        signal(SIGUSR1, on_usr1);
     uint64_t next_report = now_ns() + 1000000000ull, r0 = 0, n0 = 0, t0 = 0;
     for (uint64_t n = (now_ns() - sim.t0) / sim.period + 1;; n++) {
         uint64_t vblank = sim.t0 + n * sim.period;
@@ -171,6 +252,18 @@ static void *scanout(void *arg) {
                 changed |= start[i][r] != last[i][r];
                 last[i][r] = start[i][r];
             }
+        if (probe && nl) {
+            uint32_t v = pixel_at(layers, nl, probe_x, probe_y);
+            if (v != probe_last) {
+                probe_last = v;
+                fprintf(probe, "%.6f %06x\n", vblank / 1e9, v);
+                fflush(probe);
+            }
+        }
+        if (dump_prefix && dump_wanted && nl) {
+            dump_wanted = 0;
+            dump(layers, nl, dump_prefix, dumps++);
+        }
         pthread_mutex_unlock(&sim.lock);
         int torn = 0;
         for (int r = 0; r < ROWS && nl; r++) {

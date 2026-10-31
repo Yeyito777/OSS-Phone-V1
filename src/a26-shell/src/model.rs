@@ -126,6 +126,8 @@ pub struct PublicAppState {
     pub freezer_state: FreezerState,
     pub leases: Vec<PublicLeaseState>,
     pub last_used_ms_ago: u64,
+    /// Started as a Wayland client of Moon (`wayland_apps`), not on X.
+    pub wayland: bool,
 }
 
 impl View {
@@ -274,7 +276,7 @@ pub struct PublicOpenTarget {
 }
 
 /// Pointer events for the app in front, sent through XTEST by the main
-/// loop. Moon's own apps (System, Phone, Messages, Exocortex) get each touch as a held
+/// loop (to a Wayland app as wl_touch). Moon's own apps (System, Phone, Messages, Exocortex) get each touch as a held
 /// button from touch-down to release; the Browser gets taps on release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppPointer {
