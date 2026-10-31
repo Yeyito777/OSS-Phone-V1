@@ -265,6 +265,16 @@ pub fn respond<T: Serialize>(mut stream: UnixStream, result: Result<&T, &str>) {
     let _ = stream.flush();
 }
 
+/// `line` after its first `tokens` words, as written (trimmed).
+fn rest_of(line: &str, tokens: usize) -> &str {
+    let mut rest = line;
+    for _ in 0..tokens {
+        rest = rest.trim_start();
+        rest = &rest[rest.find(char::is_whitespace).unwrap_or(rest.len())..];
+    }
+    rest.trim()
+}
+
 fn parse_command(line: &str) -> Result<Command, String> {
     if let Some(value) = line.strip_prefix("clipboard set ") {
         let value = value.trim();
@@ -458,9 +468,15 @@ fn parse_command(line: &str) -> Result<Command, String> {
             ),
             None => return Err("volume requires up, down, or 0..100".into()),
         },
-        "settings" => match (parts.next(), parts.next(), parts.next()) {
-            (Some("set"), Some(key), Some(value)) => {
-                Command::SettingsSet(key.to_owned(), value.to_owned())
+        "settings" => match (parts.next(), parts.next()) {
+            // The value is the rest of the line: a saved wallpaper's name
+            // may have spaces (`saved:Picture 1.png`).
+            (Some("set"), Some(key)) => {
+                let value = rest_of(line, 3).to_owned();
+                if value.is_empty() {
+                    return Err("settings requires set KEY VALUE".into());
+                }
+                return Ok(Command::SettingsSet(key.to_owned(), value));
             }
             _ => return Err("settings requires set KEY VALUE".into()),
         },
@@ -669,6 +685,20 @@ fn parse_clipboard_image(value: &str) -> Result<crate::clipboard::ClipImage, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_setting_is_the_rest_of_the_line() {
+        let parsed = parse_command("settings set wallpaper saved:Picture  1.png\n");
+        let Ok(Command::SettingsSet(key, value)) = parsed else {
+            panic!("not a setting: {:?}", parsed.err());
+        };
+        assert_eq!(
+            (key.as_str(), value.as_str()),
+            ("wallpaper", "saved:Picture  1.png")
+        );
+        assert!(parse_command("settings set wallpaper").is_err());
+        assert!(parse_command("settings set").is_err());
+    }
 
     #[test]
     fn parses_switcher_and_profile_commands() {
