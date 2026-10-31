@@ -359,7 +359,7 @@ fn ligate(face: &Face, mut glyphs: Vec<GlyphId>) -> Vec<GlyphId> {
 }
 
 /// Decodes a PNG strike glyph into premultiplied ARGB.
-fn decode_png(data: &[u8]) -> Option<(u32, u32, Vec<u32>)> {
+pub(crate) fn decode_png(data: &[u8]) -> Option<(u32, u32, Vec<u32>)> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().ok()?;
