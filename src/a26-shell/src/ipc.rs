@@ -11,6 +11,14 @@ use crate::keyboard::KeyboardPurpose;
 use crate::lease::LeaseKind;
 use crate::model::AppId;
 
+/// A touchscreen contact given on the control socket (`touch ...`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchInput {
+    Begin(u32, i16, i16),
+    Move(u32, i16, i16),
+    End(u32),
+}
+
 #[derive(Debug, Clone)]
 pub enum Command {
     Ping,
@@ -45,6 +53,12 @@ pub enum Command {
     Voice(crate::voice::VoiceRequest),
     KeyboardShow(KeyboardPurpose),
     KeyboardHide,
+    /// `touch stream [APP]`: the app (by default the caller's) reads its own
+    /// touches from this connection from now on (touch_stream.rs).
+    TouchStream(Option<AppId>),
+    /// `touch begin ID X Y`, `touch move ID X Y`, `touch end ID`: a
+    /// touchscreen contact, as if Xorg had reported it (sandboxes, tests).
+    Touch(TouchInput),
     SwipeUp,
     VolumeUp,
     VolumeDown,
@@ -126,6 +140,7 @@ impl Command {
                 | Command::PointerBegin(..)
                 | Command::PointerMove(..)
                 | Command::PointerEnd(..)
+                | Command::Touch(_)
                 | Command::Home
                 | Command::Switcher
                 | Command::SwipeUp
@@ -341,6 +356,33 @@ fn parse_command(line: &str) -> Result<Command, String> {
         "pointer-end" => {
             Command::PointerEnd(parse_i16(parts.next(), "x")?, parse_i16(parts.next(), "y")?)
         }
+        "touch" => match parts.next() {
+            Some("stream") => match parts.next() {
+                Some(name) => Command::TouchStream(Some(AppId::parse(name).ok_or("unknown app")?)),
+                None => Command::TouchStream(None),
+            },
+            Some(operation @ ("begin" | "move" | "end")) => {
+                let id = parts
+                    .next()
+                    .ok_or("missing touch id")?
+                    .parse::<u32>()
+                    .map_err(|_| "invalid touch id")?;
+                Command::Touch(match operation {
+                    "begin" => TouchInput::Begin(
+                        id,
+                        parse_i16(parts.next(), "x")?,
+                        parse_i16(parts.next(), "y")?,
+                    ),
+                    "move" => TouchInput::Move(
+                        id,
+                        parse_i16(parts.next(), "x")?,
+                        parse_i16(parts.next(), "y")?,
+                    ),
+                    _ => TouchInput::End(id),
+                })
+            }
+            _ => return Err("touch requires stream, begin, move or end".into()),
+        },
         "close" => match parts.next().map(str::to_ascii_lowercase) {
             Some(value) => match AppId::parse(&value) {
                 Some(app) => Command::Close(app),
@@ -890,5 +932,43 @@ mod tests {
         assert!(parse_command("suspend test 1").is_err());
         assert!(parse_command("suspend test 31").is_err());
         assert!(parse_command("suspend now").is_err());
+    }
+
+    #[test]
+    fn parses_touch_stream_and_contacts() {
+        assert!(matches!(
+            parse_command("touch stream"),
+            Ok(Command::TouchStream(None))
+        ));
+        assert!(matches!(
+            parse_command("touch stream browser"),
+            Ok(Command::TouchStream(Some(AppId::Browser)))
+        ));
+        assert!(matches!(
+            parse_command("touch begin 3 540 900"),
+            Ok(Command::Touch(TouchInput::Begin(3, 540, 900)))
+        ));
+        assert!(matches!(
+            parse_command("touch move 3 541 880"),
+            Ok(Command::Touch(TouchInput::Move(3, 541, 880)))
+        ));
+        assert!(matches!(
+            parse_command("touch end 3"),
+            Ok(Command::Touch(TouchInput::End(3)))
+        ));
+        for bad in [
+            "touch",
+            "touch stream nowhere",
+            "touch stream browser extra",
+            "touch begin 3 540",
+            "touch begin -1 5 5",
+            "touch end",
+            "touch end 3 4",
+            "touch drag 3 4 5",
+        ] {
+            assert!(parse_command(bad).is_err(), "{bad}");
+        }
+        assert!(Command::Touch(TouchInput::End(1)).is_user_input());
+        assert!(!Command::TouchStream(None).is_user_input());
     }
 }
