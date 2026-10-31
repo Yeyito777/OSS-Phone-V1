@@ -138,7 +138,15 @@ Xorg's modesetting driver and any other compositor cannot both drive CRTC
      drawn. The Wayland agent measured this tier: up to six moving, scaling,
      fading full-screen cards over a background at 120 Hz with 0 missed
      vblanks and 0.03 ms of CPU a frame, and with a 1.07 Mpx CPU-drawn
-     layer under them still 0 missed.
+     layer under them still 0 missed. Missed vblanks do not show the
+     display's fetch, though: six 1080-wide ARGB planes overlapping in the
+     bottom third (the "ridge" wallpaper, October 2026) underran the DSIM
+     several times a second (`dsim_print_underrun_info` in the kernel log;
+     the lower screen glitched) with MIF at 1794 MHz. So a frame takes
+     planes only while the panel row where they overlap most fetches at
+     most `--fetch-limit` (default 3) full-width 32-bit layers of source,
+     scaled planes counted at their vertical ratio; heavier sets are drawn
+     ("display fetch" in the flip profile).
   2. **GPU.** Two GLES programs draw the frame into a dmabuf: a dim is a
      uniform, a rounded corner a signed-distance coverage term, scaled
      snapshots are bilinear textures. The proof of concept below runs a

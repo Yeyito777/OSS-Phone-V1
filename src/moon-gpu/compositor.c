@@ -18,7 +18,11 @@
  *
  *   moon-compositor --socket PATH [--card /dev/dri/card0] [--hz 120]
  *                   [--ready-file PATH] [--gpu-floor KHZ] [--cpu]
- *                   [--no-planes] [--threads N]
+ *                   [--no-planes] [--threads N] [--fetch-limit LAYERS]
+ *
+ * Planes take a frame only while the display can fetch them: where more
+ * than --fetch-limit (default 3) full-width 32-bit layers' worth of source
+ * overlaps on a panel row, the frame is drawn instead (`fetch_limit`).
  *
  * SIGHUP turns the planes tier off or on. SIGWINCH writes what the display
  * planes make of the current frame (planes off: the composed frame through
@@ -156,6 +160,11 @@ struct comp {
     struct renderer r;
     enum tier tier;
     int planes;
+    /* Source bytes a plane set may fetch for one panel row: beyond it the
+     * fetch falls behind the scanout, the DSIM underruns (the kernel logs
+     * dsim_print_underrun_info) and the lower screen glitches. Six 1080-wide
+     * ARGB planes overlapping in the bottom third did, at 120 Hz. */
+    double fetch_limit;
     struct output out[NBUF];
     int next_buf;
     int width, height, pitch;
@@ -1002,6 +1011,24 @@ static int clip_layer(struct comp *c, struct kms_layer *l, float sx, float sy,
     return 1;
 }
 
+/* The bytes of source the display fetches for the panel row where `layers`
+ * (32 bits a pixel) overlap the most: per row a plane reads sw pixels of
+ * sh / dh source rows. */
+static double row_fetch(const struct kms_layer *layers, int n) {
+    double worst = 0;
+    /* The most overlap begins at some plane's top row. */
+    for (int i = 0; i < n; i++) {
+        int32_t y = layers[i].dy;
+        double sum = 0;
+        for (int j = 0; j < n; j++)
+            if (layers[j].dh > 0 && layers[j].dy <= y && y < layers[j].dy + layers[j].dh)
+                sum += (double)layers[j].sw * 4.0 * (double)layers[j].sh / layers[j].dh;
+        if (sum > worst)
+            worst = sum;
+    }
+    return worst;
+}
+
 static const char *plane_miss; /* why the last frame was drawn (profile) */
 
 /* Maps the current frame onto planes, bottom first. Returns the layer
@@ -1088,6 +1115,8 @@ static int plan_planes(struct comp *c, struct kms_layer *layers) {
         l->in_fence = -1;
         n++;
     }
+    if (n > 1 && row_fetch(layers, n) > c->fetch_limit)
+        MISS("display fetch");
     return n;
 #undef MISS
 }
@@ -1697,6 +1726,7 @@ static int listen_on(const char *path) {
 int main(int argc, char **argv) {
     const char *socket_path = NULL, *card = "/dev/dri/card0", *ready_file = NULL;
     int hz = 120, floor_khz = 702000, force_cpu = 0, planes = 1, threads = 4;
+    double fetch_layers = 3.0;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         int more = i + 1 < argc;
@@ -1716,10 +1746,13 @@ int main(int argc, char **argv) {
             force_cpu = 1;
         else if (!strcmp(a, "--no-planes"))
             planes = 0;
+        else if (!strcmp(a, "--fetch-limit") && more)
+            fetch_layers = atof(argv[++i]);
         else {
             fprintf(stderr, "usage: moon-compositor --socket PATH [--card DEV] "
                             "[--hz N] [--ready-file PATH] [--gpu-floor KHZ] "
-                            "[--cpu] [--no-planes] [--threads N]\n");
+                            "[--cpu] [--no-planes] [--threads N] "
+                            "[--fetch-limit LAYERS]\n");
             return 2;
         }
     }
@@ -1748,6 +1781,7 @@ int main(int argc, char **argv) {
     if (kms_open(&c.k, card, hz))
         return 10;
     c.width = c.k.mode.hdisplay;
+    c.fetch_limit = fetch_layers * c.width * 4.0;
     c.height = c.k.mode.vdisplay;
 
     /* The GPU tier needs EGL on the Mali and dmabuf render targets; anything
@@ -1821,9 +1855,11 @@ int main(int argc, char **argv) {
     if (c.listen_fd < 0)
         return 15;
     boost_self();
-    LOG("ready in %.0f ms: %dx%d, %s tier, planes %s, socket %s",
+    LOG("ready in %.0f ms: %dx%d, %s tier, planes %s (fetch up to %.1f layers a row), "
+        "socket %s",
         (now_ns() - t_start) / 1e6, c.width, c.height,
-        c.tier == TIER_GPU ? "GPU" : "CPU", c.planes ? "on" : "off", socket_path);
+        c.tier == TIER_GPU ? "GPU" : "CPU", c.planes ? "on" : "off",
+        c.fetch_limit / (c.width * 4.0), socket_path);
     if (ready_file) {
         int fd = open(ready_file, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
         if (fd >= 0) {
