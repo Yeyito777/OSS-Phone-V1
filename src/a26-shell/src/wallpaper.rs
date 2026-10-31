@@ -362,7 +362,7 @@ pub fn build(id: &str, width: i32, height: i32) -> (Canvas, Vec<Layer>) {
             let margin = 40;
             let mut stars = Canvas::new(width + 2 * margin, height + 2 * margin);
             stars.pixels.fill(0);
-            draw_stars(&mut stars, 0.16, 1.0);
+            draw_stars(&mut stars, 0.16, 1.0, width as f32 / 1080.0);
             let moon = width * 16 / 27;
             vec![
                 Layer {
@@ -380,7 +380,7 @@ pub fn build(id: &str, width: i32, height: i32) -> (Canvas, Vec<Layer>) {
             ]
         }
         "ridge" => {
-            draw_stars(&mut still, 0.10, 0.42);
+            draw_stars(&mut still, 0.10, 0.42, width as f32 / 1080.0);
             ridge_layers(width, height)
         }
         _ => Vec::new(),
@@ -492,26 +492,27 @@ fn add_light(pixel: &mut u32, r: f32, g: f32, b: f32, a: f32) {
 }
 
 /// Adds stars to `canvas`: about `density` of 22 px cells hold one, and
-/// they fade out down to `depth` of its height.
-fn draw_stars(canvas: &mut Canvas, density: f32, depth: f32) {
+/// they fade out down to `depth` of its height. `scale`: the screen's width
+/// over 1080 (the System app's thumbnails draw them smaller).
+fn draw_stars(canvas: &mut Canvas, density: f32, depth: f32, scale: f32) {
     let (width, height) = (canvas.width, canvas.height);
-    const CELL: i32 = 22;
-    for cy in 0..(height + CELL - 1) / CELL {
-        let fade = 1.0 - (cy * CELL) as f32 / (height as f32 * depth);
+    let cell = ((22.0 * scale).round() as i32).max(3);
+    for cy in 0..(height + cell - 1) / cell {
+        let fade = 1.0 - (cy * cell) as f32 / (height as f32 * depth);
         if fade <= 0.0 {
             break;
         }
-        for cx in 0..(width + CELL - 1) / CELL {
+        for cx in 0..(width + cell - 1) / cell {
             let h = hash(cx as u32, cy as u32, 0x51a7);
             if unit(h) > density {
                 continue;
             }
-            let sx = (cx * CELL) as f32 + unit(hash(cx as u32, cy as u32, 1)) * CELL as f32;
-            let sy = (cy * CELL) as f32 + unit(hash(cx as u32, cy as u32, 2)) * CELL as f32;
+            let sx = (cx * cell) as f32 + unit(hash(cx as u32, cy as u32, 1)) * cell as f32;
+            let sy = (cy * cell) as f32 + unit(hash(cx as u32, cy as u32, 2)) * cell as f32;
             let m = unit(hash(cx as u32, cy as u32, 3));
             // Most stars faint, a few bright.
             let bright = (0.18 + 0.82 * m * m * m) * fade.min(1.0);
-            let size = 0.55 + 1.1 * bright;
+            let size = ((0.55 + 1.1 * bright) * scale).max(0.45);
             let tint = unit(hash(cx as u32, cy as u32, 4));
             let color = if tint < 0.2 {
                 (255.0, 214.0, 170.0)
@@ -520,16 +521,24 @@ fn draw_stars(canvas: &mut Canvas, density: f32, depth: f32) {
             } else {
                 (235.0, 238.0, 255.0)
             };
-            let reach = (size * 3.0).ceil() as i32 + if bright > 0.7 { 9 } else { 0 };
+            let glint = bright > 0.7;
+            let reach = (size * 3.0).ceil() as i32
+                + if glint {
+                    (9.0 * scale).ceil() as i32
+                } else {
+                    0
+                };
             for y in (sy as i32 - reach).max(0)..(sy as i32 + reach + 1).min(height) {
                 for x in (sx as i32 - reach).max(0)..(sx as i32 + reach + 1).min(width) {
                     let dx = x as f32 + 0.5 - sx;
                     let dy = y as f32 + 0.5 - sy;
                     let mut k = (-(dx * dx + dy * dy) / (2.0 * size * size)).exp();
-                    if bright > 0.7 {
+                    if glint {
                         // A faint four-point glint on the brightest.
-                        let spike =
-                            |a: f32, b: f32| (-(a * a) / 0.8).exp() * (-b.abs() / 3.5).exp();
+                        let spike = |a: f32, b: f32| {
+                            (-(a * a) / (0.8 * scale * scale)).exp()
+                                * (-b.abs() / (3.5 * scale)).exp()
+                        };
                         k += 0.35 * (spike(dx, dy) + spike(dy, dx));
                     }
                     let a = (k * bright).min(1.0);
@@ -610,7 +619,7 @@ fn ridge_layers(width: i32, height: i32) -> Vec<Layer> {
                 let depth = sy - crest_y;
                 let fog = (depth / fog_depth).clamp(0.0, 1.0);
                 let fog = fog * fog * 0.55;
-                let rim = (-depth / 2.5).exp() * sunward * 0.45;
+                let rim = (-depth / (2.5 * w / 1080.0)).exp() * sunward * 0.45;
                 let mix = |c: f32, f: f32, sun: f32| c + (f - c) * fog + sun * rim;
                 let (r, g, b) = (
                     mix(color.0, haze.0, 255.0),
