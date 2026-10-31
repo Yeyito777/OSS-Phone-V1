@@ -815,7 +815,7 @@ fn prism_layers(width: i32, height: i32) -> Vec<Layer> {
                 match found {
                     Some((clear, distance)) => {
                         clarity = clear;
-                        edge = (1.0 - distance / (1.4 * unit_px)).clamp(0.0, 1.0);
+                        edge = (1.0 - distance / (1.4 * unit_px).max(0.9)).clamp(0.0, 1.0);
                     }
                     // Just outside the girdle's straight edges.
                     None => clarity = 0.035,
