@@ -788,6 +788,11 @@ impl KeyPopup {
         })
     }
 
+    /// The callout's height for `key`: its bubble, the gap and the key.
+    fn height(key: RectF) -> f32 {
+        ((key.h * 1.12).round() + POPUP_GAP + key.h).min(f32::from(POPUP_MAX_HEIGHT))
+    }
+
     fn hide<C: Connection>(&mut self, conn: &C) -> Result<(), Box<dyn Error>> {
         if self.shown.take().is_some() {
             conn.unmap_window(self.window)?;
@@ -809,7 +814,7 @@ impl KeyPopup {
         }
         let bubble_w = (key.w + 2.0 * POPUP_SIDE).min(f32::from(POPUP_MAX_WIDTH));
         let bubble_h = (key.h * 1.12).round();
-        let height = (bubble_h + POPUP_GAP + key.h).min(f32::from(POPUP_MAX_HEIGHT));
+        let height = Self::height(key);
         let x0 = (key.x - POPUP_SIDE).clamp(0.0, (screen_width - bubble_w).max(0.0));
         let y0 = key.y + key.h - height;
         let local_key = RectF::new(key.x - x0, height - key.h, key.w, key.h);
@@ -961,33 +966,51 @@ impl KeyboardSurface {
         self.popup.as_ref().map(|popup| popup.window)
     }
 
-    fn sync_popup<C: Connection>(
-        &mut self,
-        conn: &C,
-        state: &KeyboardState,
-    ) -> Result<(), Box<dyn Error>> {
-        let Some(popup) = self.popup.as_mut() else {
-            return Ok(());
-        };
+    /// The key whose callout shows (a held character key), in root
+    /// coordinates, and its label.
+    fn popup_target(&self, state: &KeyboardState) -> Option<(RectF, String)> {
+        self.popup.as_ref()?;
         let keys = self.geometry.keys(state);
         let letter_width = keys
             .iter()
             .find(|key| matches!(key.action, KeyAction::Character(c) if c.is_ascii_alphanumeric()))
             .map(|key| key.rect.width)
             .unwrap_or(0);
-        let target = state
+        state
             .latest_pressed()
             .filter(|_| self.mapped && state.layout() != KeyboardLayout::NumberPad)
             .and_then(|index| keys.get(index))
             .filter(|key| {
                 matches!(key.action, KeyAction::Character(_))
                     && u32::from(key.rect.width) * 4 <= u32::from(letter_width) * 5
-            });
-        match target {
-            Some(key) => {
+            })
+            .map(|key| {
                 let mut rect = key.rect.rect_f();
                 rect.y += f32::from(self.geometry.window_y);
-                let label = display_label(key, state);
+                (rect, display_label(key, state))
+            })
+    }
+
+    /// Whether the held key's callout rises above the keyboard, over the
+    /// app (a top-row key's): a Wayland app shown from its own buffers then
+    /// goes back through X while it shows, since the callout is an X window.
+    pub fn callout_over_app(&self, state: &KeyboardState) -> bool {
+        self.popup_target(state).is_some_and(|(key, _)| {
+            key.y + key.h - KeyPopup::height(key) < f32::from(self.geometry.window_y)
+        })
+    }
+
+    fn sync_popup<C: Connection>(
+        &mut self,
+        conn: &C,
+        state: &KeyboardState,
+    ) -> Result<(), Box<dyn Error>> {
+        let target = self.popup_target(state);
+        let Some(popup) = self.popup.as_mut() else {
+            return Ok(());
+        };
+        match target {
+            Some((rect, label)) => {
                 popup.show(conn, rect, &label, f32::from(self.geometry.screen_width))
             }
             None => popup.hide(conn),

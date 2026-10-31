@@ -100,8 +100,8 @@ too).
 - **Touch:** a touch Moon forwards to a Wayland app goes straight to its
   surface as wl_touch (`WaylandApps::app_pointer`), not through XTEST, the
   X server and back to the proxy window.
-- **Leaving direct display** (a snapshot, the switcher, a key callout, a
-  page transition, `screen sync`): the proxy gets the app's current buffer
+- **Leaving direct display** (a snapshot, the switcher, a key callout that
+  rises over the app, a page transition, `screen sync`): the proxy gets the app's current buffer
   first, and the panel keeps the last direct frame until the mirror has it
   (`GpuBackend::leave_direct`), so the proxy's stale pixels never show. A
   page transition snapshots the app's current frame.
@@ -115,26 +115,30 @@ too).
 - **Profiling:** `a26-shellctl profile on` also turns on the direct
   frames' timing summary (`wayland: direct timing`) without a restart.
 
-**Measured** (sandboxes on the phone, moon-compositor-sim, uinput touches
-through Xorg's evdev driver, EXO from the exo-bench replay; the same app
-binary, X against Wayland, 3 rounds interleaved; `/opt/build/direct-tools`
-on the phone, `exo-bench.py` with `--probe`):
+**Measured** (sandboxes on the phone, moon-compositor-sim with its probe,
+uinput touches through Xorg's evdev driver, the exo-bench scenarios and
+replay; the same app binary on X and on Wayland, 3 rounds interleaved;
+direct-moon bc2b414 / direct-app 2273034; `/opt/build/direct-tools` on the
+phone, `exo-bench-wl/exo-bench.py --probe`):
 
-| Scenario | X | Wayland |
+| | X | Wayland |
 | --- | --- | --- |
-| EXO scroll, touch report to the panel, p50 / p95 | 22.1 / 59.5 ms | 14.4 / 20.6 ms |
-| list scroll, the same | 36.2 / 72.6 ms | 13.3 / 22.2 ms |
-| EXO scroll, frames on the panel, gap p50 / p95 | 16.7 / 58.3 ms | 8.3 / 16.7 ms |
-| list scroll, the same | 25.0 / 75.0 ms | 8.3 / 33.3 ms |
-| EXO scroll, display path work per frame (app, Xorg, Moon) | 9.0 M instructions | 3.0 M |
-| list, stream, sheet: the same | 8.3, 7.4, 10.6 M | 3.2, 2.9, 5.3 M |
-| EXO scroll, Xorg's work per run | 1969 M | 24 M |
-| typing, finger down to the frame handed over, p50 / p95 | 9.5 / 22.5 ms | 4.8 / 14.4 ms |
+| Touch report to the panel, p50 / p95: EXO scroll | 24.5 / 49.7 ms | 12.6 / 23.0 ms |
+| the same: list scroll | 28.2 / 54.4 ms | 13.5 / 22.5 ms |
+| the same: EXO, ten flings into older history | 42.3 / 69.0 ms | 13.3 / 23.5 ms |
+| Frames on the panel while scrolling, gap p50 / p95: EXO | 16.7 / 41.7 ms | 8.3 / 16.7 ms |
+| the same: list | 16.7 / 50.0 ms | 8.3 / 33.3 ms |
+| Display path work per frame (every thread of the app, Xorg and Moon): EXO, list, stream, sheet | 8.9, 8.9, 7.4, 10.2 M instructions | 3.0, 3.1, 3.0, 5.3 M |
+| Xorg's work over the EXO scroll | 3302 M | 25 M |
+| EXO's open: tap to its first frame | 69.7 M instructions, 42 ms | 53.4 M, 29 ms |
+| Typing: finger down to the frame handed over, p50 / p95 | 8.3 / 17.9 ms | 5.9 / 11.6 ms |
 
-The app's own thread does more per frame (EXO scroll 1.24 to 2.21 M
-instructions): it now copies into the buffer what Xorg copied, three times,
-before. Typing is the one place Xorg works more (456 to 607 M a run): each
-key's callout is an X window over the app, which leaves direct display.
+The app's own thread does more per frame (EXO scroll 1.26 to 2.28 M
+instructions): it now copies into the buffer what Xorg copied three times
+before, plus Moon's mirror copy. A top-row key's callout rises over the app
+and is an X window, so while it shows the app goes back through X: typing
+is the one scenario where the display path does not get cheaper (+1 %; +6 %
+before the other keys' callouts kept direct display, 7fc451a).
 
 **The simulator's probes** (`src/moon-gpu/sim.c`): `MOON_SIM_PROBE=PATH:X,Y`
 logs each refresh whose pixel at (X, Y) changed; the app's
@@ -144,8 +148,8 @@ top-left pixel, which is (0, 124) on the panel on both paths.
 holds the scanout thread, so it is for what is shown, not for timing).
 
 **Next:**
-- the key callout as a patch of the mirror over a proxy kept fresh only
-  under it, so typing stays direct;
+- the top-row key callout as a patch of the mirror over a proxy kept fresh
+  only under it (or a Moon layer), so all of typing stays direct;
 - the client's own cache clean (Moon's `DMA_BUF_IOCTL_SYNC` per commit,
   about 0.5 ms on its loop);
 - real fingers on the phone (plan in the hand-over).

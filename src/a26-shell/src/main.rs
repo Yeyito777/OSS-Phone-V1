@@ -815,7 +815,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     alerts::CARD_RADIUS,
                 ));
             }
-            let overlay = state.keyboard.is_visible() && state.keyboard.latest_pressed().is_some();
+            // A key callout rising over the app (an X window).
+            let overlay =
+                state.keyboard.is_visible() && keyboard_surface.callout_over_app(&state.keyboard);
             let direct_window = (state.screen_awake
                 && state.view.is_app()
                 && !state.shell_covers_app()
