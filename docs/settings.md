@@ -89,14 +89,16 @@ app's picker (`a26-system/src/wallpapers.rs`) carry the same table.
 | `forest` | Forest | deep green with green, lime and teal glows | like `moon` |
 | `orbit` | Orbit | dynamic: stars and a lit crescent moon (earthshine on its night side) over night blue | like `moon` |
 | `ridge` | Ridge | dynamic: four mountain ranges at dusk, haze in their valleys, a sunset glow and its light on the crests | like `dusk` |
+| `prism` | Prism | dynamic: a brilliant-cut gem on near-black; a spectrum of light bands and glints slides under its facets | close to `black` but for the gem |
 
 ### Dynamic wallpapers
 
-`orbit`, `ridge` and every saved picture move with the phone's tilt. Over
+`orbit`, `ridge`, `prism` and every saved picture move with the phone's tilt. Over
 their still picture (the table above) they have layers, drawn once when the
 wallpaper is set and listed back to front, each moved by its own amount:
 `orbit` moves its stars ±32 px and its moon ±90 px; `ridge` its ranges ±23
-to ±152 px, nearer ones more; a saved picture slides ±32 px under the
+to ±152 px, nearer ones more; `prism` keeps its gem still and slides the
+light beneath it ±300 px (drawn at half resolution and scaled up); a saved picture slides ±32 px under the
 screen, like a window onto it. The motion is the tilt away from how the
 phone has been held over the last few seconds (`src/a26-shell/src/tilt.rs`):
 any pose looks centred and only moving the phone moves the picture. What is
@@ -119,7 +121,8 @@ sensor in sandboxes.
   a dynamic wallpaper is on screen with the screen on. A still phone draws
   no frames: Moon redraws only when the picture would move by a third of a
   pixel or more. The layers take GPU memory: `orbit` ~13 MB, `ridge`
-  ~30 MB, a saved picture ~11 MB, plus the home screen's parts (~10 MB).
+  ~30 MB, `prism` ~15 MB, a saved picture ~11 MB, plus the home screen's
+  parts (~10 MB).
 - Setting a wallpaper draws it on Moon's thread: 60-180 ms here; a saved
   picture that is not already 1160x2420 is scaled first (~0.5 s for 12 Mpx).
 
