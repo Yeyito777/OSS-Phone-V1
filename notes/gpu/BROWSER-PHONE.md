@@ -134,3 +134,47 @@ whale (niced, overnight), for phase 3.
 - Should tabs become Chrome-style CEF browsers? That brings Chrome's password
   manager and autofill, but vimbrowser's tabs are Alloy-style today.
 - When may whale do the arm64 Chromium build?
+
+## Step 1: real touch, phone page mode, fonts (2026-10-31)
+
+Route (a), on stock CEF 147 arm64. vimbrowser's work is on branch
+`phone-touch` of a clone on whale (`~/Workspace/research/vimbrowser-phone`,
+`backend/` left out of the checkout); Moon's is in this branch.
+
+- **Moon** (`src/a26-shell/src/touch_stream.rs`, `docs/app-services.md`):
+  `touch stream` hands an app that asks every finger of the touches Moon
+  would turn into XTEST taps, as `begin/move/end/cancel ID X Y` lines. Moon
+  keeps its keyboard, overlays and the bottom 180 px. A subscriber that
+  can't take a line is dropped, and apps that never ask are unchanged.
+  `touch begin|move|end` inject contacts, so sandboxes can drive real
+  multi-touch.
+- **vimbrowser** (`src/a26_touch.cc`, `docs/a26-phone-shell.md`):
+  - Page fingers go to Chromium through in-process DevTools
+    `Input.dispatchTouchEvent`. A still 500 ms hold opens the context menu.
+    Other taps in the window go back to Moon as `tap X Y`.
+  - Every tab gets DevTools mobile and touch emulation plus Android client
+    hints. Desktop site is per tab (IPC `desktop-site`, or the long-press
+    menu).
+  - `VIMBROWSER_STOCK_CEF` builds against the stock distribution.
+    `scripts/a26/build-cross.sh` takes about 45 s from scratch on whale.
+- **Fonts:** Noto Color Emoji and Noto CJK (`scripts/a26/fonts.sh`, an 82 MB
+  overlay for the installed root).
+
+Verified in sandbox 6, with Moon's `touch` injection standing in for fingers:
+
+- A 700 px drag flung on to 2748 CSS px.
+- A spread pinched to scale 5 and back to 1, with `innerWidth` unchanged.
+- A 900 ms hold on a link opened the menu with the link items and
+  Desktop site. Tapping Desktop site gave a desktop user agent and client
+  hints, and the desktop page loaded zoomed out to fit.
+- A tap on a page field focused it and raised Moon's keyboard, and keys
+  typed into it. Back in the row above the keyboard (stream, then Moon
+  `tap`) went back. Back on the bottom edge (Moon's XTEST, unchanged) also
+  went back.
+- `navigator.maxTouchPoints` was 5, with a coarse pointer and overlay
+  scrollbars. Client hints were mobile Android.
+- Emoji, Chinese, Japanese and Korean rendered.
+
+Not verified without a finger: real-device feel and latency, Moon's bottom
+gestures beside the stream, and long-press text selection. Long-press opens
+the context menu but does not select a word as Chrome on Android does.
