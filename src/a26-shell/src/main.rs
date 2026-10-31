@@ -1162,6 +1162,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if let Command::Profile(enabled) = command {
                         renderer.compositor.set_profile(enabled);
                         profile_frames = enabled;
+                        if let Some(server) = wayland.as_mut() {
+                            server.set_profile(enabled);
+                        }
                         eprintln!("frame profiling {}", if enabled { "on" } else { "off" });
                     }
                     apply_command(

@@ -1376,6 +1376,16 @@ impl WaylandApps {
         self.parents.get(&key).copied()
     }
 
+    /// `profile on|off` at run time: the direct frames' timing summary
+    /// (MOON_PROFILE or MOON_WAYLAND_DEBUG keep it on from the start).
+    pub fn set_profile(&mut self, on: bool) {
+        if on {
+            self.timing.get_or_insert_with(DirectTiming::default);
+        } else if !self.debug && std::env::var_os("MOON_PROFILE").is_none() {
+            self.timing = None;
+        }
+    }
+
     /// Whether the focused Wayland app takes any text (text-input-v3);
     /// otherwise only what the US keymap has reaches it.
     pub fn takes_text(&self) -> bool {

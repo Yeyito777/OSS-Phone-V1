@@ -112,6 +112,8 @@ too).
 - **Frame callbacks:** a commit that no direct frame showed still gets its
   callback on the X path's grid.
 - **Screenshots:** `a26-shellshot` asks Moon `screen sync` first.
+- **Profiling:** `a26-shellctl profile on` also turns on the direct
+  frames' timing summary (`wayland: direct timing`) without a restart.
 
 **Measured** (sandboxes on the phone, moon-compositor-sim, uinput touches
 through Xorg's evdev driver, EXO from the exo-bench replay; the same app
