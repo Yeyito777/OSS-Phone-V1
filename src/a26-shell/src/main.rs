@@ -1447,7 +1447,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             && state.switcher.is_none()
             && renderer.compositor.gpu()
             && wallpaper::is_dynamic(&state.settings.wallpaper);
-        if tilt.update(tilt_active, Instant::now()) {
+        tilt.update(tilt_active, Instant::now());
+        if tilt::moving(Instant::now()) {
+            // A frame per refresh until it comes to rest.
             state.redraw = true;
         }
         state.tick();

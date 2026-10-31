@@ -99,11 +99,21 @@ wallpaper is set and listed back to front, each moved by its own amount:
 to ±152 px, nearer ones more; a saved picture slides ±32 px under the
 screen, like a window onto it. The motion is the tilt away from how the
 phone has been held over the last few seconds (`src/a26-shell/src/tilt.rs`):
-any pose looks centred and only moving the phone moves the picture.
+any pose looks centred and only moving the phone moves the picture. What is
+shown follows that on a critically damped spring sampled at each frame's
+display time, so it glides at 120 Hz whatever the sensor's 50 Hz.
+`MOON_TILT=X,Y` (held) or `MOON_TILT=demo` (a sweep) stands in for the
+sensor in sandboxes.
 
 - **Where**: the lock and home screens (home: the widgets, dock and icons
   stay put above the moving picture; not behind the app switcher), in GPU
   mode. The CPU compositor shows the layers at rest, as one picture.
+- **Composed on the GPU**, never on display planes: the layers overlap up
+  to six deep, more than the display fetches at 120 Hz (on planes `ridge`
+  gave DSIM underruns, `dsim_print_underrun_info` in the kernel log, seen
+  as the lower screen glitching), and a resting picture is then one buffer
+  to scan out. Moon asks for it with a fill (moon-compositor draws any
+  frame with one): a pixel under the panel's rounded corner, 0.4 % darker.
 - **Cost**: the accelerometer on the sensor hub (`ssp_sensor/enable` type 1,
   `accelerometer_sensor/raw_data`, read 50 times a second) runs only while
   a dynamic wallpaper is on screen with the screen on. A still phone draws

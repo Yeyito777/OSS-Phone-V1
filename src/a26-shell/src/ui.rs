@@ -1998,8 +1998,8 @@ impl Renderer {
     /// A dynamic wallpaper's layers over its still picture, each shifted
     /// by the phone's tilt (tilt.rs) and darkened like the background of
     /// `slot` (0 home, 1 lock).
-    fn sky_nodes(&self, slot: usize, nodes: &mut Vec<Node>) {
-        let (tx, ty) = crate::tilt::offset();
+    fn sky_nodes(&self, slot: usize, t: Instant, nodes: &mut Vec<Node>) {
+        let (tx, ty) = crate::tilt::offset_at(t);
         for layer in &self.sky {
             let placed = RectF::new(
                 layer.rest.x + tx * layer.travel,
@@ -2022,6 +2022,21 @@ impl Renderer {
                 alpha: 1.0,
                 radius: 0.0,
                 smooth: true,
+            });
+        }
+        if !self.sky.is_empty() {
+            // Composed on the GPU, never on display planes: the layers
+            // overlap up to six deep, more than the display can fetch at
+            // 120 Hz (DSIM underruns: the lower screen glitches), and one
+            // composed buffer is a fraction of the memory traffic while the
+            // picture rests. moon-compositor draws any frame with a fill;
+            // this one darkens a pixel under the panel's rounded corner by
+            // 0.4 %.
+            nodes.push(Node::Fill {
+                dst: RectF::new(0.0, 0.0, 1.0, 1.0),
+                color: BLACK,
+                alpha: 0.004,
+                radius: 0.0,
             });
         }
     }
@@ -2159,7 +2174,7 @@ impl Renderer {
             _ => Self::background_node(&mut self.compositor, &self.wall_levels, &self.lock_fade),
         });
         if self.compositor.gpu() {
-            self.sky_nodes(1, nodes);
+            self.sky_nodes(1, t, nodes);
         }
         // The clock rises with the finger and fades out first; then the
         // keypad cascades in a row at a time. Only a row or two change per
@@ -2226,7 +2241,7 @@ impl Renderer {
             match (self.gpu_home_parts, self.gpu_backdrops[0]) {
                 (Some([wall, parts]), _) if self.compositor.gpu() && !self.sky.is_empty() => {
                     nodes.push(backdrop_node(wall));
-                    self.sky_nodes(0, nodes);
+                    self.sky_nodes(0, t, nodes);
                     nodes.push(backdrop_node(parts));
                 }
                 (_, Some(id)) if self.compositor.gpu() => nodes.push(backdrop_node(id)),
@@ -2385,7 +2400,7 @@ impl Renderer {
         let shift = (page * SCREEN_W).round();
         nodes.push(backdrop_node(self.wall));
         if self.compositor.gpu() {
-            self.sky_nodes(0, nodes);
+            self.sky_nodes(0, t, nodes);
         }
         let widgets = home.widget_views(&state.settings.home, t);
         for index in 0..Widget::COUNT {
