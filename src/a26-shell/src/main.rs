@@ -38,6 +38,7 @@ mod status_bar;
 mod suspend;
 mod telephony_client;
 mod text;
+mod tilt;
 mod touch;
 mod tz;
 mod uevent;
@@ -552,6 +553,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut next_media_activity = Instant::now();
     let mut next_memory_status = Instant::now() + MEMORY_STATUS_INTERVAL;
     let mut next_clock_tick = clock::next_minute_boundary(Instant::now());
+    let mut tilt = tilt::Tilt::default();
     let mut frame_idle_until = Instant::now();
     let mut was_animating = false;
     let power_supply_events = uevent::PowerSupplyEvents::open()
@@ -1438,6 +1440,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             state.redraw = true;
             next_clock_tick = clock::next_minute_boundary(Instant::now());
         }
+        // A dynamic wallpaper on the lock screen follows the phone's tilt.
+        let tilt_active = state.screen_awake
+            && state.view == View::Locked
+            && renderer.compositor.gpu()
+            && wallpaper::is_dynamic(&state.settings.wallpaper);
+        if tilt.update(tilt_active, Instant::now()) {
+            state.redraw = true;
+        }
         state.tick();
         if apps.active().is_some() && AppId::from_view(state.view).is_none() {
             // The tick left the app (a finished power fade locks): hide and
@@ -1775,6 +1785,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         if state.screen_awake {
             deadline = deadline.min(next_clock_tick);
+        }
+        if let Some(at) = tilt.next_deadline(now) {
+            deadline = deadline.min(at);
         }
         // (A page transition is Moon's frame over the app, in GPU mode.)
         let shell_visible = state.screen_awake

@@ -344,6 +344,8 @@ pub struct Renderer {
     control: Layer<u64>,
     sliders: [Layer<u64>; 2],
     wall: SurfaceId,
+    /// A dynamic wallpaper's moving layers (stars, moon), GPU mode only.
+    sky: Option<[SurfaceId; 2]>,
     /// The wallpaper darkened toward the keypad's dim.
     wall_levels: DimLevels,
     /// The home screen darkened toward the switcher's dim.
@@ -427,6 +429,14 @@ pub struct Renderer {
 const DOTS_TOP: f32 = PASSCODE_DOTS_Y - 32.0;
 /// How much the passcode keypad darkens the wallpaper.
 const DIMMED: f32 = 0.42;
+/// A dynamic wallpaper's star layer: this much larger than the screen on
+/// every side, room for it to move (far, so it moves least).
+const SKY_MARGIN: f32 = 40.0;
+/// Its moon: the layer's size (the disc is half of it), centre on screen,
+/// and how far it moves (near, so the most).
+const MOON_SIZE: f32 = 640.0;
+const MOON_CENTER: (f32, f32) = (770.0, 1180.0);
+const MOON_TRAVEL: f32 = 90.0;
 /// Unlock progress, 1 at unlock falling to 0 as the keypad fades away.
 fn unlock_progress(state: &ShellState, t: Instant) -> f32 {
     state.unlock_at.map_or(0.0, |at| {
@@ -676,6 +686,7 @@ impl Renderer {
             wallpaper,
             wallpaper_id: "moon".into(),
             wall,
+            sky: None,
             wall_levels,
             home_levels: DimLevels::new(wall, Vec::new()),
             lock_fade: RowFade::new(usize::from(height)),
@@ -1596,6 +1607,21 @@ impl Renderer {
         self.wallpaper = crate::wallpaper::render(id, self.wallpaper.width, self.wallpaper.height);
         self.compositor.upload(conn, self.wall, &self.wallpaper)?;
         self.wallpaper_id = id.to_owned();
+        if crate::wallpaper::is_dynamic(id) && self.compositor.gpu() && self.sky.is_none() {
+            let (w, h) = (self.wallpaper.width, self.wallpaper.height);
+            let (sw, sh) = (w + 2 * SKY_MARGIN as i32, h + 2 * SKY_MARGIN as i32);
+            let stars = self
+                .compositor
+                .create_layer(conn, sw as u16, sh as u16, true)?;
+            self.compositor
+                .upload(conn, stars, &crate::wallpaper::sky_stars(sw, sh))?;
+            let moon =
+                self.compositor
+                    .create_layer(conn, MOON_SIZE as u16, MOON_SIZE as u16, true)?;
+            self.compositor
+                .upload(conn, moon, &crate::wallpaper::sky_moon(MOON_SIZE as i32))?;
+            self.sky = Some([stars, moon]);
+        }
         if !self.compositor.gpu() {
             self.wall_levels.invalidate_all();
             self.home_levels.invalidate_all();
@@ -1886,6 +1912,47 @@ impl Renderer {
         levels.ensure(conn, &mut self.compositor, fade.span())
     }
 
+    /// A dynamic wallpaper's layers over its base, each shifted by the
+    /// phone's tilt in proportion to its depth (tilt.rs).
+    fn sky_nodes(&self, alpha: f32, nodes: &mut Vec<Node>) {
+        let Some([stars, moon]) = self.sky else {
+            return;
+        };
+        if !crate::wallpaper::is_dynamic(&self.wallpaper_id) || !self.compositor.gpu() {
+            return;
+        }
+        let (tx, ty) = crate::tilt::offset();
+        let alpha = quantized(alpha);
+        let far = SKY_MARGIN * 0.8;
+        nodes.push(Node::Image {
+            surface: stars,
+            src: RectF::new(
+                SKY_MARGIN - tx * far,
+                SKY_MARGIN - ty * far,
+                SCREEN_W,
+                SCREEN_H,
+            ),
+            dst: SCREEN,
+            alpha,
+            radius: 0.0,
+            smooth: true,
+        });
+        let (cx, cy) = MOON_CENTER;
+        nodes.push(Node::Image {
+            surface: moon,
+            src: RectF::new(0.0, 0.0, MOON_SIZE, MOON_SIZE),
+            dst: RectF::new(
+                cx - MOON_SIZE / 2.0 + tx * MOON_TRAVEL,
+                cy - MOON_SIZE / 2.0 + ty * MOON_TRAVEL,
+                MOON_SIZE,
+                MOON_SIZE,
+            ),
+            alpha,
+            radius: 0.0,
+            smooth: true,
+        });
+    }
+
     /// The node showing a background's rows.
     fn background_node(compositor: &mut Compositor, levels: &DimLevels, fade: &RowFade) -> Node {
         let rows: Vec<SurfaceId> = fade.levels().iter().map(|l| levels.surface(*l)).collect();
@@ -2018,6 +2085,7 @@ impl Renderer {
             Some(id) if self.compositor.gpu() => backdrop_node(id),
             _ => Self::background_node(&mut self.compositor, &self.wall_levels, &self.lock_fade),
         });
+        self.sky_nodes(1.0 - p.clamp(0.0, 1.0) * DIMMED, nodes);
         // The clock rises with the finger and fades out first; then the
         // keypad cascades in a row at a time. Only a row or two change per
         // frame, which keeps the drag within a 120 Hz refresh.
