@@ -136,9 +136,9 @@ phone, `exo-bench-wl/exo-bench.py --probe`):
 The app's own thread does more per frame (EXO scroll 1.26 to 2.28 M
 instructions): it now copies into the buffer what Xorg copied three times
 before, plus Moon's mirror copy. A top-row key's callout rises over the app
-and is an X window, so while it shows the app goes back through X; typing
-is the one scenario where that costs more than it saves (display path +6 %
-before the callouts that stay over the keyboard kept direct display).
+and is an X window, so while it shows the app goes back through X: typing
+is the one scenario where the display path does not get cheaper (+1 %; +6 %
+before the other keys' callouts kept direct display, 7fc451a).
 
 **The simulator's probes** (`src/moon-gpu/sim.c`): `MOON_SIM_PROBE=PATH:X,Y`
 logs each refresh whose pixel at (X, Y) changed; the app's
