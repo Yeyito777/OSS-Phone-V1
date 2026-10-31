@@ -9,7 +9,7 @@ with their own commands: see `display-brightness.md`.
 
 | Command | Effect |
 | --- | --- |
-| `settings set wallpaper ID` | shows a built-in wallpaper (below), or a saved picture (`saved:NAME.png`), on the lock and home screens |
+| `settings set wallpaper ID` | shows a built-in wallpaper (below), or a saved picture (`saved:NAME.png`), on the lock and home screens. A setting's value is the rest of the line, spaces and all (`saved:Picture 1.png`) |
 | `settings set auto_lock_s N` | Auto-Lock after `N` seconds untouched: `15`, `30` (default), `60`, `120`, `300`, or `0` (never) |
 | `settings set timezone ZONE` | the local time zone, an IANA id from `src/a26-shell/src/tz.rs` (88 zones with their POSIX rules from tzdata 2026b; the chroot has no zoneinfo). Applied at once to Moon and to apps started afterwards; running apps follow `state.time` (`zone`, `tz` rule, `clock_24h`). Unset: config.json's `timezone` |
 | `settings set clock_24h on\|off` | the 24-hour clock (unset: config.json's `clock_24h`) |
