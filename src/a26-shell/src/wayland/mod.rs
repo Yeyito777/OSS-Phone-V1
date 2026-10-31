@@ -481,6 +481,12 @@ impl WaylandServer {
         self.flush();
     }
 
+    /// Whether the focused client takes any text (text-input-v3), not only
+    /// the keys of the US keymap.
+    pub fn takes_text(&self) -> bool {
+        text_input::enabled(&self.state)
+    }
+
     /// One key from Moon's on-screen keyboard, for the focused toplevel:
     /// text through text-input-v3 when the client uses it, otherwise key
     /// events from the built-in US keymap.

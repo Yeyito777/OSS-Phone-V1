@@ -43,6 +43,12 @@ pub struct Settings {
     /// it (still in the App Library). Read leniently (home.rs); changed by
     /// editing the home screen or `layout ...` (docs/home-screen.md).
     pub home: crate::home::HomeLayout,
+    /// Moon's own apps that start as Wayland clients of Moon
+    /// (`WAYLAND_DISPLAY`), shown without X's copies in GPU mode
+    /// (notes/wayland/MOON-WAYLAND.md). Each takes it at its next start;
+    /// empty: every app on X, as before. `settings set wayland_apps
+    /// exocortex` (a comma-separated list, or `none`).
+    pub wayland_apps: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -67,6 +73,7 @@ impl Default for Settings {
             clock_24h: None,
             power_hold: PowerHold::Voice,
             home: crate::home::HomeLayout::default(),
+            wayland_apps: Vec::new(),
         }
     }
 }
@@ -108,6 +115,8 @@ impl Settings {
                 *ms = 0;
             }
         }
+        self.wayland_apps.retain(|name| speaks_wayland(name));
+        self.wayland_apps.dedup();
         self.version = 1;
         self
     }
@@ -179,15 +188,64 @@ impl Settings {
                     .filter(|ms| *ms == 0 || (5..=400).contains(ms))
                     .ok_or("a haptic length is 5..400 ms, or 0 for the default")?;
             }
+            "wayland_apps" => {
+                let names: Vec<String> = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty() && *name != "none")
+                    .map(str::to_owned)
+                    .collect();
+                if !names.iter().all(|name| speaks_wayland(name)) {
+                    return Err("wayland_apps names system, phone, messages or exocortex, or none");
+                }
+                self.wayland_apps = names;
+                self.wayland_apps.dedup();
+            }
             _ => return Err("unknown setting"),
         }
         Ok(())
     }
+
+    /// The apps `wayland_apps` names.
+    pub fn wayland_app_ids(&self) -> Vec<crate::model::AppId> {
+        self.wayland_apps
+            .iter()
+            .filter_map(|name| crate::model::AppId::parse(name))
+            .collect()
+    }
+}
+
+/// Moon's own apps (the a26-system binary) may be put on Wayland; one that
+/// cannot speak it simply stays on X. Not the Browser: Chromium would pick
+/// Wayland by itself, untested.
+fn speaks_wayland(name: &str) -> bool {
+    matches!(name, "system" | "phone" | "messages" | "exocortex")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wayland_apps_are_moons_own() {
+        let mut settings = Settings::default();
+        assert!(settings.wayland_apps.is_empty());
+        assert!(settings.set("wayland_apps", "exocortex").is_ok());
+        assert_eq!(
+            settings.wayland_app_ids(),
+            vec![crate::model::AppId::Exocortex]
+        );
+        assert!(settings.set("wayland_apps", "exocortex,browser").is_err());
+        assert_eq!(settings.wayland_apps, vec!["exocortex".to_owned()]);
+        assert!(settings.set("wayland_apps", "none").is_ok());
+        assert!(settings.wayland_apps.is_empty());
+        let loaded: Settings =
+            serde_json::from_str(r#"{"wayland_apps":["exocortex","browser","nope"]}"#).unwrap();
+        assert_eq!(
+            loaded.sanitized().wayland_apps,
+            vec!["exocortex".to_owned()]
+        );
+    }
 
     #[test]
     fn loads_defaults_and_rejects_bad_values() {

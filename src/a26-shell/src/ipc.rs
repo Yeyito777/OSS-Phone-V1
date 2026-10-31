@@ -75,6 +75,10 @@ pub enum Command {
     Transition(bool),
     /// `transition ready`: the new page is fully drawn; the slide starts.
     TransitionReady,
+    /// Answered once the X root shows what the panel does (a Wayland app
+    /// shown from its own buffers is copied into its X window first), for
+    /// a26-shellshot.
+    ScreenSync,
     /// `haptic STYLE`: a tap haptic for an app's control (System's switches).
     /// (`haptic STYLE MS` plays that length once, for tuning.)
     Haptic(crate::notify_client::Haptic, Option<u32>),
@@ -516,8 +520,9 @@ fn parse_command(line: &str) -> Result<Command, String> {
         "screen" => match parts.next() {
             Some("off") => Command::ScreenOff,
             Some("on") => Command::ScreenOn,
-            Some(_) => return Err("screen requires on or off".into()),
-            None => return Err("screen requires on or off".into()),
+            Some("sync") => Command::ScreenSync,
+            Some(_) => return Err("screen requires on, off or sync".into()),
+            None => return Err("screen requires on, off or sync".into()),
         },
         "lease" => {
             let operation = parts

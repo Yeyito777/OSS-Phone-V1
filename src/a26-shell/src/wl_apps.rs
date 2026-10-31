@@ -39,7 +39,7 @@ use crate::compositor::SurfaceId;
 use crate::gfx::RectF;
 use crate::gpu::{Direct, GpuBackend};
 use crate::keyboard::{KeyboardInput, KeyboardPurpose};
-use crate::model::AppId;
+use crate::model::{AppId, AppPointer};
 use crate::present::Damage;
 use crate::wayland::{self, Placement, ShmBuffer, ShmPool, SurfaceKey, ToplevelId, WaylandServer};
 
@@ -102,6 +102,9 @@ pub struct WaylandApps {
     next_frame: Instant,
     /// The window a touch went down on (X keeps delivering to it).
     touch_window: Option<u32>,
+    /// A touch Moon forwards straight to a Wayland app (`app_pointer`):
+    /// the surface it went down on and the app's window.
+    touch_target: Option<(SurfaceKey, u32)>,
     /// Last size of each toplevel proxy, for configures without a resize.
     sizes: HashMap<u32, (u16, u16)>,
     /// Parent of each popup or subsurface.
@@ -174,6 +177,7 @@ impl WaylandApps {
             exposed: Vec::new(),
             next_frame: Instant::now(),
             touch_window: None,
+            touch_target: None,
             sizes: HashMap::new(),
             parents: HashMap::new(),
             actions: Vec::new(),
@@ -344,6 +348,12 @@ impl WaylandApps {
                     }
                     if self.touch_window == Some(proxy.window) {
                         self.touch_window = None;
+                    }
+                    if self
+                        .touch_target
+                        .is_some_and(|(key, window)| key == surface || window == proxy.window)
+                    {
+                        self.touch_target = None;
                     }
                     conn.destroy_window(proxy.window)?;
                 }
@@ -721,7 +731,27 @@ impl WaylandApps {
         if target != self.direct
             && let Some(old) = self.direct.take()
         {
-            gpu.set_direct(Vec::new());
+            // The proxies first (their copies are queued before the mirror's
+            // next one): until the mirror has them, the screen keeps the
+            // last direct frame rather than the proxies' stale pixels.
+            for key in self.tree(old) {
+                if self.stale.contains(&key) {
+                    self.stale.retain(|stale| *stale != key);
+                    if let Err(error) = self.sync_proxy(conn, key) {
+                        eprintln!("wayland: proxy refresh failed: {error}");
+                    }
+                }
+            }
+            let top = i32::from(crate::status_bar::HEIGHT);
+            gpu.leave_direct(
+                conn,
+                Damage {
+                    x0: 0,
+                    y0: top,
+                    x1: i32::from(self.width),
+                    y1: i32::from(self.height),
+                },
+            );
             self.shown.clear();
             if self.debug {
                 eprintln!("wayland: direct off for surface {}", old.0);
@@ -758,13 +788,11 @@ impl WaylandApps {
                     sent.push((key, buffer, shm));
                     changed = true;
                 } else {
-                    self.make_current(key, buffer, shm);
-                    self.mark_stale(key);
+                    self.settle_unshown(key, buffer, shm);
                 }
             } else {
                 // Direct mode ended before this commit was shown.
-                self.make_current(key, buffer, shm);
-                self.mark_stale(key);
+                self.settle_unshown(key, buffer, shm);
             }
         }
         if changed && let Some(root) = self.direct {
@@ -784,7 +812,7 @@ impl WaylandApps {
                 }
                 None => {
                     for (key, buffer, shm) in sent {
-                        self.make_current(key, buffer, shm);
+                        self.settle_unshown(key, buffer, shm);
                     }
                 }
             }
@@ -952,6 +980,18 @@ impl WaylandApps {
             });
         }
         nodes
+    }
+
+    /// A commit that no direct frame showed: it is the surface's content
+    /// (the proxy gets it when direct mode ends), and its frame callback
+    /// fires on the X path's grid, so the client never waits for a flip
+    /// that will not come.
+    fn settle_unshown(&mut self, key: SurfaceKey, buffer: WlBuffer, shm: Arc<ShmBuffer>) {
+        self.make_current(key, buffer, shm);
+        self.mark_stale(key);
+        if let Some(proxy) = self.proxies.get_mut(&key) {
+            proxy.frame_pending = true;
+        }
     }
 
     fn mark_stale(&mut self, key: SurfaceKey) {
@@ -1148,6 +1188,13 @@ impl WaylandApps {
                         self.touch_window = None;
                         self.server.touch_cancel();
                     }
+                    if self
+                        .touch_target
+                        .is_some_and(|(_, window)| window == event.window)
+                    {
+                        self.touch_target = None;
+                        self.server.touch_cancel();
+                    }
                     self.reconfigure(event.window, None);
                 }
                 false
@@ -1329,6 +1376,22 @@ impl WaylandApps {
         self.parents.get(&key).copied()
     }
 
+    /// `profile on|off` at run time: the direct frames' timing summary
+    /// (MOON_PROFILE or MOON_WAYLAND_DEBUG keep it on from the start).
+    pub fn set_profile(&mut self, on: bool) {
+        if on {
+            self.timing.get_or_insert_with(DirectTiming::default);
+        } else if !self.debug && std::env::var_os("MOON_PROFILE").is_none() {
+            self.timing = None;
+        }
+    }
+
+    /// Whether the focused Wayland app takes any text (text-input-v3);
+    /// otherwise only what the US keymap has reaches it.
+    pub fn takes_text(&self) -> bool {
+        self.server.takes_text()
+    }
+
     /// Text from Moon's keyboard for the focused Wayland app.
     pub fn key_input(&mut self, input: KeyboardInput) -> bool {
         self.server.key_input(input, wayland::now_ms())
@@ -1336,13 +1399,86 @@ impl WaylandApps {
 
     /// A Moon gesture took over the touch: the client must forget it.
     pub fn cancel_touch(&mut self) {
-        if self.touch_window.take().is_some() {
+        if self.touch_window.take().is_some() | self.touch_target.take().is_some() {
             self.server.touch_cancel();
         }
     }
 
     pub fn touch_active(&self) -> bool {
-        self.touch_window.is_some()
+        self.touch_window.is_some() || self.touch_target.is_some()
+    }
+
+    /// A touch Moon forwards to the app in front (screen pixels), when its
+    /// window is a Wayland toplevel's: it goes straight to the surface
+    /// under the finger as wl_touch, rather than through XTEST, the X
+    /// server and back to the proxy. False when `window` is not a proxy.
+    pub fn app_pointer(&mut self, window: u32, event: AppPointer) -> bool {
+        let Some(&root) = self.windows.get(&window) else {
+            return false;
+        };
+        let time = wayland::now_ms();
+        match event {
+            AppPointer::Press(x, y) => {
+                let (x, y) = (i32::from(x), i32::from(y));
+                let key = self.surface_at(root, x, y);
+                let (sx, sy) = self.surface_pixel(key, x, y);
+                if self.touch_target.take().is_some() {
+                    self.server.touch_up(0, time);
+                }
+                self.touch_target = Some((key, window));
+                self.server.touch_down(key, 0, sx, sy, time);
+            }
+            AppPointer::Motion(x, y) => {
+                if let Some((key, _)) = self.touch_target {
+                    let (sx, sy) = self.surface_pixel(key, i32::from(x), i32::from(y));
+                    self.server.touch_motion(0, sx, sy, time);
+                }
+            }
+            AppPointer::Release(x, y) => {
+                if let Some((key, _)) = self.touch_target.take() {
+                    let (sx, sy) = self.surface_pixel(key, i32::from(x), i32::from(y));
+                    self.server.touch_motion(0, sx, sy, time);
+                    self.server.touch_up(0, time);
+                }
+            }
+        }
+        true
+    }
+
+    /// The topmost of a toplevel's surfaces showing screen pixel (x, y).
+    fn surface_at(&self, root: SurfaceKey, x: i32, y: i32) -> SurfaceKey {
+        self.tree(root)
+            .into_iter()
+            .rev()
+            .find(|key| {
+                let Some(proxy) = self.proxies.get(key) else {
+                    return false;
+                };
+                let Some((_, shm)) = proxy.current.as_ref() else {
+                    return false;
+                };
+                if *key != root && !proxy.mapped {
+                    return false;
+                }
+                let shown = proxy
+                    .crop
+                    .unwrap_or(wayland::Rect::new(0, 0, shm.width, shm.height));
+                let (ox, oy) = self.screen_origin(*key);
+                x >= ox && y >= oy && x < ox + shown.width && y < oy + shown.height
+            })
+            .unwrap_or(root)
+    }
+
+    /// Screen pixel (x, y) in a surface's buffer pixels.
+    fn surface_pixel(&self, key: SurfaceKey, x: i32, y: i32) -> (f64, f64) {
+        let (ox, oy) = self.screen_origin(key);
+        let crop = self
+            .proxies
+            .get(&key)
+            .and_then(|proxy| proxy.crop)
+            .map(|crop| (crop.x, crop.y))
+            .unwrap_or((0, 0));
+        (f64::from(x - ox + crop.0), f64::from(y - oy + crop.1))
     }
 }
 
@@ -1388,9 +1524,7 @@ fn owner_from_pid(pid: u32) -> Option<AppId> {
             return None;
         }
         let name = path.strip_prefix("/moon/")?.split('/').next()?;
-        [AppId::System, AppId::Browser]
-            .into_iter()
-            .find(|app| app.cgroup_name() == name)
+        AppId::ALL.into_iter().find(|app| app.cgroup_name() == name)
     })
 }
 

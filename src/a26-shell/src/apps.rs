@@ -46,6 +46,8 @@ struct Application {
     windows: Vec<ManagedWindow>,
     freezer: FreezerGroup,
     last_used: Instant,
+    /// The running process was started with Moon's Wayland server.
+    on_wayland: bool,
 }
 
 impl Application {
@@ -66,6 +68,7 @@ impl Application {
             windows: Vec::new(),
             freezer: FreezerGroup::prepare(id),
             last_used: Instant::now(),
+            on_wayland: false,
         }
     }
 
@@ -86,6 +89,7 @@ impl Application {
                 .saturating_duration_since(self.last_used)
                 .as_millis()
                 .min(u64::MAX as u128) as u64,
+            wayland: self.child.is_some() && self.on_wayland,
         }
     }
 
@@ -122,6 +126,9 @@ pub struct AppRegistry {
     /// Chromium's, must not be moved onto it by accident).
     wayland_env: Vec<(String, String)>,
     wayland_apps: Vec<AppId>,
+    /// Apps that died on Wayland: on X from then on, until `wayland_apps`
+    /// is set again.
+    wayland_failed: Vec<AppId>,
     active: Option<AppId>,
     leases: LeaseManager,
 }
@@ -150,12 +157,31 @@ impl AppRegistry {
             leases: LeaseManager::default(),
             wayland_env: Vec::new(),
             wayland_apps: Vec::new(),
+            wayland_failed: Vec::new(),
         }
     }
 
+    /// Moon's Wayland server for `apps`, at their next start.
     pub fn set_wayland_env(&mut self, env: Vec<(String, String)>, apps: Vec<AppId>) {
         self.wayland_env = env;
         self.wayland_apps = apps;
+    }
+
+    /// The apps that start on Wayland (given a server).
+    pub fn wayland_apps(&self) -> &[AppId] {
+        &self.wayland_apps
+    }
+
+    /// `wayland_apps` was set: apps that failed on Wayland try it again.
+    pub fn retry_wayland(&mut self) {
+        self.wayland_failed.clear();
+    }
+
+    /// Whether `app` starts on Wayland now.
+    fn starts_on_wayland(&self, app: AppId) -> bool {
+        !self.wayland_env.is_empty()
+            && self.wayland_apps.contains(&app)
+            && !self.wayland_failed.contains(&app)
     }
 
     pub fn active(&self) -> Option<AppId> {
@@ -268,11 +294,17 @@ impl AppRegistry {
         let mut update = RegistryUpdate::default();
         let now = Instant::now();
         self.leases.expire(now);
+        let mut failed_on_wayland = Vec::new();
         for application in &mut self.applications {
             let result = application.child.as_mut().map(Child::try_wait);
             match result {
                 Some(Ok(Some(status))) => {
                     eprintln!("{} exited with {status}", application.id.display_name());
+                    // Died on Wayland (a crash, not a close: Moon's own
+                    // stops never get here): back on X.
+                    if application.on_wayland && !status.success() {
+                        failed_on_wayland.push(application.id);
+                    }
                     application.child = None;
                     application.pidfd = None;
                     application.lifecycle = AppLifecycle::Stopped;
@@ -281,7 +313,9 @@ impl AppRegistry {
                     if !application.id.lease_is_external() {
                         self.leases.clear_app(application.id);
                     }
-                    if desired == Some(application.id) {
+                    if desired == Some(application.id)
+                        && !(application.on_wayland && !status.success())
+                    {
                         update.active_process_exited = Some(application.id);
                     }
                 }
@@ -296,6 +330,17 @@ impl AppRegistry {
             }
         }
 
+        for app in failed_on_wayland {
+            eprintln!(
+                "{} failed on Wayland: on X from now on (until wayland_apps is set again)",
+                app.display_name()
+            );
+            self.wayland_failed.push(app);
+            // Wanted in front: started again at once below, on X.
+            if self.active == Some(app) && desired == Some(app) {
+                self.active = None;
+            }
+        }
         if update.active_process_exited.is_some() || update.active_process_failed.is_some() {
             self.active = None;
             return update;
@@ -342,7 +387,8 @@ impl AppRegistry {
         let Some(active) = desired else {
             return update;
         };
-        let child_env = if self.wayland_apps.contains(&active) {
+        let on_wayland = self.starts_on_wayland(active);
+        let child_env = if on_wayland {
             self.wayland_env.clone()
         } else {
             Vec::new()
@@ -395,10 +441,12 @@ impl AppRegistry {
                 match command.spawn() {
                     Ok(process) => {
                         eprintln!(
-                            "started {} pid={}",
+                            "started {} pid={}{}",
                             application.id.display_name(),
-                            process.id()
+                            process.id(),
+                            if on_wayland { " (Wayland)" } else { "" }
                         );
+                        application.on_wayland = on_wayland;
                         application.child = Some(process);
                         application.pidfd = match open_pidfd(application.pid().unwrap_or_default())
                         {
@@ -736,6 +784,38 @@ mod tests {
                 .acquire_lease(AppId::System, LeaseKind::Transfer, 10, now)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn an_app_that_dies_on_wayland_starts_again_on_x() {
+        // The a26-system apps' binary fails at once.
+        let mut registry = AppRegistry::new("/bin/false".into(), "/bin/true".into());
+        registry.set_wayland_env(
+            vec![("WAYLAND_DISPLAY".into(), "/nonexistent/wayland-0".into())],
+            vec![AppId::Exocortex],
+        );
+        registry.reconcile(Some(AppId::Exocortex));
+        assert!(registry.app(AppId::Exocortex).on_wayland);
+        let pid = registry.pid(AppId::Exocortex).unwrap();
+        for _ in 0..200 {
+            if std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .map_or(true, |stat| stat.contains(") Z "))
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Started again at once, on X, rather than leaving the app.
+        let update = registry.reconcile(Some(AppId::Exocortex));
+        assert_eq!(update.active_process_exited, None);
+        assert_ne!(registry.pid(AppId::Exocortex), Some(pid));
+        assert!(registry.pid(AppId::Exocortex).is_some());
+        assert!(!registry.app(AppId::Exocortex).on_wayland);
+        assert!(!registry.starts_on_wayland(AppId::Exocortex));
+        // Setting wayland_apps again gives it Wayland back.
+        registry.retry_wayland();
+        assert!(registry.starts_on_wayland(AppId::Exocortex));
+        registry.shutdown();
     }
 
     #[test]

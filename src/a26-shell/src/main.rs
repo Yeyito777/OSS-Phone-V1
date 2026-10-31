@@ -501,43 +501,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let mut idle_dim_applied = false;
     let mut apps = AppRegistry::from_environment();
-    // Wayland apps (milestone 1, opt-in): MOON_WAYLAND_DIR names the private
-    // runtime directory for the socket. Apps get WAYLAND_DISPLAY with it.
-    let mut wayland = match env::var_os("MOON_WAYLAND_DIR") {
-        Some(dir) => {
-            let dir = PathBuf::from(dir);
-            let server = match early_wayland.take() {
-                Some(server) => {
-                    wl_apps::WaylandApps::with_server(&conn, root, width, height, server)
-                }
-                None => std::fs::create_dir_all(&dir)
-                    .map_err(Box::<dyn Error>::from)
-                    .and_then(|()| wl_apps::WaylandApps::new(&conn, root, width, height, &dir)),
-            };
-            match server {
-                Ok(server) => {
-                    // MOON_WAYLAND_APPS names the apps that speak Wayland
-                    // (comma-separated; default: the System app).
-                    let names = env::var("MOON_WAYLAND_APPS").unwrap_or_else(|_| "system".into());
-                    let wayland_apps: Vec<AppId> = names
-                        .split(',')
-                        .filter_map(|name| AppId::parse(name.trim()))
-                        .collect();
-                    apps.set_wayland_env(server.client_env(), wayland_apps);
-                    eprintln!(
-                        "wayland: serving apps at {}",
-                        dir.join("wayland-0").display()
-                    );
-                    Some(server)
-                }
-                Err(error) => {
-                    eprintln!("wayland: server unavailable: {error}");
-                    None
-                }
+    // Wayland apps (opt-in): the apps the `wayland_apps` setting names (or
+    // MOON_WAYLAND_APPS) start as Wayland clients of Moon, with
+    // WAYLAND_DISPLAY in MOON_WAYLAND_DIR (default /run/moon-wayland, a
+    // tmpfs of the session). The server is bound only when an app wants it,
+    // here or when the setting changes (no restart).
+    let mut wayland = match early_wayland.take() {
+        Some(server) => match wl_apps::WaylandApps::with_server(&conn, root, width, height, server)
+        {
+            Ok(server) => Some(server),
+            Err(error) => {
+                eprintln!("wayland: server unavailable: {error}");
+                None
             }
-        }
+        },
         None => None,
     };
+    let mut wayland_bind_failed = false;
+    update_wayland_apps(
+        &conn,
+        root,
+        (width, height),
+        &state.settings,
+        &mut wayland,
+        &mut wayland_bind_failed,
+        &mut apps,
+    );
     if let Some(control) = audio_volume.as_ref()
         && let Err(error) = control.set(state.volume)
     {
@@ -691,6 +680,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // An app's page transition waiting for its snapshot: the request, push
     // or pop, and when it came.
     let mut pending_transition: Option<(std::os::unix::net::UnixStream, bool, Instant)> = None;
+    // a26-shellshot's `screen sync`, answered once the X root is current.
+    let mut screen_syncs: Vec<std::os::unix::net::UnixStream> = Vec::new();
     // Power off / restart: when the screen started saying so, and the
     // supervisor's helper while it runs.
     let mut shutdown_shown: Option<Instant> = None;
@@ -750,6 +741,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         let mut wayland_direct = (None, Vec::new());
+        // a26-shellshot asked: the app's X window has its pixels now (the
+        // Wayland side copied them, leaving direct display for this pass).
+        let screen_synced = !screen_syncs.is_empty();
         if let Some(server) = wayland.as_mut() {
             for action in server.dispatch(&conn) {
                 match action {
@@ -785,6 +779,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .copied()
                 .filter(|window| server.is_proxy(*window))
                 .collect();
+            // Touches for a Wayland app in front go to it at once, as
+            // wl_touch (not XTEST and the X server).
+            if let Some(primary) = state.managed_windows.first().copied()
+                && server.is_proxy(primary)
+            {
+                for event in std::mem::take(&mut state.app_pointer) {
+                    server.app_pointer(primary, event);
+                }
+            }
             for input in std::mem::take(&mut state.wayland_keys) {
                 if !server.key_input(input) {
                     // Never log the key: password input stays ephemeral.
@@ -816,6 +819,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 && state.pending_capture.is_none()
                 && !state.pending_switcher
                 && !state.pending_fade_capture
+                && screen_syncs.is_empty()
+                && pending_transition.is_none()
+                && state.page_transition.is_none()
                 && !overlay)
                 .then(|| state.managed_windows.first().copied())
                 .flatten();
@@ -831,6 +837,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 && (state.gesture.is_some() || !state.view.is_app() || state.shell_covers_app())
             {
                 server.cancel_touch();
+            }
+        }
+        if screen_synced {
+            conn.flush()?;
+            for stream in screen_syncs.drain(..) {
+                ipc::respond(stream, Ok(&serde_json::json!({ "synced": true })));
             }
         }
 
@@ -967,6 +979,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                             state.settings.set(key, value).map(|()| {
                                 state.settings_changed = true;
                                 refresh_voice(&mut state);
+                                if key == "wayland_apps" {
+                                    apps.retry_wayland();
+                                }
                             })
                         }
                         Command::Layout(command) => state.home_command(command.clone()),
@@ -1110,7 +1125,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                         ipc::respond(stream, Ok(&brightness.public()));
                         continue;
                     }
+                    if let Command::ScreenSync = command {
+                        screen_syncs.push(stream);
+                        continue;
+                    }
                     if let Command::Transition(push) = command {
+                        // A Wayland app shown from its own buffers: its X
+                        // window gets them first, so the snapshot has them.
+                        if state.page_transition_allowed()
+                            && let Some(server) = wayland.as_mut()
+                            && server.showing_direct()
+                        {
+                            server.update_direct(&conn, renderer.compositor.gpu_mut(), None, &[]);
+                        }
                         // Answered once the page on screen is snapshotted
                         // (below), so the app draws its next page only after.
                         let started =
@@ -1137,6 +1164,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if let Command::Profile(enabled) = command {
                         renderer.compositor.set_profile(enabled);
                         profile_frames = enabled;
+                        if let Some(server) = wayland.as_mut() {
+                            server.set_profile(enabled);
+                        }
                         eprintln!("frame profiling {}", if enabled { "on" } else { "off" });
                     }
                     apply_command(
@@ -1171,7 +1201,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         if std::mem::take(&mut state.paste_requested) {
             let text = clipboard.as_ref().and_then(clipboard::Clipboard::text);
-            paste_clipboard(&conn, &mut state, text.as_deref(), &key_injector);
+            let unicode = wayland
+                .as_ref()
+                .is_some_and(wl_apps::WaylandApps::takes_text);
+            paste_clipboard(&conn, &mut state, text.as_deref(), &key_injector, unicode);
         }
         // `open browser URL` (or a notification's): the Browser gets the link.
         if let Some(open) = state.open_target.as_ref()
@@ -1368,7 +1401,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         for command in std::mem::take(&mut state.calls.outbox) {
             telephonyd.send(command);
         }
-        send_app_pointer(&conn, root, std::mem::take(&mut state.app_pointer));
+        let app_pointer = std::mem::take(&mut state.app_pointer);
+        match (wayland.as_mut(), state.managed_windows.first().copied()) {
+            (Some(server), Some(primary)) if server.is_proxy(primary) => {
+                for event in app_pointer {
+                    server.app_pointer(primary, event);
+                }
+            }
+            _ => send_app_pointer(&conn, root, app_pointer),
+        }
         // Power off or restart: the screen says so first (one frame, then
         // the helper), and the supervisor's helper takes it from there.
         if let Some(action) = state.power.pending_action
@@ -1482,6 +1523,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             // Every clock shows the new time.
             next_clock_tick = Instant::now();
             state.redraw = true;
+            // Apps put on Wayland (or back on X) take it at their next start.
+            wayland_bind_failed = false;
+            update_wayland_apps(
+                &conn,
+                root,
+                (width, height),
+                &state.settings,
+                &mut wayland,
+                &mut wayland_bind_failed,
+                &mut apps,
+            );
         }
         // Auto-Lock: dim five seconds ahead, then the power fade; any input
         // (note_input) restores the brightness. The app in front holds it
@@ -2659,6 +2711,71 @@ fn raise_shell(conn: &RustConnection, shell_window: u32) -> Result<(), Box<dyn E
     Ok(())
 }
 
+/// Where Moon's Wayland server listens when the supervisor names no place.
+const DEFAULT_WAYLAND_DIR: &str = "/run/moon-wayland";
+
+/// Binds Moon's Wayland server once an app is to use it (the
+/// `wayland_apps` setting; MOON_WAYLAND_APPS and MOON_WAYLAND_DIR from the
+/// supervisor override it) and tells the registry which apps start on it.
+/// A server that cannot bind is not tried again until the setting changes.
+fn update_wayland_apps(
+    conn: &RustConnection,
+    root: u32,
+    (width, height): (u16, u16),
+    settings: &settings::Settings,
+    wayland: &mut Option<wl_apps::WaylandApps>,
+    bind_failed: &mut bool,
+    apps: &mut AppRegistry,
+) {
+    let dir = env::var_os("MOON_WAYLAND_DIR").map(PathBuf::from);
+    let wanted: Vec<AppId> = match env::var("MOON_WAYLAND_APPS") {
+        Ok(names) => names
+            .split(',')
+            .filter_map(|name| AppId::parse(name.trim()))
+            .collect(),
+        Err(_) if !settings.wayland_apps.is_empty() => settings.wayland_app_ids(),
+        // The supervisor's WAYLAND_APPS=1 alone: the System app, as before.
+        Err(_) if dir.is_some() => vec![AppId::System],
+        Err(_) => Vec::new(),
+    };
+    if wayland.is_none() && (dir.is_some() || !wanted.is_empty()) && !*bind_failed {
+        let dir = dir.unwrap_or_else(|| PathBuf::from(DEFAULT_WAYLAND_DIR));
+        let server = std::fs::create_dir_all(&dir)
+            .map_err(Box::<dyn Error>::from)
+            .and_then(|()| wl_apps::WaylandApps::new(conn, root, width, height, &dir));
+        match server {
+            Ok(server) => {
+                eprintln!(
+                    "wayland: serving apps at {}",
+                    dir.join("wayland-0").display()
+                );
+                *wayland = Some(server);
+            }
+            Err(error) => {
+                eprintln!("wayland: server unavailable: {error}");
+                *bind_failed = true;
+            }
+        }
+    }
+    let env = wayland
+        .as_ref()
+        .map(wl_apps::WaylandApps::client_env)
+        .unwrap_or_default();
+    if !wanted.is_empty() && wanted != apps.wayland_apps() {
+        let names: Vec<&str> = wanted.iter().map(|app| app.cgroup_name()).collect();
+        eprintln!(
+            "wayland: {} start on Wayland{}",
+            names.join(", "),
+            if env.is_empty() {
+                " (no server: X)"
+            } else {
+                ""
+            }
+        );
+    }
+    apps.set_wayland_env(env, wanted);
+}
+
 fn fullscreen_window(
     conn: &RustConnection,
     window: u32,
@@ -3569,6 +3686,7 @@ fn paste_clipboard(
     state: &mut ShellState,
     text: Option<&str>,
     key_injector: &XtestInjector,
+    unicode: bool,
 ) {
     let Some(text) = text.filter(|_| state.keyboard.is_visible()) else {
         state.last_action = "paste_empty".into();
@@ -3579,7 +3697,8 @@ fn paste_clipboard(
         .managed_windows
         .first()
         .is_some_and(|primary| state.wayland_windows.contains(primary));
-    let (inputs, mut skipped) = keyboard::paste_inputs(text, multiline, wayland);
+    // A Wayland app without text input gets keys, as through XTEST: ASCII.
+    let (inputs, mut skipped) = keyboard::paste_inputs(text, multiline, wayland && unicode);
     if wayland {
         state.wayland_keys.extend(inputs);
     } else {
@@ -3670,6 +3789,7 @@ fn apply_command(
         | Command::SettingsSet(..)
         | Command::Layout(_)
         | Command::Transition(_)
+        | Command::ScreenSync
         | Command::StatusBar(..)
         | Command::ClipboardGet
         | Command::ClipboardGetImage

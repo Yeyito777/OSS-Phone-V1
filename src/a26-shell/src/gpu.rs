@@ -1547,20 +1547,14 @@ impl GpuBackend {
                 })
             })
             .collect();
+        let bands = self.mirror_bands(&direct);
         msg.u32(self.serial)
             .u32(0)
             .u32(0)
-            .u32(1 + direct.len() as u32);
-        push_image(
-            &mut msg,
-            MIRROR_ID,
-            self.full_rect(),
-            self.full_rect(),
-            1.0,
-            1.0,
-            0.0,
-            false,
-        );
+            .u32((bands.len() + direct.len()) as u32);
+        for band in bands {
+            push_image(&mut msg, MIRROR_ID, band, band, 1.0, 1.0, 0.0, false);
+        }
         // A Wayland app in front: its own buffer over the mirror's (stale)
         // copy of it. The status strip and keyboard still come from the
         // mirror, beside the app's area.
@@ -1579,6 +1573,30 @@ impl GpuBackend {
         let packet = msg.finish().to_vec();
         self.send(&packet, None);
         self.last_frame = None;
+    }
+
+    /// The mirror's rows not hidden by an opaque full-width client buffer
+    /// (a Wayland app shown directly): only those are scanned out, so the
+    /// display reads one full-width layer per row, not the mirror's stale
+    /// copy of the app under the app's own buffer (two full-width layers a
+    /// row strain the display's bandwidth at 120 Hz).
+    fn mirror_bands(&self, direct: &[Direct]) -> Vec<RectF> {
+        let width = f32::from(self.width);
+        let covers: Vec<(f32, f32)> = direct
+            .iter()
+            .filter(|node| {
+                node.dst.x <= 0.0
+                    && node.dst.x + node.dst.w >= width
+                    && node.surface.is_some_and(|surface| {
+                        matches!(
+                            self.surfaces.get(surface.0),
+                            Some(Some(Surface::Client { argb: false, .. }))
+                        )
+                    })
+            })
+            .map(|node| (node.dst.y, node.dst.y + node.dst.h))
+            .collect();
+        uncovered_bands(width, f32::from(self.height), &covers)
     }
 
     /// Whether Wayland client buffers can be shown directly (v3 offsets).
@@ -1695,6 +1713,22 @@ impl GpuBackend {
             return Some(self.serial);
         }
         None
+    }
+
+    /// A Wayland app stops being shown from its own buffers: once the
+    /// mirror has `area` again (where its X proxy was just brought up to
+    /// date, queued before this copy), the mirror is shown alone. Until
+    /// then the panel keeps the last direct frame, never the proxy's stale
+    /// pixels.
+    pub fn leave_direct<C: Connection>(&mut self, conn: &C, area: Damage) {
+        self.direct.clear();
+        if self.mirror_mode {
+            self.mirror_damage.push(area);
+            self.mirror_frame_after = Some(self.flushes_issued + 1);
+            if let Err(error) = self.flush_mirror(conn) {
+                eprintln!("gpu: mirror copy failed: {error}");
+            }
+        }
     }
 
     pub fn presented_serial(&self) -> u32 {
@@ -1899,6 +1933,32 @@ impl GpuBackend {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The full-width bands of a `width` x `height` screen outside the row
+/// ranges `covers`.
+fn uncovered_bands(width: f32, height: f32, covers: &[(f32, f32)]) -> Vec<RectF> {
+    let mut bands = vec![(0.0_f32, height)];
+    for &(y0, y1) in covers {
+        let (y0, y1) = (y0.max(0.0), y1.min(height));
+        bands = bands
+            .into_iter()
+            .flat_map(|(a, b)| {
+                if y1 <= a || y0 >= b {
+                    vec![(a, b)]
+                } else {
+                    [(a, y0.max(a)), (y1.min(b), b)]
+                        .into_iter()
+                        .filter(|(a, b)| b > a)
+                        .collect()
+                }
+            })
+            .collect();
+    }
+    bands
+        .into_iter()
+        .map(|(y0, y1)| RectF::new(0.0, y0, width, y1 - y0))
+        .collect()
+}
+
 fn push_image(
     msg: &mut Msg,
     wire: u32,
@@ -2030,7 +2090,29 @@ fn monotonic_ns() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::coalesce;
+    use super::{RectF, coalesce, uncovered_bands};
+
+    #[test]
+    fn a_direct_app_hides_the_mirror_under_it() {
+        // Nothing direct: the whole mirror.
+        assert_eq!(
+            uncovered_bands(1080.0, 2340.0, &[]),
+            vec![RectF::new(0.0, 0.0, 1080.0, 2340.0)]
+        );
+        // The app under the status strip: the strip alone.
+        assert_eq!(
+            uncovered_bands(1080.0, 2340.0, &[(124.0, 2340.0)]),
+            vec![RectF::new(0.0, 0.0, 1080.0, 124.0)]
+        );
+        // Above Moon's keyboard: the strip and the keyboard's rows.
+        assert_eq!(
+            uncovered_bands(1080.0, 2340.0, &[(124.0, 1500.0)]),
+            vec![
+                RectF::new(0.0, 0.0, 1080.0, 124.0),
+                RectF::new(0.0, 1500.0, 1080.0, 840.0)
+            ]
+        );
+    }
     use crate::present::Damage;
 
     #[test]

@@ -1,14 +1,35 @@
 use std::error::Error;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
+use std::os::unix::net::UnixStream;
+use std::time::Duration;
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
+
+/// Asks Moon to make the X root show what the panel does: a Wayland app
+/// shown from its own buffers is copied into its X window first. Best
+/// effort: an older Moon, or none, leaves the root as it is.
+fn sync_with_moon() {
+    let socket = std::env::var_os("A26_SHELL_SOCKET")
+        .unwrap_or_else(|| "/run/a26-shell/control.sock".into());
+    let Ok(mut stream) = UnixStream::connect(socket) else {
+        return;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    if stream.write_all(b"screen sync\n").is_ok() {
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        let mut response = String::new();
+        let _ = stream.read_to_string(&mut response);
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let output = std::env::args()
         .nth(1)
         .ok_or("usage: a26-shellshot OUTPUT.ppm")?;
+    sync_with_moon();
     let (conn, screen_number) = x11rb::connect(None)?;
     let screen = &conn.setup().roots[screen_number];
     // GetImage on the root drawable captures the visible screen including child

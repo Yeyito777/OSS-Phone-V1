@@ -17,6 +17,7 @@ builds on).
 | M3: Moon reads the touchscreen | Verified off-device through the FIFO replay and under Xwayland on the phone; real fingers not tried | `MOON_TOUCH=evdev` (always on under Xwayland) |
 | M4a: Xwayland instead of headless Xorg | 9 h overnight on the phone. Merge gate passed: a real boot on Xwayland, the fallback to Xorg in the same boot, a boot back without it | `XWAYLAND=1` (GPU path only, Xwayland in the chroot from `moon-phone.sh xwayland-install`) |
 | dmabuf-backed `wl_shm` pools | Full-screen demo at 96 to 103 fps, against 60 with memfd; the buffer goes on a display plane | Automatic for clients that allocate from `/dev/dma_heap/system` |
+| The Exocortex app on Wayland (below) | Built and measured in sandboxes against moon-compositor-sim; real fingers next | `a26-shellctl settings set wayland_apps exocortex` (no reboot, no restart) |
 
 The phone's chroot keeps Xwayland 24.1.14 and libtirpc. They do nothing
 until `XWAYLAND=1` is set.
@@ -58,6 +59,96 @@ until `XWAYLAND=1` is set.
   `--render-ms`, `--upload-ms-per-mpx`, `--powered-off`).
 - `MOON_PROFILE=1` (or `MOON_WAYLAND_DEBUG=1`) logs each direct frame's
   timing.
+
+## The Exocortex app straight to the panel (branch direct-moon, 2026-10-31)
+
+The Exocortex app (a26-system `--app exocortex`, branch direct-app) is a
+Wayland client of Moon when Moon names it. Its frames reach moon-compositor
+without X's copies, touches come from Moon, and it draws in step with the
+panel.
+
+**Switching it on.** `settings set wayland_apps exocortex` (Moon's
+settings, `docs/settings.md`; a list of Moon's own apps, or `none`). Moon
+binds its server in `/run/moon-wayland` when the setting names an app, at
+start or when it changes; the app takes Wayland at its next start. No
+supervisor change: `WAYLAND_APPS` / `MOON_WAYLAND_DIR` / `MOON_WAYLAND_APPS`
+still work and override it. `state.apps[].wayland` says which run on it.
+
+**Coming back by itself.**
+- The app goes on in an X window, with everything it holds, when Wayland
+  cannot connect or its connection fails later (Moon restarted, a protocol
+  error).
+- An app that dies on Wayland (a crash, not a close) is started again at
+  once on X, and stays on X until `wayland_apps` is set again
+  (`apps.rs`).
+- A buffer the compositor refuses sends the app back through its X proxy
+  (M2, as before).
+
+**The app's side** (`src/exocortex/wayland.rs`): one full-screen xdg
+toplevel at the preferred scale; dma-heap buffers with 64-byte rows (memfd
+when there is no heap), two that alternate and a third only while both are
+held. The app still draws into its canvas; a frame copies into a free buffer
+what changed since that buffer was last written (its own damage plus the
+frames it missed). A frame is drawn only once the last one's frame callback
+came (Moon answers it at the flip that showed it), so frames follow the
+panel; a callback that never comes holds nothing back after 100 ms. Keys
+come as wl_keyboard keys of Moon's US map (the keyboard is still asked for
+over the control socket, with every purpose, as on X: X typed ASCII only
+too).
+
+**Moon's side:**
+- **Touch:** a touch Moon forwards to a Wayland app goes straight to its
+  surface as wl_touch (`WaylandApps::app_pointer`), not through XTEST, the
+  X server and back to the proxy window.
+- **Leaving direct display** (a snapshot, the switcher, a key callout, a
+  page transition, `screen sync`): the proxy gets the app's current buffer
+  first, and the panel keeps the last direct frame until the mirror has it
+  (`GpuBackend::leave_direct`), so the proxy's stale pixels never show. A
+  page transition snapshots the app's current frame.
+- **One full-width layer per row:** with an opaque full-width buffer in
+  front, the mirror is scanned out only where the app does not cover it
+  (the status strip, Moon's keyboard). Two full-width layers a row is at the
+  DPU's limit at 120 Hz (it underruns at about 2-3).
+- **Frame callbacks:** a commit that no direct frame showed still gets its
+  callback on the X path's grid.
+- **Screenshots:** `a26-shellshot` asks Moon `screen sync` first.
+- **Profiling:** `a26-shellctl profile on` also turns on the direct
+  frames' timing summary (`wayland: direct timing`) without a restart.
+
+**Measured** (sandboxes on the phone, moon-compositor-sim, uinput touches
+through Xorg's evdev driver, EXO from the exo-bench replay; the same app
+binary, X against Wayland, 3 rounds interleaved; `/opt/build/direct-tools`
+on the phone, `exo-bench.py` with `--probe`):
+
+| Scenario | X | Wayland |
+| --- | --- | --- |
+| EXO scroll, touch report to the panel, p50 / p95 | 22.1 / 59.5 ms | 14.4 / 20.6 ms |
+| list scroll, the same | 36.2 / 72.6 ms | 13.3 / 22.2 ms |
+| EXO scroll, frames on the panel, gap p50 / p95 | 16.7 / 58.3 ms | 8.3 / 16.7 ms |
+| list scroll, the same | 25.0 / 75.0 ms | 8.3 / 33.3 ms |
+| EXO scroll, display path work per frame (app, Xorg, Moon) | 9.0 M instructions | 3.0 M |
+| list, stream, sheet: the same | 8.3, 7.4, 10.6 M | 3.2, 2.9, 5.3 M |
+| EXO scroll, Xorg's work per run | 1969 M | 24 M |
+| typing, finger down to the frame handed over, p50 / p95 | 9.5 / 22.5 ms | 4.8 / 14.4 ms |
+
+The app's own thread does more per frame (EXO scroll 1.24 to 2.21 M
+instructions): it now copies into the buffer what Xorg copied, three times,
+before. Typing is the one place Xorg works more (456 to 607 M a run): each
+key's callout is an X window over the app, which leaves direct display.
+
+**The simulator's probes** (`src/moon-gpu/sim.c`): `MOON_SIM_PROBE=PATH:X,Y`
+logs each refresh whose pixel at (X, Y) changed; the app's
+`EXOCORTEX_APP_PROBE` writes a frame count and the finger row into its
+top-left pixel, which is (0, 124) on the panel on both paths.
+`MOON_SIM_DUMP=PREFIX` writes the next refresh as a PPM on SIGUSR1 (it
+holds the scanout thread, so it is for what is shown, not for timing).
+
+**Next:**
+- the key callout as a patch of the mirror over a proxy kept fresh only
+  under it, so typing stays direct;
+- the client's own cache clean (Moon's `DMA_BUF_IOCTL_SYNC` per commit,
+  about 0.5 ms on its loop);
+- real fingers on the phone (plan in the hand-over).
 
 ## Decision: Moon speaks Wayland, moon-compositor stays the display
 
