@@ -1412,11 +1412,13 @@ impl WaylandApps {
     /// window is a Wayland toplevel's: it goes straight to the surface
     /// under the finger as wl_touch, rather than through XTEST, the X
     /// server and back to the proxy. False when `window` is not a proxy.
-    pub fn app_pointer(&mut self, window: u32, event: AppPointer) -> bool {
+    /// `time`: when the X server read the touch (CLOCK_MONOTONIC ms), so
+    /// the app can resample the finger at its frames' times; else now.
+    pub fn app_pointer(&mut self, window: u32, event: AppPointer, time: Option<u32>) -> bool {
         let Some(&root) = self.windows.get(&window) else {
             return false;
         };
-        let time = wayland::now_ms();
+        let time = time.unwrap_or_else(wayland::now_ms);
         match event {
             AppPointer::Press(x, y) => {
                 let (x, y) = (i32::from(x), i32::from(y));

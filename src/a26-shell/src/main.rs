@@ -742,6 +742,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 key_repeat_timing,
             )?;
         }
+        // Touches from elsewhere (control commands, Moon's evdev reader) are
+        // stamped when Moon passes them on.
+        state.touch_time = None;
 
         let mut wayland_direct = (None, Vec::new());
         // a26-shellshot asked: the app's X window has its pixels now (the
@@ -787,8 +790,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             if let Some(primary) = state.managed_windows.first().copied()
                 && server.is_proxy(primary)
             {
-                for event in std::mem::take(&mut state.app_pointer) {
-                    server.app_pointer(primary, event);
+                for (event, time) in std::mem::take(&mut state.app_pointer) {
+                    server.app_pointer(primary, event, time);
                 }
             }
             for input in std::mem::take(&mut state.wayland_keys) {
@@ -1454,8 +1457,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         let app_pointer = std::mem::take(&mut state.app_pointer);
         match (wayland.as_mut(), state.managed_windows.first().copied()) {
             (Some(server), Some(primary)) if server.is_proxy(primary) => {
-                for event in app_pointer {
-                    server.app_pointer(primary, event);
+                for (event, time) in app_pointer {
+                    server.app_pointer(primary, event, time);
                 }
             }
             _ => send_app_pointer(&conn, root, app_pointer),
@@ -2334,10 +2337,13 @@ fn handle_x_event(
 ) -> Result<(), Box<dyn Error>> {
     let (width, height) = dimensions;
     let banner_window = banner_surface.window;
+    state.touch_time = None;
     match event {
         Event::XinputRawTouchBegin(event) => {
             let x = raw_axis(&event, 0, width.saturating_sub(1));
             let y = raw_axis(&event, 1, height.saturating_sub(1));
+            // What the app gets of this touch says when the X server read it.
+            state.touch_time = Some(event.time);
             if let (Some(x), Some(y)) = (x, y) {
                 touch_begin(
                     conn,
@@ -2353,6 +2359,7 @@ fn handle_x_event(
             }
         }
         Event::XinputRawTouchUpdate(event) => {
+            state.touch_time = Some(event.time);
             touch_update(
                 state,
                 raw_touch,
@@ -2364,6 +2371,7 @@ fn handle_x_event(
             );
         }
         Event::XinputRawTouchEnd(event) => {
+            state.touch_time = Some(event.time);
             touch_end(
                 conn,
                 root,
@@ -3042,7 +3050,7 @@ fn pointer_begin(
         // Moon's own apps get the touch itself from the start, so they
         // highlight what is under the finger and scroll their lists.
         pointer.forwarding = true;
-        state.app_pointer.push(model::AppPointer::Press(x, y));
+        state.push_app_pointer(model::AppPointer::Press(x, y));
     }
     if !pointer.keyboard_owned {
         state.pressed = press_target(state, x, y);
@@ -3217,17 +3225,21 @@ fn forward_app_drag(state: &mut ShellState, x: i16, y: i16) {
         .as_ref()
         .is_some_and(|pointer| pointer.forwarding)
     {
-        state.app_pointer.push(model::AppPointer::Motion(x, y));
+        state.push_app_pointer(model::AppPointer::Motion(x, y));
     }
 }
 
 /// Sends queued drag events to the app in front.
-fn send_app_pointer(conn: &RustConnection, root: u32, events: Vec<model::AppPointer>) {
+fn send_app_pointer(
+    conn: &RustConnection,
+    root: u32,
+    events: Vec<(model::AppPointer, Option<u32>)>,
+) {
     if events.is_empty() {
         return;
     }
     let send = || -> Result<(), Box<dyn Error>> {
-        for event in events {
+        for (event, _) in events {
             match event {
                 model::AppPointer::Press(x, y) => {
                     let _ =
@@ -3474,9 +3486,7 @@ fn cancel_stale_pointer(state: &mut ShellState, raw_touch: &mut RawTouchTracker,
     if legacy_stale {
         if let Some(pointer) = state.pointer.take() {
             if pointer.forwarding {
-                state
-                    .app_pointer
-                    .push(model::AppPointer::Release(pointer.last_x, pointer.last_y));
+                state.push_app_pointer(model::AppPointer::Release(pointer.last_x, pointer.last_y));
             }
             if pointer.keyboard_pressed
                 && let Some(index) = pointer.keyboard_key_index
@@ -3559,7 +3569,7 @@ fn pointer_end(
     pointer.last_y = y;
     if pointer.forwarding {
         // A drag the app had: it ends there.
-        state.app_pointer.push(model::AppPointer::Release(x, y));
+        state.push_app_pointer(model::AppPointer::Release(x, y));
         state.last_action = "app_touch_forwarded".into();
         return;
     }

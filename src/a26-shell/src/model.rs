@@ -388,8 +388,12 @@ pub struct ShellState {
     pub auto_lock_held: bool,
     /// The app shown before the current one (the bottom-edge swipe).
     previous_app: Option<AppId>,
-    /// Touch events for the app in front, drained by the main loop.
-    pub app_pointer: Vec<AppPointer>,
+    /// Touch events for the app in front, drained by the main loop, each
+    /// with when the X server read it from the touchscreen (the XI2 raw
+    /// touch's time, CLOCK_MONOTONIC milliseconds) when it came from there.
+    pub app_pointer: Vec<(AppPointer, Option<u32>)>,
+    /// The time of the XI2 raw touch being handled (`app_pointer`).
+    pub touch_time: Option<u32>,
     pub open_target: Option<OpenTarget>,
     pub page_transition: Option<PageTransition>,
     /// The home screen's editing and the App Library (home.rs); its layout
@@ -525,6 +529,7 @@ impl ShellState {
             last_input: Instant::now(),
             previous_app: None,
             app_pointer: Vec::new(),
+            touch_time: None,
             open_target: None,
             page_transition: None,
             home: Default::default(),
@@ -1158,6 +1163,12 @@ impl ShellState {
         self.volume_overlay_until = Some(Instant::now() + Duration::from_millis(1800));
         self.last_action = "volume_set".into();
         self.redraw = true;
+    }
+
+    /// Queues a touch event for the app in front, stamped with the raw
+    /// touch's time (`touch_time`).
+    pub fn push_app_pointer(&mut self, event: AppPointer) {
+        self.app_pointer.push((event, self.touch_time));
     }
 
     pub fn show_keyboard(&mut self, purpose: KeyboardPurpose) -> bool {
