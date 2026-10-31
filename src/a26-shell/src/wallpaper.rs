@@ -398,13 +398,13 @@ pub fn sky_moon(size: i32) -> Canvas {
             let nz = (1.0 - r2.min(1.0)).sqrt();
             let lambert = dx * light.0 + dy * light.1 + nz * light.2;
             // A soft terminator.
-            let day = ((lambert + 0.06) / 0.20).clamp(0.0, 1.0);
+            let day = ((lambert + 0.08) / 0.30).clamp(0.0, 1.0);
             let day = day * day * (3.0 - 2.0 * day);
             let mut albedo = 1.0;
             for (mx, my, sx, sy) in maria {
                 let ex = (dx - mx) / sx;
                 let ey = (dy - my) / sy;
-                albedo -= 0.22 * (-(ex * ex + ey * ey)).exp();
+                albedo -= 0.30 * (-(ex * ex + ey * ey)).exp();
             }
             let grain = unit(hash(x as u32, y as u32, 9)) - 0.5;
             albedo += grain * 0.05;
@@ -412,9 +412,9 @@ pub fn sky_moon(size: i32) -> Canvas {
             let limb = 0.65 + 0.35 * nz;
             let shade = day * limb * albedo;
             let (r_, g_, b_) = (
-                (236.0 * shade + 14.0 * albedo).min(255.0),
-                (232.0 * shade + 16.0 * albedo).min(255.0),
-                (248.0 * shade + 32.0 * albedo).min(255.0),
+                (236.0 * shade + 30.0 * albedo).min(255.0),
+                (232.0 * shade + 32.0 * albedo).min(255.0),
+                (248.0 * shade + 72.0 * albedo).min(255.0),
             );
             let a = coverage;
             // Opaque over the halo: the disc hides the stars behind it.
