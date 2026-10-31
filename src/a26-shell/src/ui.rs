@@ -286,9 +286,11 @@ struct PasscodeKey {
 struct SkyLayer {
     surface: SurfaceId,
     dimmed: [SurfaceId; 2],
-    /// Where it is at rest.
+    /// Where it is at rest, on screen.
     rest: RectF,
     travel: f32,
+    /// Screen pixels per layer pixel.
+    scale: f32,
 }
 
 /// A layer drawn on the CPU and uploaded when its content key changes.
@@ -1678,8 +1680,14 @@ impl Renderer {
                 self.sky.push(SkyLayer {
                     surface,
                     dimmed,
-                    rest: RectF::new(layer.x, layer.y, w as f32, h as f32),
+                    rest: RectF::new(
+                        layer.x,
+                        layer.y,
+                        w as f32 * layer.scale,
+                        h as f32 * layer.scale,
+                    ),
                     travel: layer.travel,
+                    scale: layer.scale,
                 });
             }
         }
@@ -2015,9 +2023,15 @@ impl Renderer {
             if x1 <= x0 || y1 <= y0 {
                 continue;
             }
+            let k = 1.0 / layer.scale;
             nodes.push(Node::Image {
                 surface: layer.dimmed[slot],
-                src: RectF::new(x0 - placed.x, y0 - placed.y, x1 - x0, y1 - y0),
+                src: RectF::new(
+                    (x0 - placed.x) * k,
+                    (y0 - placed.y) * k,
+                    (x1 - x0) * k,
+                    (y1 - y0) * k,
+                ),
                 dst: RectF::new(x0, y0, x1 - x0, y1 - y0),
                 alpha: 1.0,
                 radius: 0.0,

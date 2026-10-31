@@ -40,6 +40,7 @@ mod telephony_client;
 mod text;
 mod tilt;
 mod touch;
+mod touch_stream;
 mod tz;
 mod uevent;
 mod ui;
@@ -125,6 +126,8 @@ struct RawTouchTracker {
     x: i16,
     y: i16,
     keyboard_contacts: Vec<(u32, PointerGesture)>,
+    /// Contacts of an app that reads its own touches (`touch stream`).
+    stream: touch_stream::TouchStream,
 }
 
 /// Raises the scheduler's utilization floor for Moon's (only) thread, which
@@ -1162,6 +1165,51 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     if let Command::ProfileSkip(mask) = command {
                         renderer.compositor.skip_nodes = mask;
+                    }
+                    if let Command::TouchStream(app) = command {
+                        let app = app.or_else(|| {
+                            ipc::peer_pid(&stream).and_then(|pid| apps.app_of_process(pid))
+                        });
+                        match app {
+                            Some(app) => raw_touch.stream.subscribe(app, stream),
+                            None => ipc::respond::<()>(stream, Err("touch stream: not an app")),
+                        }
+                        continue;
+                    }
+                    if let Command::Touch(input) = command {
+                        match input {
+                            ipc::TouchInput::Begin(id, x, y) => touch_begin(
+                                &conn,
+                                &mut state,
+                                &mut raw_touch,
+                                &keyboard_geometry,
+                                &key_injector,
+                                key_repeat_timing,
+                                id,
+                                x,
+                                y,
+                            ),
+                            ipc::TouchInput::Move(id, x, y) => touch_update(
+                                &mut state,
+                                &mut raw_touch,
+                                &keyboard_geometry,
+                                height,
+                                id,
+                                Some(x),
+                                Some(y),
+                            ),
+                            ipc::TouchInput::End(id) => touch_end(
+                                &conn,
+                                root,
+                                &mut state,
+                                &mut raw_touch,
+                                (width, height),
+                                &keyboard_geometry,
+                                &config,
+                                &key_injector,
+                                id,
+                            ),
+                        }
                     }
                     if let Command::Profile(enabled) = command {
                         renderer.compositor.set_profile(enabled);
@@ -2622,7 +2670,42 @@ fn touch_begin(
         if let Some(action) = pointer_begin(state, keyboard_geometry, x, y, key_repeat_timing) {
             handle_keyboard_action(conn, state, action, key_injector);
         }
+        if let Some(app) = touch_stream_target(state, &raw_touch.stream, y)
+            && raw_touch.stream.begin(app, id, x, y)
+        {
+            state.last_action = "app_touch_streamed".into();
+        }
+    } else if let Some(app) = raw_touch.stream.active_app() {
+        // Another finger while the app has the touch (a pinch): the app's.
+        raw_touch.stream.begin(app, id, x, y);
     }
+}
+
+/// The app in front reads its own touches and this new touch is its: no
+/// Moon overlay or gesture took it and it does not start on the bottom
+/// edge (the home gesture's, where taps still come as XTEST).
+fn touch_stream_target(
+    state: &ShellState,
+    stream: &touch_stream::TouchStream,
+    y: i16,
+) -> Option<AppId> {
+    let app = AppId::from_view(state.view)?;
+    (stream.wants(app)
+        && state
+            .pointer
+            .as_ref()
+            .is_some_and(|pointer| !pointer.keyboard_owned && !pointer.forwarding)
+        && !state.managed_windows.is_empty()
+        && f32::from(y) < interaction::SCREEN_H - model::HOME_GESTURE_ZONE
+        && state.gesture.is_none()
+        && state.switcher.is_none()
+        && state.launch().is_none()
+        && !state.shell_covers_app()
+        && !state.power_touch_active()
+        && !state.call_touch_active()
+        && !state.control_touch_active()
+        && !state.alerts_touch_active())
+    .then_some(app)
 }
 
 fn touch_update(
@@ -2634,6 +2717,7 @@ fn touch_update(
     x: Option<i16>,
     y: Option<i16>,
 ) {
+    raw_touch.stream.update(id, x, y);
     if raw_touch
         .keyboard_contacts
         .iter()
@@ -2664,12 +2748,18 @@ fn touch_end(
     id: u32,
 ) {
     let (width, height) = dimensions;
+    let streamed = raw_touch.stream.owns(id);
+    raw_touch.stream.end(id, AppId::from_view(state.view));
     if raw_touch
         .keyboard_contacts
         .iter()
         .any(|(touch_id, _)| *touch_id == id)
     {
         end_raw_keyboard_contact(conn, state, raw_touch, id, keyboard_geometry, key_injector);
+    } else if raw_touch.touch_id == Some(id) && streamed {
+        // The app had it: no tap or swipe of Moon's.
+        state.pointer = None;
+        raw_touch.touch_id = None;
     } else if raw_touch.touch_id == Some(id) {
         pointer_end(
             conn,
@@ -3395,6 +3485,7 @@ fn cancel_stale_pointer(state: &mut ShellState, raw_touch: &mut RawTouchTracker,
             }
         }
         raw_touch.touch_id = None;
+        raw_touch.stream.cancel_all();
         state.home_cancel_touch();
         recovered = true;
     }
@@ -3799,7 +3890,9 @@ fn apply_command(
         | Command::ClipboardSetImage(_)
         | Command::ClipboardUpload
         | Command::Awake(..)
-        | Command::Badge(..) => {}
+        | Command::Badge(..)
+        | Command::TouchStream(_)
+        | Command::Touch(_) => {}
         Command::TransitionReady => {
             if let Some(transition) = state.page_transition.as_mut() {
                 transition.ready(Instant::now());
@@ -4134,6 +4227,35 @@ mod touch_tests {
     }
 
     #[test]
+    fn a_streaming_app_gets_its_touches_but_not_the_bottom_edge() {
+        let geometry = KeyboardGeometry::new(1080, 2340);
+        let repeat = KeyRepeatTiming {
+            delay: Duration::from_millis(200),
+            interval: Duration::from_nanos(1_000_000_000 / 45),
+        };
+        let mut state = ShellState::new(false, 50);
+        state.view = View::Browser;
+        state.managed_windows.push(7);
+        let (ours, _theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut stream = touch_stream::TouchStream::default();
+        assert!(touch_stream_target(&state, &stream, 900).is_none());
+        stream.subscribe(AppId::Browser, ours);
+
+        pointer_begin(&mut state, &geometry, 540, 900, repeat);
+        assert_eq!(
+            touch_stream_target(&state, &stream, 900),
+            Some(AppId::Browser)
+        );
+        // The bottom edge stays the home gesture's (and its taps XTEST).
+        pointer_begin(&mut state, &geometry, 540, 2300, repeat);
+        assert!(touch_stream_target(&state, &stream, 2300).is_none());
+        // Another app in front does not get the Browser's stream.
+        state.view = View::System;
+        pointer_begin(&mut state, &geometry, 540, 900, repeat);
+        assert!(touch_stream_target(&state, &stream, 900).is_none());
+    }
+
+    #[test]
     fn stale_touch_watchdog_releases_keyboard_and_raw_contact() {
         let now = Instant::now();
         let mut state = ShellState::new(false, 50);
@@ -4159,6 +4281,7 @@ mod touch_tests {
             x: 64,
             y: 1604,
             keyboard_contacts: Vec::new(),
+            ..Default::default()
         };
 
         cancel_stale_pointer(&mut state, &mut raw_touch, now);

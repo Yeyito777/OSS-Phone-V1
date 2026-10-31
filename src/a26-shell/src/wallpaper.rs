@@ -29,7 +29,7 @@ pub struct Wallpaper {
     pub glows: &'static [Glow],
 }
 
-pub const WALLPAPERS: [Wallpaper; 8] = [
+pub const WALLPAPERS: [Wallpaper; 9] = [
     Wallpaper {
         id: "moon",
         top: (10.0, 12.0, 30.0),
@@ -199,6 +199,20 @@ pub const WALLPAPERS: [Wallpaper; 8] = [
             },
         ],
     },
+    // Dynamic: a cut gem whose facets catch a spectrum that slides
+    // beneath them as the phone tilts (`prism_layers`).
+    Wallpaper {
+        id: "prism",
+        top: (9.0, 9.0, 14.0),
+        bottom: (3.0, 3.0, 6.0),
+        glows: &[Glow {
+            x: 0.5,
+            y: 0.53,
+            radius: 0.40,
+            color: (90.0, 70.0, 160.0),
+            strength: 0.35,
+        }],
+    },
     // Dynamic: a dusk sky over mountain ranges, nearer ones moving more
     // (`ridge_layers`).
     Wallpaper {
@@ -318,17 +332,20 @@ pub fn render(id: &str, width: i32, height: i32) -> Canvas {
 
 /// Wallpapers with layers that move with the phone's tilt.
 pub fn is_dynamic(id: &str) -> bool {
-    matches!(id, "orbit" | "ridge") || id.starts_with(SAVED_PREFIX)
+    matches!(id, "orbit" | "ridge" | "prism") || id.starts_with(SAVED_PREFIX)
 }
 
 /// One moving layer of a dynamic wallpaper: at rest its top-left corner is
 /// at (`x`, `y`) on screen, and a full tilt (tilt.rs, +/- 1) shifts it by
-/// `travel` pixels. Layers are listed back to front.
+/// `travel` pixels. A canvas pixel covers `scale` screen pixels (smooth
+/// content is drawn smaller and scaled up). Layers are listed back to
+/// front.
 pub struct Layer {
     pub canvas: Canvas,
     pub x: f32,
     pub y: f32,
     pub travel: f32,
+    pub scale: f32,
 }
 
 /// A wallpaper at `width` x `height`: its still picture (shown where
@@ -350,6 +367,7 @@ pub fn build(id: &str, width: i32, height: i32) -> (Canvas, Vec<Layer>) {
                     x: -margin,
                     y: -margin,
                     travel: margin * 0.8,
+                    scale: 1.0,
                 };
                 (still, vec![layer])
             }
@@ -362,7 +380,7 @@ pub fn build(id: &str, width: i32, height: i32) -> (Canvas, Vec<Layer>) {
             let margin = 40;
             let mut stars = Canvas::new(width + 2 * margin, height + 2 * margin);
             stars.pixels.fill(0);
-            draw_stars(&mut stars, 0.16, 1.0);
+            draw_stars(&mut stars, 0.16, 1.0, width as f32 / 1080.0);
             let moon = width * 16 / 27;
             vec![
                 Layer {
@@ -370,19 +388,22 @@ pub fn build(id: &str, width: i32, height: i32) -> (Canvas, Vec<Layer>) {
                     x: -margin as f32,
                     y: -margin as f32,
                     travel: margin as f32 * 0.8,
+                    scale: 1.0,
                 },
                 Layer {
                     canvas: sky_moon(moon),
                     x: width as f32 * 0.713 - moon as f32 / 2.0,
                     y: height as f32 * 0.504 - moon as f32 / 2.0,
                     travel: width as f32 / 12.0,
+                    scale: 1.0,
                 },
             ]
         }
         "ridge" => {
-            draw_stars(&mut still, 0.10, 0.42);
+            draw_stars(&mut still, 0.10, 0.42, width as f32 / 1080.0);
             ridge_layers(width, height)
         }
+        "prism" => prism_layers(width, height),
         _ => Vec::new(),
     };
     (still, layers)
@@ -393,9 +414,16 @@ pub fn build(id: &str, width: i32, height: i32) -> (Canvas, Vec<Layer>) {
 pub fn flatten(still: &mut Canvas, layers: &[Layer]) {
     for layer in layers {
         let (x0, y0) = (layer.x.round() as i32, layer.y.round() as i32);
-        for y in y0.max(0)..(y0 + layer.canvas.height).min(still.height) {
-            for x in x0.max(0)..(x0 + layer.canvas.width).min(still.width) {
-                let src = layer.canvas.pixels[((y - y0) * layer.canvas.width + x - x0) as usize];
+        let (w, h) = (layer.canvas.width, layer.canvas.height);
+        let (sw, sh) = (
+            (w as f32 * layer.scale).round() as i32,
+            (h as f32 * layer.scale).round() as i32,
+        );
+        for y in y0.max(0)..(y0 + sh).min(still.height) {
+            let v = (((y - y0) as f32 / layer.scale) as i32).min(h - 1);
+            for x in x0.max(0)..(x0 + sw).min(still.width) {
+                let u = (((x - x0) as f32 / layer.scale) as i32).min(w - 1);
+                let src = layer.canvas.pixels[(v * w + u) as usize];
                 let under = 255 - (src >> 24);
                 let dst = &mut still.pixels[(y * still.width + x) as usize];
                 let channel = |shift: u32| {
@@ -492,26 +520,27 @@ fn add_light(pixel: &mut u32, r: f32, g: f32, b: f32, a: f32) {
 }
 
 /// Adds stars to `canvas`: about `density` of 22 px cells hold one, and
-/// they fade out down to `depth` of its height.
-fn draw_stars(canvas: &mut Canvas, density: f32, depth: f32) {
+/// they fade out down to `depth` of its height. `scale`: the screen's width
+/// over 1080 (the System app's thumbnails draw them smaller).
+fn draw_stars(canvas: &mut Canvas, density: f32, depth: f32, scale: f32) {
     let (width, height) = (canvas.width, canvas.height);
-    const CELL: i32 = 22;
-    for cy in 0..(height + CELL - 1) / CELL {
-        let fade = 1.0 - (cy * CELL) as f32 / (height as f32 * depth);
+    let cell = ((22.0 * scale).round() as i32).max(3);
+    for cy in 0..(height + cell - 1) / cell {
+        let fade = 1.0 - (cy * cell) as f32 / (height as f32 * depth);
         if fade <= 0.0 {
             break;
         }
-        for cx in 0..(width + CELL - 1) / CELL {
+        for cx in 0..(width + cell - 1) / cell {
             let h = hash(cx as u32, cy as u32, 0x51a7);
             if unit(h) > density {
                 continue;
             }
-            let sx = (cx * CELL) as f32 + unit(hash(cx as u32, cy as u32, 1)) * CELL as f32;
-            let sy = (cy * CELL) as f32 + unit(hash(cx as u32, cy as u32, 2)) * CELL as f32;
+            let sx = (cx * cell) as f32 + unit(hash(cx as u32, cy as u32, 1)) * cell as f32;
+            let sy = (cy * cell) as f32 + unit(hash(cx as u32, cy as u32, 2)) * cell as f32;
             let m = unit(hash(cx as u32, cy as u32, 3));
             // Most stars faint, a few bright.
             let bright = (0.18 + 0.82 * m * m * m) * fade.min(1.0);
-            let size = 0.55 + 1.1 * bright;
+            let size = ((0.55 + 1.1 * bright) * scale).max(0.45);
             let tint = unit(hash(cx as u32, cy as u32, 4));
             let color = if tint < 0.2 {
                 (255.0, 214.0, 170.0)
@@ -520,16 +549,24 @@ fn draw_stars(canvas: &mut Canvas, density: f32, depth: f32) {
             } else {
                 (235.0, 238.0, 255.0)
             };
-            let reach = (size * 3.0).ceil() as i32 + if bright > 0.7 { 9 } else { 0 };
+            let glint = bright > 0.7;
+            let reach = (size * 3.0).ceil() as i32
+                + if glint {
+                    (9.0 * scale).ceil() as i32
+                } else {
+                    0
+                };
             for y in (sy as i32 - reach).max(0)..(sy as i32 + reach + 1).min(height) {
                 for x in (sx as i32 - reach).max(0)..(sx as i32 + reach + 1).min(width) {
                     let dx = x as f32 + 0.5 - sx;
                     let dy = y as f32 + 0.5 - sy;
                     let mut k = (-(dx * dx + dy * dy) / (2.0 * size * size)).exp();
-                    if bright > 0.7 {
+                    if glint {
                         // A faint four-point glint on the brightest.
-                        let spike =
-                            |a: f32, b: f32| (-(a * a) / 0.8).exp() * (-b.abs() / 3.5).exp();
+                        let spike = |a: f32, b: f32| {
+                            (-(a * a) / (0.8 * scale * scale)).exp()
+                                * (-b.abs() / (3.5 * scale)).exp()
+                        };
                         k += 0.35 * (spike(dx, dy) + spike(dy, dx));
                     }
                     let a = (k * bright).min(1.0);
@@ -610,7 +647,7 @@ fn ridge_layers(width: i32, height: i32) -> Vec<Layer> {
                 let depth = sy - crest_y;
                 let fog = (depth / fog_depth).clamp(0.0, 1.0);
                 let fog = fog * fog * 0.55;
-                let rim = (-depth / 2.5).exp() * sunward * 0.45;
+                let rim = (-depth / (2.5 * w / 1080.0)).exp() * sunward * 0.45;
                 let mix = |c: f32, f: f32, sun: f32| c + (f - c) * fog + sun * rim;
                 let (r, g, b) = (
                     mix(color.0, haze.0, 255.0),
@@ -630,9 +667,197 @@ fn ridge_layers(width: i32, height: i32) -> Vec<Layer> {
             x: -margin as f32,
             y: top as f32,
             travel: travel * h,
+            scale: 1.0,
         });
     }
     layers
+}
+
+/// HSV (hue in turns) to RGB, 0..255.
+fn hsv(hue: f32, saturation: f32, value: f32) -> (f32, f32, f32) {
+    let h = (hue.rem_euclid(1.0)) * 6.0;
+    let c = value * saturation;
+    let x = c * (1.0 - ((h % 2.0) - 1.0).abs());
+    let (r, g, b) = match h as i32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = value - c;
+    ((r + m) * 255.0, (g + m) * 255.0, (b + m) * 255.0)
+}
+
+/// "prism": a brilliant-cut gem seen from above, its facets windows of
+/// different clarity in a dark glass layer that stays put, and under it a
+/// spectrum of light bands and glints that slides far as the phone tilts:
+/// facet by facet the gem catches colour and flashes.
+fn prism_layers(width: i32, height: i32) -> Vec<Layer> {
+    let (w, h) = (width as f32, height as f32);
+    let unit_px = w / 1080.0;
+    // The light: half resolution, scaled up (it is all smooth).
+    let travel = 300.0 * unit_px;
+    let margin = travel.ceil() as i32 + 4;
+    let (lw, lh) = ((width + 2 * margin) / 2, (height + 2 * margin) / 2);
+    let mut light = Canvas::new(lw, lh);
+    let (a1, a2) = (55f32.to_radians(), (-35f32).to_radians());
+    for v in 0..lh {
+        for u in 0..lw {
+            let x = (u * 2 - margin) as f32 / unit_px;
+            let y = (v * 2 - margin) as f32 / unit_px;
+            let hue = (x * a1.cos() + y * a1.sin()) / 900.0;
+            let band =
+                0.5 + 0.5 * (std::f32::consts::TAU * (x * a2.cos() + y * a2.sin()) / 420.0).cos();
+            // Narrow bright bands with dark between: facets flash as one
+            // passes beneath them.
+            let value = 0.06 + 0.94 * band.powi(5);
+            let (r, g, b) = hsv(hue, 0.72, value);
+            light.pixels[(v * lw + u) as usize] =
+                0xff00_0000 | (r as u32) << 16 | (g as u32) << 8 | b as u32;
+        }
+    }
+    // Glints: small bright points the facets catch as they pass.
+    let cell = 46;
+    for cy in 0..lh / cell + 1 {
+        for cx in 0..lw / cell + 1 {
+            if unit(hash(cx as u32, cy as u32, 0x9117)) > 0.18 {
+                continue;
+            }
+            let gx = (cx * cell) as f32 + unit(hash(cx as u32, cy as u32, 5)) * cell as f32;
+            let gy = (cy * cell) as f32 + unit(hash(cx as u32, cy as u32, 6)) * cell as f32;
+            let strength = 0.5 + 0.5 * unit(hash(cx as u32, cy as u32, 7));
+            let radius = 2.0 + 2.5 * unit(hash(cx as u32, cy as u32, 8));
+            let reach = (radius * 3.0) as i32;
+            for y in (gy as i32 - reach).max(0)..(gy as i32 + reach).min(lh) {
+                for x in (gx as i32 - reach).max(0)..(gx as i32 + reach).min(lw) {
+                    let (dx, dy) = (x as f32 - gx, y as f32 - gy);
+                    let k = strength * (-(dx * dx + dy * dy) / (2.0 * radius * radius)).exp();
+                    add_light(
+                        &mut light.pixels[(y * lw + x) as usize],
+                        255.0 * k,
+                        255.0 * k,
+                        255.0 * k,
+                        0.0,
+                    );
+                }
+            }
+        }
+    }
+
+    // The gem's facets: (polygon, clarity).
+    let (cx, cy, radius) = (0.5 * w, 0.53 * h, 0.38 * w);
+    let at = |r: f32, degrees: f32| {
+        let a = degrees.to_radians();
+        (cx + r * radius * a.cos(), cy + r * radius * a.sin())
+    };
+    let table: Vec<(f32, f32)> = (0..8).map(|k| at(0.42, k as f32 * 45.0 + 22.5)).collect();
+    let star: Vec<(f32, f32)> = (0..8).map(|k| at(0.66, k as f32 * 45.0)).collect();
+    let girdle: Vec<(f32, f32)> = (0..16).map(|j| at(1.0, j as f32 * 22.5)).collect();
+    let mut facets: Vec<(Vec<(f32, f32)>, f32)> = vec![(table.clone(), 0.62)];
+    for k in 0..8 {
+        let even = k % 2 == 0;
+        let previous = (k + 7) % 8;
+        facets.push((
+            vec![table[previous], table[k], star[k]],
+            if even { 0.78 } else { 0.42 },
+        ));
+        facets.push((
+            vec![table[k], star[k], girdle[2 * k + 1], star[(k + 1) % 8]],
+            if even { 0.30 } else { 0.56 },
+        ));
+        facets.push((
+            vec![star[k], girdle[2 * k], girdle[(2 * k + 15) % 16]],
+            if even { 0.70 } else { 0.36 },
+        ));
+        facets.push((
+            vec![star[k], girdle[2 * k], girdle[2 * k + 1]],
+            if even { 0.40 } else { 0.74 },
+        ));
+    }
+    // Inside a convex polygon (either winding): the distance to its nearest
+    // edge, else None.
+    let inside = |polygon: &[(f32, f32)], x: f32, y: f32| -> Option<f32> {
+        let mut sign = 0.0_f32;
+        let mut nearest = f32::MAX;
+        for i in 0..polygon.len() {
+            let (ax, ay) = polygon[i];
+            let (bx, by) = polygon[(i + 1) % polygon.len()];
+            let (ex, ey) = (bx - ax, by - ay);
+            let cross = ex * (y - ay) - ey * (x - ax);
+            if sign == 0.0 {
+                sign = cross.signum();
+            } else if cross * sign < 0.0 {
+                return None;
+            }
+            nearest = nearest.min(cross.abs() / (ex * ex + ey * ey).sqrt());
+        }
+        Some(nearest)
+    };
+    let mut glass = Canvas::new(width, height);
+    for y in 0..height {
+        let t = y as f32 / h;
+        let tint = (
+            gfx::lerp(9.0, 3.0, t),
+            gfx::lerp(9.0, 3.0, t),
+            gfx::lerp(14.0, 6.0, t),
+        );
+        for x in 0..width {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let r = ((px - cx).powi(2) + (py - cy).powi(2)).sqrt() / radius;
+            let mut clarity;
+            let mut edge = 0.0;
+            if r < 1.01 {
+                let found = facets
+                    .iter()
+                    .find_map(|(polygon, clear)| inside(polygon, px, py).map(|d| (*clear, d)));
+                match found {
+                    Some((clear, distance)) => {
+                        clarity = clear;
+                        edge = (1.0 - distance / (1.4 * unit_px).max(0.9)).clamp(0.0, 1.0);
+                    }
+                    // Just outside the girdle's straight edges.
+                    None => clarity = 0.035,
+                }
+            } else {
+                clarity = 0.035;
+            }
+            if r >= 0.97 {
+                // Light spilling past the girdle.
+                let out = (r - 1.0).max(0.0) * radius / (70.0 * unit_px);
+                clarity = clarity.max(0.035 + 0.16 * (-out * out).exp() * (r >= 1.0) as u8 as f32);
+            }
+            let alpha = 1.0 - clarity;
+            let grain = (unit(hash(x as u32, y as u32, 0x5e)) - 0.5) * 0.8;
+            let channel = |c: f32| ((c * alpha + grain).clamp(0.0, 255.0)) as u32;
+            let mut pixel = ((alpha * 255.0) as u32) << 24
+                | channel(tint.0) << 16
+                | channel(tint.1) << 8
+                | channel(tint.2);
+            if edge > 0.0 {
+                let a = 0.28 * edge;
+                add_light(&mut pixel, 255.0 * a, 255.0 * a, 255.0 * a, a);
+            }
+            glass.pixels[(y * width + x) as usize] = pixel;
+        }
+    }
+    vec![
+        Layer {
+            canvas: light,
+            x: -margin as f32,
+            y: -margin as f32,
+            travel,
+            scale: 2.0,
+        },
+        Layer {
+            canvas: glass,
+            x: 0.0,
+            y: 0.0,
+            travel: 0.0,
+            scale: 1.0,
+        },
+    ]
 }
 
 /// "orbit"'s moon: a lit crescent moon with its halo, on
@@ -735,7 +960,7 @@ mod tests {
         let moon = sky_moon(64);
         assert_eq!(moon.pixels[0] >> 24, 0);
         assert_eq!(moon.pixels[32 * 64 + 32] >> 24, 255);
-        for id in ["orbit", "ridge"] {
+        for id in ["orbit", "ridge", "prism"] {
             let (still, layers) = build(id, 108, 234);
             assert_eq!(still.pixels.len(), 108 * 234);
             assert!(!layers.is_empty());
