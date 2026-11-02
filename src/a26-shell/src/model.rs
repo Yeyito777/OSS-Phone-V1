@@ -26,6 +26,10 @@ pub enum View {
     Phone,
     Messages,
     Exocortex,
+    Instagram,
+    #[serde(rename = "whatsapp")]
+    WhatsApp,
+    Discord,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -36,16 +40,25 @@ pub enum AppId {
     Phone,
     Messages,
     Exocortex,
+    /// The social apps (a26-system `--app instagram|whatsapp|discord`),
+    /// clients of their services' bridges (a26-system docs/social-protocol.md).
+    Instagram,
+    #[serde(rename = "whatsapp")]
+    WhatsApp,
+    Discord,
 }
 
 impl AppId {
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 8;
     pub const ALL: [Self; Self::COUNT] = [
         Self::System,
         Self::Browser,
         Self::Phone,
         Self::Messages,
         Self::Exocortex,
+        Self::Instagram,
+        Self::WhatsApp,
+        Self::Discord,
     ];
 
     pub fn from_view(view: View) -> Option<Self> {
@@ -55,6 +68,9 @@ impl AppId {
             View::Phone => Some(Self::Phone),
             View::Messages => Some(Self::Messages),
             View::Exocortex => Some(Self::Exocortex),
+            View::Instagram => Some(Self::Instagram),
+            View::WhatsApp => Some(Self::WhatsApp),
+            View::Discord => Some(Self::Discord),
             View::Locked | View::Launcher => None,
         }
     }
@@ -66,6 +82,9 @@ impl AppId {
             Self::Phone => View::Phone,
             Self::Messages => View::Messages,
             Self::Exocortex => View::Exocortex,
+            Self::Instagram => View::Instagram,
+            Self::WhatsApp => View::WhatsApp,
+            Self::Discord => View::Discord,
         }
     }
 
@@ -76,6 +95,9 @@ impl AppId {
             Self::Phone => "Phone",
             Self::Messages => "Messages",
             Self::Exocortex => "Exocortex",
+            Self::Instagram => "Instagram",
+            Self::WhatsApp => "WhatsApp",
+            Self::Discord => "Discord",
         }
     }
 
@@ -103,6 +125,9 @@ impl AppId {
             Self::Phone => "phone",
             Self::Messages => "messages",
             Self::Exocortex => "exocortex",
+            Self::Instagram => "instagram",
+            Self::WhatsApp => "whatsapp",
+            Self::Discord => "discord",
         }
     }
 }
@@ -290,7 +315,13 @@ impl View {
     pub fn takes_drags(self) -> bool {
         matches!(
             self,
-            Self::System | Self::Phone | Self::Messages | Self::Exocortex
+            Self::System
+                | Self::Phone
+                | Self::Messages
+                | Self::Exocortex
+                | Self::Instagram
+                | Self::WhatsApp
+                | Self::Discord
         )
     }
 }
@@ -1253,10 +1284,15 @@ impl ShellState {
             Duration::ZERO
         } else {
             match launch.app {
-                // Phone, Messages and Exocortex are the System app's binary.
-                AppId::System | AppId::Phone | AppId::Messages | AppId::Exocortex => {
-                    SYSTEM_FIRST_PAINT_DELAY
-                }
+                // Phone, Messages, Exocortex and the social apps are the
+                // System app's binary.
+                AppId::System
+                | AppId::Phone
+                | AppId::Messages
+                | AppId::Exocortex
+                | AppId::Instagram
+                | AppId::WhatsApp
+                | AppId::Discord => SYSTEM_FIRST_PAINT_DELAY,
                 AppId::Browser => BROWSER_FIRST_PAINT_DELAY,
             }
         };

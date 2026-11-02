@@ -217,7 +217,12 @@ impl Default for HomeLayout {
     fn default() -> Self {
         Self {
             dock: vec![AppId::Phone, AppId::Browser, AppId::Messages, AppId::System],
-            grid: vec![AppId::Exocortex],
+            grid: vec![
+                AppId::Exocortex,
+                AppId::Instagram,
+                AppId::WhatsApp,
+                AppId::Discord,
+            ],
             removed: Vec::new(),
             widgets: vec![Widget::Calendar, Widget::Battery],
         }
@@ -2309,6 +2314,15 @@ mod tests {
         HomeLayout::default().rect(Slot::Grid(index))
     }
 
+    /// The layout most of these tests were written for: the default with
+    /// the social apps in the App Library, so the grid holds Exocortex alone.
+    fn classic() -> HomeLayout {
+        let mut layout = HomeLayout::default();
+        layout.grid.retain(|app| *app == AppId::Exocortex);
+        layout.removed = vec![AppId::Instagram, AppId::WhatsApp, AppId::Discord];
+        layout
+    }
+
     #[test]
     fn layouts_are_made_whole_and_read_leniently() {
         let layout = HomeLayout::default();
@@ -2331,7 +2345,15 @@ mod tests {
         );
         assert_eq!(made.dock.len(), DOCK_MAX);
         assert_eq!(made.widgets, vec![Widget::Battery]);
-        assert_eq!(made.grid, vec![AppId::Exocortex]);
+        assert_eq!(
+            made.grid,
+            vec![
+                AppId::Exocortex,
+                AppId::Instagram,
+                AppId::WhatsApp,
+                AppId::Discord
+            ]
+        );
         let read: HomeLayout = serde_json::from_str(
             r#"{"dock":["phone","pager","phone"],"grid":["system"],"removed":["browser"],"x":1}"#,
         )
@@ -2339,7 +2361,14 @@ mod tests {
         assert_eq!(read.dock, vec![AppId::Phone]);
         assert_eq!(
             read.grid,
-            vec![AppId::System, AppId::Messages, AppId::Exocortex]
+            vec![
+                AppId::System,
+                AppId::Messages,
+                AppId::Exocortex,
+                AppId::Instagram,
+                AppId::WhatsApp,
+                AppId::Discord
+            ]
         );
         assert_eq!(read.removed, vec![AppId::Browser]);
         // A layout from before widgets keeps the default ones; a saved
@@ -2370,10 +2399,10 @@ mod tests {
 
     #[test]
     fn layouts_remove_add_and_place() {
-        let mut layout = HomeLayout::default();
+        let mut layout = classic();
         assert!(layout.remove(AppId::Browser));
         assert!(!layout.remove(AppId::Browser));
-        assert_eq!(layout.removed, vec![AppId::Browser]);
+        assert_eq!(layout.removed.last(), Some(&AppId::Browser));
         assert_eq!(layout.dock.len(), 3);
         // Three dock icons stay centered.
         assert_eq!(layout.rect(Slot::Dock(1)).center().0, DOCK.center().0);
@@ -2392,7 +2421,14 @@ mod tests {
             HomeLayout::default()
                 .with(vec![AppId::Phone], vec![AppId::System])
                 .removed,
-            vec![AppId::Browser, AppId::Messages, AppId::Exocortex]
+            vec![
+                AppId::Browser,
+                AppId::Messages,
+                AppId::Exocortex,
+                AppId::Instagram,
+                AppId::WhatsApp,
+                AppId::Discord
+            ]
         );
     }
 
@@ -2494,7 +2530,7 @@ mod tests {
 
     #[test]
     fn hover_finds_grid_and_dock_places() {
-        let layout = HomeLayout::default();
+        let layout = classic();
         // Over the second grid column: after Exocortex.
         let (x, y) = grid(1).center();
         assert_eq!(hover_slot(&layout, AppId::Phone, x, y), Some(Slot::Grid(1)));
@@ -2519,7 +2555,7 @@ mod tests {
     #[test]
     fn holding_an_icon_enters_edit_mode_and_moving_drags_it() {
         let start = Instant::now();
-        let mut layout = HomeLayout::default();
+        let mut layout = classic();
         let mut home = HomeScreen::default();
         let (x, y) = grid(0).center();
         home.touch_begin(&layout, x, y, start);
@@ -2558,7 +2594,7 @@ mod tests {
     #[test]
     fn dragging_a_dock_icon_into_the_grid_makes_room_and_saves() {
         let start = Instant::now();
-        let mut layout = HomeLayout::default();
+        let mut layout = classic();
         let mut home = HomeScreen::default();
         assert!(home.begin_editing(start));
         // In edit mode a touch that moves drags at once.
@@ -2601,7 +2637,7 @@ mod tests {
     #[test]
     fn the_badge_asks_then_removes_and_the_library_adds_back() {
         let start = Instant::now();
-        let mut layout = HomeLayout::default();
+        let mut layout = classic();
         let mut home = HomeScreen::default();
         home.begin_editing(start);
         let t = at(start, 400);
@@ -2627,7 +2663,7 @@ mod tests {
         let (rx, ry) = alert_button(0).center();
         home.touch_begin(&layout, rx, ry, at(start, 1100));
         home.touch_end(&mut layout, rx, ry, at(start, 1120));
-        assert_eq!(layout.removed, vec![AppId::Browser]);
+        assert_eq!(layout.removed.last(), Some(&AppId::Browser));
         assert!(home.effects.contains(&Effect::Save));
         let shrinking = home.icon_views(&layout, at(start, 1200));
         let gone = shrinking.iter().find(|v| v.app == AppId::Browser).unwrap();
@@ -2654,7 +2690,7 @@ mod tests {
         home.touch_begin(&layout, mx, my, at(start, 4000));
         home.touch_end(&mut layout, mx, my, at(start, 4010));
         assert_eq!(layout.slot(AppId::Browser), Some(Slot::Grid(1)));
-        assert!(layout.removed.is_empty());
+        assert!(!layout.removed.contains(&AppId::Browser));
     }
 
     /// Taps (`x`, `y`) at `t`.
@@ -2889,7 +2925,13 @@ mod tests {
         assert!(state.settings_changed);
         assert_eq!(
             state.settings.home.removed,
-            vec![AppId::System, AppId::Messages]
+            vec![
+                AppId::System,
+                AppId::Messages,
+                AppId::Instagram,
+                AppId::WhatsApp,
+                AppId::Discord
+            ]
         );
         assert_eq!(state.home_icon_rect(AppId::Browser), grid(1));
         assert!(

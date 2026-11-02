@@ -114,6 +114,11 @@ if [ -x "$PERSIST/moon-telephony-stop.sh" ]; then
     "$BB" timeout -s KILL 10 /system/bin/sh "$PERSIST/moon-telephony-stop.sh" >/dev/null 2>&1
     log 'telephony stopped'
 fi
+if [ -x "$PERSIST/moon-social-stop.sh" ]; then
+    log 'stopping the social bridges'
+    "$BB" timeout -s KILL 10 /system/bin/sh "$PERSIST/moon-social-stop.sh" >/dev/null 2>&1
+    log 'social bridges stopped'
+fi
 if [ -x "$PERSIST/moon-audio-stop.sh" ]; then
     log 'stopping audio'
     "$BB" timeout -s KILL 10 /system/bin/sh "$PERSIST/moon-audio-stop.sh" >/dev/null 2>&1

@@ -37,8 +37,8 @@ struct ManagedWindow {
 struct Application {
     id: AppId,
     executable: PathBuf,
-    /// Phone, Messages and Exocortex are the System app's binary with
-    /// `--app NAME`.
+    /// Phone, Messages, Exocortex and the social apps are the System app's
+    /// binary with `--app NAME`.
     args: Vec<String>,
     child: Option<Child>,
     pidfd: Option<OwnedFd>,
@@ -53,7 +53,12 @@ struct Application {
 impl Application {
     fn new(id: AppId, executable: PathBuf) -> Self {
         let args = match id {
-            AppId::Phone | AppId::Messages | AppId::Exocortex => {
+            AppId::Phone
+            | AppId::Messages
+            | AppId::Exocortex
+            | AppId::Instagram
+            | AppId::WhatsApp
+            | AppId::Discord => {
                 vec!["--app".into(), id.cgroup_name().into()]
             }
             AppId::System | AppId::Browser => Vec::new(),
@@ -151,7 +156,10 @@ impl AppRegistry {
                 Application::new(AppId::Browser, browser),
                 Application::new(AppId::Phone, system.clone()),
                 Application::new(AppId::Messages, system.clone()),
-                Application::new(AppId::Exocortex, system),
+                Application::new(AppId::Exocortex, system.clone()),
+                Application::new(AppId::Instagram, system.clone()),
+                Application::new(AppId::WhatsApp, system.clone()),
+                Application::new(AppId::Discord, system),
             ],
             active: None,
             leases: LeaseManager::default(),

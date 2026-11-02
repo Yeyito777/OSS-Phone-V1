@@ -219,7 +219,10 @@ impl Settings {
 /// cannot speak it simply stays on X. Not the Browser: Chromium would pick
 /// Wayland by itself, untested.
 fn speaks_wayland(name: &str) -> bool {
-    matches!(name, "system" | "phone" | "messages" | "exocortex")
+    matches!(
+        name,
+        "system" | "phone" | "messages" | "exocortex" | "instagram" | "whatsapp" | "discord"
+    )
 }
 
 #[cfg(test)]

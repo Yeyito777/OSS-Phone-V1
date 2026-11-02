@@ -50,6 +50,8 @@
 !/scripts/device/moon-suspend-cycle.sh
 !/scripts/device/moon-telephony-start.sh
 !/scripts/device/moon-telephony-stop.sh
+!/scripts/device/moon-social-start.sh
+!/scripts/device/moon-social-stop.sh
 !/scripts/device/moon-power
 !/scripts/device/moon-power.sh
 !/scripts/device/moon-soak.sh

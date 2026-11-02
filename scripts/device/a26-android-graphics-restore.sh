@@ -76,6 +76,9 @@ fi
 if [ -x /data/adb/moon/moon-telephony-stop.sh ]; then
     /system/bin/sh /data/adb/moon/moon-telephony-stop.sh 2>/dev/null || true
 fi
+if [ -x /data/adb/moon/moon-social-stop.sh ]; then
+    /system/bin/sh /data/adb/moon/moon-social-stop.sh 2>/dev/null || true
+fi
 
 # Native Wi-Fi owns wlan0 and Android policy table 1023 while Moon is active.
 # Always remove that state before restarting Android's framework/network stack.

@@ -82,6 +82,12 @@ if [ -x "$PERSIST/moon-telephony-start.sh" ]; then
     /system/bin/sh "$PERSIST/moon-telephony-start.sh" || log "telephony start failed rc=$?"
 fi
 
+# The social apps' bridges (record services under their keeper; a no-op
+# when not installed).
+if [ -x "$PERSIST/moon-social-start.sh" ]; then
+    /system/bin/sh "$PERSIST/moon-social-start.sh" || log "social bridges start failed rc=$?"
+fi
+
 if [ -x "$ROOT/opt/a26-system/libexec/a26-wifi-start" ]; then
     if in_chroot /opt/a26-system/libexec/a26-wifi-start; then
         log 'native Wi-Fi started'

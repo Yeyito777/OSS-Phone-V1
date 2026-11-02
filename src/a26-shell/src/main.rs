@@ -3737,7 +3737,14 @@ fn handle_tap(
             None => state.last_action = "lock_tap_outside".into(),
         },
         View::Launcher => state.home_tap(f32::from(x), f32::from(y)),
-        View::System | View::Browser | View::Phone | View::Messages | View::Exocortex => {
+        View::System
+        | View::Browser
+        | View::Phone
+        | View::Messages
+        | View::Exocortex
+        | View::Instagram
+        | View::WhatsApp
+        | View::Discord => {
             let app_name = AppId::from_view(state.view).map_or("app", AppId::cgroup_name);
             let Some(_window) = state.managed_windows.first().copied() else {
                 state.last_action = format!("{app_name}_tap_no_window");

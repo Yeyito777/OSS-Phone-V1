@@ -44,6 +44,9 @@ const ICON_SOURCE_SIZE: i32 = 220;
 const ICON_SOURCE_BYTES: usize = (ICON_SOURCE_SIZE * ICON_SOURCE_SIZE * 4) as usize;
 const SYSTEM_ICON_PATH: &str = "/opt/a26-system/share/system-app.bgrx";
 const EXOCORTEX_ICON_PATH: &str = "/opt/a26-system/share/exocortex-app.bgrx";
+const INSTAGRAM_ICON_PATH: &str = "/opt/a26-system/share/instagram-app.bgrx";
+const WHATSAPP_ICON_PATH: &str = "/opt/a26-system/share/whatsapp-app.bgrx";
+const DISCORD_ICON_PATH: &str = "/opt/a26-system/share/discord-app.bgrx";
 const BROWSER_ICON_PATH: &str = "/opt/vimbrowser-a26/share/browser-app.bgrx";
 
 /// Home-screen icon size (60 pt) and its continuous-corner radius.
@@ -182,6 +185,9 @@ impl AppIcon {
             AppId::System => load_icon("A26_SYSTEM_ICON", SYSTEM_ICON_PATH),
             AppId::Browser => load_icon("A26_BROWSER_ICON", BROWSER_ICON_PATH),
             AppId::Exocortex => load_icon("A26_EXOCORTEX_ICON", EXOCORTEX_ICON_PATH),
+            AppId::Instagram => load_icon("A26_INSTAGRAM_ICON", INSTAGRAM_ICON_PATH),
+            AppId::WhatsApp => load_icon("A26_WHATSAPP_ICON", WHATSAPP_ICON_PATH),
+            AppId::Discord => load_icon("A26_DISCORD_ICON", DISCORD_ICON_PATH),
             // Moon draws these two itself.
             AppId::Phone | AppId::Messages => None,
         }
@@ -230,6 +236,9 @@ fn fallback_icon(app: AppId) -> Image {
         AppId::System => (0x8e8e93, 0x48484a, "S"),
         AppId::Browser => (0x5ac8fa, 0x0a64d8, "B"),
         AppId::Exocortex => (0x1d2c52, 0x101b33, "E"),
+        AppId::Instagram => (0xd62976, 0x962fbf, "I"),
+        AppId::WhatsApp => (0x25d366, 0x128c7e, "W"),
+        AppId::Discord => (0x5865f2, 0x404eed, "D"),
         AppId::Phone | AppId::Messages => (0x6ce87a, 0x1fc04a, ""),
     };
     canvas.fill_rows(|y| gfx::mix(top, bottom, y as f32 / size as f32));
@@ -237,7 +246,12 @@ fn fallback_icon(app: AppId) -> Image {
     match app {
         AppId::Phone => calls::draw_handset(&mut canvas, c, c, 1.6, false, WHITE),
         AppId::Messages => draw_speech_bubble(&mut canvas, c, c - 4.0, 1.0),
-        AppId::System | AppId::Browser | AppId::Exocortex => {}
+        AppId::System
+        | AppId::Browser
+        | AppId::Exocortex
+        | AppId::Instagram
+        | AppId::WhatsApp
+        | AppId::Discord => {}
     }
     let baseline = text::centered_baseline(size as f32 / 2.0, Weight::SemiBold, 120.0);
     text::draw_centered(
