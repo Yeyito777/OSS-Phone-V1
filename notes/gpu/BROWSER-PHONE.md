@@ -321,3 +321,19 @@ dir.
   over the display's), not by `GetZoomLevel`.
 - **Seen, not done:** `<select>` lists are desktop dropdowns with 24 px rows
   (usable).
+
+**The patched backend** (handed over 2026-11-02 as a whole Release tree,
+`browser-release-deploy` with rollback). vimbrowser's own CEF 147 built for
+arm64 on whale: proprietary codecs (H.264/AAC play), vimbrowser's native
+API, and five patches of ours: the password prompt hook (save sheet in the
+phone UI; Chrome autofills on page load as usual), the touch emulator taking
+injected touches in root coordinates, and ChromeBrowserWidget observing each
+ThemeService once. The last one matters because the backend is a
+non-official build, where `DUMP_WILL_BE_NOTREACHED` is fatal: an in-memory
+request context (the phone UI's, incognito's) shares its original's theme
+service, and its second AddObserver aborted the shell at startup. The shell
+builds against it with `A26_CEF_ROOT=third_party/cef-a26-arm64-vimbrowser`
+(from `cef-distrib-arm64.sh`) in `build-a26-arm64-vimbrowser`; both CEF
+kinds mount at /cef and keep old file times, so they must not share a build
+directory. Saved passwords use Chrome's Linux fallback key (no keyring in
+the app root).
