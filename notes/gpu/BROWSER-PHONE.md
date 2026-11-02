@@ -279,3 +279,30 @@ a whole Release tree with an install/rollback script, not as the usual
 binary and phone-ui pair. `scripts/a26/cef-distrib-arm64.sh` builds the
 CEF distribution the shell builds against from the backend's arm64 out
 dir.
+
+**Increments 2.6 to 2.8** (handed over, the last at vimbrowser 07586327d6):
+- **2.6:** Chrome's new tab page on blank tabs: a search box and the 8
+  sites visited most (often and lately, one per site); History search.
+- **2.6.1:** the launcher always passes https://example.com, and vimbrowser
+  added it to the restored session and made it the active tab at every
+  start. Now, with --a26-shell and a session to restore, the start URL is
+  dropped (links come over IPC).
+- **2.7:** Chrome on Android's page fonts. Pages that name no font, and
+  buttons, got desktop Chrome's Times (DejaVu Serif). The standard and
+  sans-serif families are now Roboto, then DejaVu Sans. An overlay for the
+  app root (`fonts-android.sh`, installed by `browser-fonts-install`) adds
+  Roboto, Liberation (metric-compatible Arial, Helvetica, Times and Courier)
+  and a fontconfig rule putting Roboto first for sans-serif and system-ui.
+- **2.8:** taps reach cross-site iframes. DevTools touch (TouchEmulator)
+  forwards its gestures only to the page's own renderer. In an
+  out-of-process iframe the touches arrived but the tap's click never did:
+  embedded players, Cloudflare Turnstile, sign-in and consent buttons.
+  When a tap ends over a frame that is a target of its own
+  (`DOM.getNodeForLocation` → `DOM.describeNode` frameId →
+  `Target.getTargets`), vimbrowser clicks it with DevTools mouse input,
+  which is routed properly. Scrolling in such frames already worked. Also:
+  the editor offers a results page's query; intent: links go to their
+  fallback; tel:, sms: and mailto: are copied.
+- **Seen, not done:** Chrome's PDF viewer comes up at desktop scale (device
+  emulation doesn't reach its guest view), and `<select>` lists are
+  desktop dropdowns with 24 px rows (usable).
