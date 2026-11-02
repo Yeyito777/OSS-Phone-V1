@@ -303,6 +303,21 @@ dir.
   which is routed properly. Scrolling in such frames already worked. Also:
   the editor offers a results page's query; intent: links go to their
   fallback; tel:, sms: and mailto: are copied.
-- **Seen, not done:** Chrome's PDF viewer comes up at desktop scale (device
-  emulation doesn't reach its guest view), and `<select>` lists are
-  desktop dropdowns with 24 px rows (usable).
+- **2.9 and 2.10:** Download link / image, Translate (Google's page proxy),
+  removing a page from History. 2.10 corrects 2.8. DevTools touch does give
+  an out-of-process iframe the tap's click, but with the frame's offset
+  applied twice, so the click falls outside the frame or on the wrong
+  element, and 2.8's added mouse click made a second click. Now a sequence
+  that begins over such a frame is probed at touch-down. A tap there ends
+  in a touchcancel (no tap from the emulator) and gets only the mouse
+  click. Touches inside such frames still carry the doubled offset (drags
+  work, since only their deltas count); the patched backend could fix
+  TouchEmulator's transform at the source.
+- **PDFs:** Chrome's PDF viewer page has no viewport tag, so mobile
+  emulation laid it out 980 px wide (viewer at 0.44 scale). A new-document
+  script (which needs `Page.enable`) gives PDF pages `width=device-width`.
+  The viewer also sets a zoom level of its own that does not zoom the page,
+  so input now divides by the page's measured zoom (its devicePixelRatio
+  over the display's), not by `GetZoomLevel`.
+- **Seen, not done:** `<select>` lists are desktop dropdowns with 24 px rows
+  (usable).
