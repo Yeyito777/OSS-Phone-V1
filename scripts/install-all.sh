@@ -132,7 +132,7 @@ done
 for name in moon-boot-supervisor.sh moon-direct-policy.sh moon-post-ready.sh moon-audio-start.sh \
     moon-audio-stop.sh moon-audio-keeper.sh moon-gpu-session.sh moon-suspend-cycle.sh \
     moon-mode-stop.list moon-power.sh moon-boot-confirm.sh moon-telephony-start.sh \
-    moon-telephony-stop.sh; do
+    moon-telephony-stop.sh moon-social-start.sh moon-social-stop.sh; do
     MANIFEST+=("$PROJECT_ROOT/scripts/device/$name:$PERSIST/$name")
 done
 MANIFEST+=(
