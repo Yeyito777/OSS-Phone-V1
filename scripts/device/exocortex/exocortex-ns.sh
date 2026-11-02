@@ -67,6 +67,12 @@ ENV="$ENV PATH=/usr/local/sbin:/usr/local/bin:/opt/bun/bin:/root/.local/bin:/usr
 # unless told it is in a deliberate sandbox (IS_SANDBOX=1): this phone is the
 # agent's own machine, root by design (docs/EXOCORTEX.md).
 ENV="$ENV EXOCORTEX_SUPERVISOR=/usr/local/bin/exocortex-supervisor IS_SANDBOX=1 DISPLAY=:0"
+# Bun's JSC wakes all its parallel GC markers on every socket read, and on this
+# loaded 8-core phone they spin (sched_yield): ~14 % of a core and millions of
+# context switches for the daemon's seven HeapHelper threads, near idle. One
+# marker does the same work without them (the social bridges measured 9 % ->
+# 0.5 % CPU per message a second).
+ENV="$ENV BUN_JSC_numberOfGCMarkers=1"
 
 case "$ROLE" in
     daemon)
