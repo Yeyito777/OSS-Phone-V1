@@ -59,7 +59,11 @@ rm -f "$RUNTIME/stop"
             fi
             args="$(cat "$ROOT/etc/moon-social/$name.args" 2>/dev/null)"
             started=$(cut -d. -f1 /proc/uptime)
+            # One GC marker thread: with bun'"'"'s default eight, every socket
+            # read spun them (~90 ms of CPU and ~1000 context switches each
+            # on the phone: a Discord gateway alone cost 12-15 % of a core).
             "$BB" nice -n 5 "$BB" chroot "$ROOT" /usr/bin/env -i HOME=/root PATH="$CHROOT_PATH" \
+                BUN_JSC_numberOfGCMarkers=1 \
                 "$BUN" "$MAIN" --provider "$name" $args </dev/null >>"$log" 2>&1 &
             pid=$!
             echo "$pid $(cut -d" " -f22 /proc/$pid/stat 2>/dev/null)" >"$RUNTIME/$name.pid"
