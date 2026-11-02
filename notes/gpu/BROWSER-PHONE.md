@@ -180,3 +180,49 @@ Verified in sandbox 6, with Moon's `touch` injection standing in for fingers:
 Not verified without a finger: real-device feel and latency, Moon's bottom
 gestures beside the stream, and long-press text selection. Long-press opens
 the context menu but does not select a word as Chrome on Android does.
+
+## Step 2: the phone UI (2026-11-02)
+
+The user's answers:
+- **Look:** Chrome on Android's layout and behaviour, in Moon's dark iOS
+  style like the phone's other apps.
+- **Chrome features:** yes to whatever makes it properly functional,
+  including Chrome-style tabs for passwords and autofill, as long as
+  `vimbrowser-cli`/IPC keep working.
+- **Whale:** may build the patched Chromium for arm64 at idle priority. A
+  subagent started it on 2026-11-02 at 00:44 EST in
+  `~/Workspace/research/vimbrowser-chromium-arm64`.
+
+**Architecture.** The UI is a local page (vimbrowser `assets/phone-ui`, with
+Moon's Inter) in its own Alloy BrowserView and in-memory request context.
+It sits in the window's bottom row, so the page's area never changes size.
+It talks to vimbrowser by prefixed console messages, and vimbrowser answers
+with `window.phone.*`.
+- **Views that cover the page** (tab grid, menu, long-press sheet, address
+  editor): the UI's view grows to the whole window and the page is hidden.
+  Menus and sheets show a dimmed snapshot of the page behind them
+  (`Page.captureScreenshot`). CEF can't give a windowed BrowserView a
+  transparent background, so this is how a menu shows over the page.
+- **Touch:** each surface, the page or the UI, gets real touch from Moon's
+  stream. Taps in the bottom 180 px reach the bar as Moon's XTEST clicks.
+- **Typing into the UI's field:** printable keys go in as DevTools
+  `Input.insertText`. A CHAR sent back into the UI's own key pipeline is
+  dropped, so the page fields' CHAR workaround doesn't work there.
+
+**Increment 1** (handover `browser-vimbrowser-bc77309cdf91` and
+`browser-phone-ui-8794d0b9e7d5.tar`, vimbrowser b0ebe951df):
+- **Bar:** Back, the address pill (lock and host), a load progress line,
+  the tab count and ⋮.
+- **Tab switcher:** a two-column grid of thumbnails. Tap a card to switch,
+  × or swipe to close; plus new tab and Reopen.
+- **Address editor:** Safari-style, at the bottom above Moon's keyboard,
+  with "Go to site" or "Search the web", Switch-to-tab and typed-history
+  suggestions.
+- **⋮ menu:** forward, reload or stop, copy link, new tab, reopen closed
+  tab, and a Desktop site switch.
+- **Long-press sheet:** Chrome on Android's link, image (with preview),
+  selection and field items, plus a page menu.
+
+Measured in sandbox 6 (phone at load ~20): the menu opens about 270 ms after
+the tap and the tab grid about 340 ms after; most of that is the snapshot.
+Fallback: without `Release/phone-ui` the binary keeps the old Views row.
