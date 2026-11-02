@@ -62,8 +62,11 @@ rm -f "$RUNTIME/stop"
             # One GC marker thread: with bun'"'"'s default eight, every socket
             # read spun them (~90 ms of CPU and ~1000 context switches each
             # on the phone: a Discord gateway alone cost 12-15 % of a core).
+            # The system allocator (Malloc=1): bmalloc'"'"'s scavenger woke
+            # 10 times a second forever (an idle bridge: 11 wakeups/s and
+            # 310 ms CPU a minute, 0.9/s and 20 ms with it; sync time equal).
             "$BB" nice -n 5 "$BB" chroot "$ROOT" /usr/bin/env -i HOME=/root PATH="$CHROOT_PATH" \
-                BUN_JSC_numberOfGCMarkers=1 \
+                BUN_JSC_numberOfGCMarkers=1 Malloc=1 \
                 "$BUN" "$MAIN" --provider "$name" $args </dev/null >>"$log" 2>&1 &
             pid=$!
             echo "$pid $(cut -d" " -f22 /proc/$pid/stat 2>/dev/null)" >"$RUNTIME/$name.pid"
