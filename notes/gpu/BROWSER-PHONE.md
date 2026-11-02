@@ -226,3 +226,28 @@ with `window.phone.*`.
 Measured in sandbox 6 (phone at load ~20): the menu opens about 270 ms after
 the tap and the tab grid about 340 ms after; most of that is the snapshot.
 Fallback: without `Release/phone-ui` the binary keeps the old Views row.
+
+**Increments 1.1 to 2.3** (all deployed, the last at vimbrowser e006c0f4d2):
+- **1.1:** the UI moved into a window overlay, so its views open on the tap
+  (25-55 ms from finger lift, measured through Moon).
+- **2:** History, Bookmarks, Downloads, Find in page, and the edge back
+  gesture.
+- **2.1:** Settings (search engine, desktop default, clearing data) and pull
+  to refresh.
+- **2.2:** dark sites (`prefers-color-scheme` and auto dark); page alerts
+  shown by the phone UI, since Chrome's own couldn't be answered by touch; a
+  file picker over Downloads.
+- **2.3:** word selection on hold; copies go to Moon's clipboard, where
+  vimbrowser had shelled out to xclip, which the app root doesn't have; and
+  incognito tabs.
+
+**Passwords and autofill.** Chrome-style tabs can't be used: CEF allows only
+one Chrome-style BrowserView per window ("Cannot add multiple Chrome style
+BrowserViews"). But CEF's Alloy tabs already call
+`TabHelpers::AttachTabHelpers`, so they have Chrome's password manager and
+autofill clients. What they lack is the UI: the save bubble needs a Browser
+window. The plan, on the patched arm64 backend, is to hook
+`ManagePasswordsUIController` when it has no Browser and pass the pending
+save to vimbrowser, which shows it in the phone UI and answers through a
+new private API (save / never). Filling may then work through Chrome's own
+autofill popup; that's to be tested once there is a saved password.
