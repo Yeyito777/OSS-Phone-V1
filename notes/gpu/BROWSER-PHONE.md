@@ -251,3 +251,31 @@ window. The plan, on the patched arm64 backend, is to hook
 save to vimbrowser, which shows it in the phone UI and answers through a
 new private API (save / never). Filling may then work through Chrome's own
 autofill popup; that's to be tested once there is a saved password.
+
+**Increments 2.4 and 2.5** (deployed, the last at vimbrowser 6e905fce3b):
+- **2.4:** a page in fullscreen (a video) gets the whole window; camera and
+  microphone requests are declined at once (the app root must never open
+  `/dev/video*`); tab thumbnails survive a restart; vimbrowser's whale
+  shader is a Settings switch, off on the phone; a tab whose renderer died
+  reloads once; the address editor lists the search engine's suggestions.
+- **2.5:** the bar steps aside while a page field has Moon's keyboard
+  (Moon shrinks the window above it), as Chrome's bottom toolbar does. The
+  back swipe does what Android's does: it hides the keyboard first, then
+  leaves fullscreen, and only then goes back. Also "Link you copied" from
+  Moon's clipboard (`clipboard get`), Close all tabs, and a fix: a Google
+  results URL from History opens as a URL instead of being searched for.
+- **Dropped:** holds and swipes on the bar (Chrome's long-press Back for
+  history, and swiping along the toolbar to switch tabs). The bar lies in
+  Moon's 180 px home-gesture zone, where the app gets taps only, a hold
+  over 650 ms is dropped, and a sideways swipe is Moon's app switch.
+
+**Codecs.** The stock CEF arm64 build has no H.264 or AAC
+(`MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"')` is
+false; VP8, VP9 and AV1 play), so MP4 video on Instagram, X and many news
+sites doesn't play. The patched backend is built with
+`proprietary_codecs=true` and `ffmpeg_branding="Chrome"`. Since its
+runtime replaces libcef and its resources (about 300 MB), it goes over as
+a whole Release tree with an install/rollback script, not as the usual
+binary and phone-ui pair. `scripts/a26/cef-distrib-arm64.sh` builds the
+CEF distribution the shell builds against from the backend's arm64 out
+dir.
