@@ -404,7 +404,7 @@ fn parse_command(line: &str) -> Result<Command, String> {
             Some(value) => match AppId::parse(&value.to_ascii_lowercase()) {
                 Some(app) => Command::Launch(app),
                 None => {
-                    return Err("app must be System, Browser, Phone, Messages or Exocortex".into());
+                    return Err("app must be System, Browser, Phone, Messages, Exocortex, Instagram, WhatsApp or Discord".into());
                 }
             },
             None => return Err("missing app noun".into()),
@@ -587,7 +587,7 @@ fn parse_command(line: &str) -> Result<Command, String> {
                 .next()
                 .ok_or_else(|| "lease requires acquire or release".to_string())?;
             let app = parts.next().and_then(AppId::parse).ok_or_else(|| {
-                "lease app must be system, browser, phone, messages or exocortex".to_string()
+                "lease app must be system, browser, phone, messages, exocortex, instagram, whatsapp or discord".to_string()
             })?;
             let kind = parts
                 .next()

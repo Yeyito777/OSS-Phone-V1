@@ -1123,6 +1123,7 @@ pub fn app_display_name(app: &str) -> String {
         "browser" => "Browser".into(),
         "moon" => "Moon".into(),
         "moon-notifyd" => "Clock".into(),
+        "whatsapp" => "WhatsApp".into(),
         other => {
             let mut name = other.replace('-', " ");
             if let Some(first) = name.get_mut(0..1) {
