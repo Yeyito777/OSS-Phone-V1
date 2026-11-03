@@ -328,6 +328,11 @@ impl Canvas {
         self.clip = (0, 0, self.width, self.height);
     }
 
+    /// The clip: drawing is limited to `x0..x1`, `y0..y1`.
+    pub fn clip(&self) -> (i32, i32, i32, i32) {
+        self.clip
+    }
+
     #[inline]
     fn visible(&self, x: i32, y: i32) -> bool {
         x >= self.clip.0 && y >= self.clip.1 && x < self.clip.2 && y < self.clip.3
