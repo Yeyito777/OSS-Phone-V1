@@ -29,7 +29,9 @@ pub const CARD_X: f32 = 24.0;
 pub const CARD_W: f32 = 1032.0;
 pub const CARD_RADIUS: f32 = 56.0;
 const CARD_PAD: f32 = 36.0;
-const ICON: f32 = 92.0;
+pub const ICON: f32 = 92.0;
+/// A notification group's header icon.
+pub const GROUP_ICON: f32 = 52.0;
 const TEXT_X: f32 = CARD_PAD + ICON + 30.0;
 const TITLE_SIZE: f32 = 44.0;
 const BODY_SIZE: f32 = 42.0;
@@ -1114,7 +1116,8 @@ pub fn centre_layout(store: &NotifyStore, skip: Option<&str>, _now: i64) -> Cent
 
 /// App icons by app id (`system`, `browser`); others get a generic glyph.
 pub trait Icons {
-    fn icon(&self, app: &str) -> Option<&Image>;
+    /// `app`'s icon for drawing `size` px a side.
+    fn icon(&self, app: &str, size: f32) -> Option<&Image>;
 }
 
 pub fn app_display_name(app: &str) -> String {
@@ -1135,8 +1138,8 @@ pub fn app_display_name(app: &str) -> String {
 }
 
 fn draw_app_icon(canvas: &mut Canvas, icons: &dyn Icons, app: &str, rect: RectF) {
-    match icons.icon(app) {
-        Some(image) => canvas.draw_image_scaled(image, rect, 1.0),
+    match icons.icon(app, rect.w) {
+        Some(image) => canvas.draw_image_in(image, rect, 1.0),
         None => {
             canvas.fill_rrect(rect, rect.w * 0.23, 0x636366, 1.0);
             if app == "moon-notifyd" {
@@ -1325,7 +1328,7 @@ pub fn draw_centre(
         draw_cross(canvas, (cx, cy), 13.0, SECONDARY);
     }
     for group in &layout.groups {
-        let icon = RectF::new(CARD_X + 12.0, group.header_y + 8.0, 52.0, 52.0);
+        let icon = RectF::new(CARD_X + 12.0, group.header_y + 8.0, GROUP_ICON, GROUP_ICON);
         draw_app_icon(canvas, icons, &group.app, icon);
         text::draw(
             canvas,

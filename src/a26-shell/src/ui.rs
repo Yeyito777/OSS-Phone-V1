@@ -40,8 +40,12 @@ pub const RED: Rgb = 0xff453a;
 pub const CARD: Rgb = 0x1c1c1e;
 pub const CARD_RAISED: Rgb = 0x2c2c2e;
 
-const ICON_SOURCE_SIZE: i32 = 220;
-const ICON_SOURCE_BYTES: usize = (ICON_SOURCE_SIZE * ICON_SOURCE_SIZE * 4) as usize;
+/// The large icon's size (notifications' and the launch splash's source).
+const LARGE_ICON_SIZE: i32 = 220;
+/// Moon's own artwork (Phone, Messages, and the letters of apps installed
+/// without theirs) is drawn at twice the home icon, as the apps ship theirs:
+/// every size made from it is then a supersampled reduction.
+const ICON_ART_SIZE: i32 = 2 * ICON_SIZE;
 const SYSTEM_ICON_PATH: &str = "/opt/a26-system/share/system-app.bgrx";
 const EXOCORTEX_ICON_PATH: &str = "/opt/a26-system/share/exocortex-app.bgrx";
 const INSTAGRAM_ICON_PATH: &str = "/opt/a26-system/share/instagram-app.bgrx";
@@ -146,8 +150,8 @@ impl StatusInfo {
 struct IconSet<'a>(&'a [AppIcon; AppId::COUNT]);
 
 impl Icons for IconSet<'_> {
-    fn icon(&self, app: &str) -> Option<&Image> {
-        AppId::parse(app).map(|app| &self.0[app.index()].large)
+    fn icon(&self, app: &str, size: f32) -> Option<&Image> {
+        AppId::parse(app).map(|app| self.0[app.index()].sized(size))
     }
 }
 
@@ -163,74 +167,133 @@ fn key_of(value: &impl std::hash::Hash) -> u64 {
 /// for its shadow.
 const CARD_LAYER_INSET: f32 = 20.0;
 
+/// An app's artwork: square BGRX of any size from 64 to 1024 px a side
+/// (the apps ship theirs at 336, twice the home icon; older ones at 220).
 fn load_icon(variable: &str, default: &str) -> Option<Image> {
     let path = std::env::var_os(variable).unwrap_or_else(|| default.into());
-    fs::read(path)
-        .ok()
-        .filter(|bytes| bytes.len() == ICON_SOURCE_BYTES)
-        .and_then(|bytes| Image::from_bgrx(ICON_SOURCE_SIZE, ICON_SOURCE_SIZE, &bytes))
+    let bytes = fs::read(path).ok()?;
+    let side = ((bytes.len() / 4) as f64).sqrt().round() as usize;
+    if !(64..=1024).contains(&side) || side * side * 4 != bytes.len() {
+        return None;
+    }
+    Image::from_bgrx(side as i32, side as i32, &bytes)
 }
+
+/// `app`'s artwork: its installation's, else Moon's own.
+fn artwork(app: AppId) -> Image {
+    match app {
+        AppId::System => load_icon("A26_SYSTEM_ICON", SYSTEM_ICON_PATH),
+        AppId::Browser => load_icon("A26_BROWSER_ICON", BROWSER_ICON_PATH),
+        AppId::Exocortex => load_icon("A26_EXOCORTEX_ICON", EXOCORTEX_ICON_PATH),
+        AppId::Instagram => load_icon("A26_INSTAGRAM_ICON", INSTAGRAM_ICON_PATH),
+        AppId::WhatsApp => load_icon("A26_WHATSAPP_ICON", WHATSAPP_ICON_PATH),
+        AppId::Discord => load_icon("A26_DISCORD_ICON", DISCORD_ICON_PATH),
+        // Moon draws these two itself.
+        AppId::Phone | AppId::Messages => None,
+    }
+    .unwrap_or_else(|| fallback_icon(app))
+}
+
+/// The smaller sizes Moon draws app icons at, each made from the artwork
+/// once (a large icon scaled down as it is drawn aliases): App Library rows,
+/// notifications, the switcher's labels and notification groups' headers.
+const SMALL_ICON_SIZES: [f32; 4] = [
+    home::LIBRARY_ICON,
+    alerts::ICON,
+    LABEL_ICON,
+    alerts::GROUP_ICON,
+];
 
 struct AppIcon {
     home: Image,
     large: Image,
+    small: [Image; SMALL_ICON_SIZES.len()],
     /// Launch-screen color, sampled from the artwork's corner so the icon
     /// appears to grow out of its own background.
     splash: Rgb,
 }
 
 impl AppIcon {
-    fn new(app: AppId) -> Self {
-        let artwork = match app {
-            AppId::System => load_icon("A26_SYSTEM_ICON", SYSTEM_ICON_PATH),
-            AppId::Browser => load_icon("A26_BROWSER_ICON", BROWSER_ICON_PATH),
-            AppId::Exocortex => load_icon("A26_EXOCORTEX_ICON", EXOCORTEX_ICON_PATH),
-            AppId::Instagram => load_icon("A26_INSTAGRAM_ICON", INSTAGRAM_ICON_PATH),
-            AppId::WhatsApp => load_icon("A26_WHATSAPP_ICON", WHATSAPP_ICON_PATH),
-            AppId::Discord => load_icon("A26_DISCORD_ICON", DISCORD_ICON_PATH),
-            // Moon draws these two itself.
-            AppId::Phone | AppId::Messages => None,
+    fn new(artwork: Image) -> Self {
+        let corner = artwork.width * 6 / LARGE_ICON_SIZE;
+        let splash = artwork.pixels[(corner * artwork.width + corner) as usize] & 0x00ff_ffff;
+        // The artwork and its exact halvings (2x art: the home icon among
+        // them). Each size is made from the smallest that is that size or
+        // at least half as large again: a mean of means, as crisp, for a
+        // fraction of the work.
+        let mut levels = vec![artwork];
+        while let Some(level) = levels.last()
+            && level.width % 2 == 0
+            && level.height % 2 == 0
+            && level.width / 2 >= 64
+        {
+            levels.push(level.halve());
         }
-        .unwrap_or_else(|| fallback_icon(app));
-        let splash = artwork.pixels[(6 * artwork.width + 6) as usize] & 0x00ff_ffff;
+        let sized = |size: f32| {
+            let size = size.round() as i32;
+            let source = levels
+                .iter()
+                .rev()
+                .find(|level| level.width == size || level.width as f32 >= 1.5 * size as f32)
+                .unwrap_or(&levels[0]);
+            source.icon_mask(size, ICON_RADIUS * size as f32 / ICON_SIZE as f32)
+        };
         Self {
-            home: artwork.icon_mask(ICON_SIZE, ICON_RADIUS),
-            large: artwork.icon_mask(
-                ICON_SOURCE_SIZE,
-                ICON_RADIUS * ICON_SOURCE_SIZE as f32 / ICON_SIZE as f32,
-            ),
+            home: sized(ICON_SIZE as f32),
+            large: sized(LARGE_ICON_SIZE as f32),
+            small: SMALL_ICON_SIZES.map(sized),
             splash,
         }
     }
+
+    /// The icon made for `size` px, or the large one (to be scaled) for a
+    /// size it has none for.
+    fn sized(&self, size: f32) -> &Image {
+        let side = size.round() as i32;
+        self.small
+            .iter()
+            .chain([&self.home, &self.large])
+            .find(|icon| icon.width == side)
+            .unwrap_or(&self.large)
+    }
 }
 
-/// The Messages icon's bubble: an ellipse with a tail at its lower left.
+/// The Messages icon's bubble: an ellipse with a tail at its lower left,
+/// one outline (in the large icon's units at `scale` 1). As iOS draws it,
+/// the tail's outer edge carries on from the ellipse's side down to its
+/// point, and its inner edge curves back into the ellipse's underside.
 fn draw_speech_bubble(canvas: &mut Canvas, cx: f32, cy: f32, scale: f32) {
-    let (rx, ry) = (76.0 * scale, 62.0 * scale);
+    let (rx, ry) = (76.0 * scale, 63.0 * scale);
+    let at = |degrees: f32| {
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        (cx + rx * cos, cy + ry * sin)
+    };
+    let point = |x: f32, y: f32| (cx + x * scale, cy + y * scale);
+    // From where the tail's inner edge joins the ellipse, the long way
+    // round (under, right, over, down the left side) to where its outer
+    // edge leaves it.
+    let (inner, outer) = (105.0, 158.0 - 360.0);
     let mut bubble = Path::new();
-    let steps = 96;
-    let points: Vec<(f32, f32)> = (0..steps)
-        .map(|step| {
-            let angle = std::f32::consts::TAU * step as f32 / steps as f32;
-            (cx + rx * angle.cos(), cy + ry * angle.sin())
-        })
-        .collect();
-    bubble.polygon(&points);
+    let steps = 240;
+    let start = at(inner);
+    bubble.move_to(start.0, start.1);
+    for step in 1..=steps {
+        let (x, y) = at(inner + (outer - inner) * step as f32 / steps as f32);
+        bubble.line_to(x, y);
+    }
+    let tip = point(-64.0, 80.0);
+    bubble.cubic_to(point(-62.5, 40.0), point(-59.0, 64.0), tip);
+    bubble.cubic_to(point(-54.0, 74.0), point(-37.0, 57.0), start);
+    bubble.close();
     canvas.fill_path(&bubble, WHITE, 1.0);
-    let mut tail = Path::new();
-    tail.polygon(&[
-        (cx - 50.0 * scale, cy + 34.0 * scale),
-        (cx - 22.0 * scale, cy + 54.0 * scale),
-        (cx - 70.0 * scale, cy + 78.0 * scale),
-        (cx - 56.0 * scale, cy + 62.0 * scale),
-    ]);
-    canvas.fill_path(&tail, WHITE, 1.0);
 }
 
 /// Artwork for an app whose installation provides none (development hosts),
 /// and Moon's own Phone and Messages icons.
 fn fallback_icon(app: AppId) -> Image {
-    let size = ICON_SOURCE_SIZE;
+    let size = ICON_ART_SIZE;
+    // Drawn in the large icon's units.
+    let scale = size as f32 / LARGE_ICON_SIZE as f32;
     let mut canvas = Canvas::new(size, size);
     let (top, bottom, letter) = match app {
         AppId::System => (0x8e8e93, 0x48484a, "S"),
@@ -244,8 +307,8 @@ fn fallback_icon(app: AppId) -> Image {
     canvas.fill_rows(|y| gfx::mix(top, bottom, y as f32 / size as f32));
     let c = size as f32 / 2.0;
     match app {
-        AppId::Phone => calls::draw_handset(&mut canvas, c, c, 1.6, false, WHITE),
-        AppId::Messages => draw_speech_bubble(&mut canvas, c, c - 4.0, 1.0),
+        AppId::Phone => calls::draw_handset(&mut canvas, c, c, 1.6 * scale, false, WHITE),
+        AppId::Messages => draw_speech_bubble(&mut canvas, c, c - 4.0 * scale, scale),
         AppId::System
         | AppId::Browser
         | AppId::Exocortex
@@ -253,14 +316,15 @@ fn fallback_icon(app: AppId) -> Image {
         | AppId::WhatsApp
         | AppId::Discord => {}
     }
-    let baseline = text::centered_baseline(size as f32 / 2.0, Weight::SemiBold, 120.0);
+    let letter_size = 120.0 * scale;
+    let baseline = text::centered_baseline(size as f32 / 2.0, Weight::SemiBold, letter_size);
     text::draw_centered(
         &mut canvas,
         letter,
         size as f32 / 2.0,
         baseline,
         Weight::SemiBold,
-        120.0,
+        letter_size,
         WHITE,
         1.0,
     );
@@ -527,6 +591,8 @@ const IDLE_COPY_INTERVAL: std::time::Duration = std::time::Duration::from_millis
 const SPINNER_SIZE: i32 = 96;
 const LABEL_W: i32 = 640;
 const LABEL_H: i32 = 96;
+/// The icon on a label.
+const LABEL_ICON: f32 = 72.0;
 
 impl Renderer {
     pub fn new<C: Connection>(
@@ -542,7 +608,7 @@ impl Renderer {
         let wall = compositor.create_layer(conn, width, height, false)?;
         compositor.upload(conn, wall, &wallpaper)?;
         let wall_levels = DimLevels::new(wall, level_dims(&LOCK_DIM_STOPS, LEVEL_STEP));
-        let icons = AppId::ALL.map(AppIcon::new);
+        let icons = AppId::ALL.map(|app| AppIcon::new(artwork(app)));
         let mut icon_layers = [wall; AppId::COUNT];
         let mut labels = [wall; AppId::COUNT];
         let mut names = [wall; AppId::COUNT];
@@ -550,18 +616,22 @@ impl Renderer {
             let icon = &icons[app.index()];
             let id = compositor.create_layer(
                 conn,
-                ICON_SOURCE_SIZE as u16,
-                ICON_SOURCE_SIZE as u16,
+                LARGE_ICON_SIZE as u16,
+                LARGE_ICON_SIZE as u16,
                 true,
             )?;
-            let mut canvas = Canvas::new(ICON_SOURCE_SIZE, ICON_SOURCE_SIZE);
+            let mut canvas = Canvas::new(LARGE_ICON_SIZE, LARGE_ICON_SIZE);
             canvas.draw_image(&icon.large, 0, 0, 1.0);
             compositor.upload(conn, id, &canvas)?;
             icon_layers[app.index()] = id;
 
             let label = compositor.create_layer(conn, LABEL_W as u16, LABEL_H as u16, true)?;
             let mut canvas = Canvas::new(LABEL_W, LABEL_H);
-            canvas.draw_image_scaled(&icon.large, RectF::new(0.0, 12.0, 72.0, 72.0), 1.0);
+            canvas.draw_image_in(
+                icon.sized(LABEL_ICON),
+                RectF::new(0.0, 12.0, LABEL_ICON, LABEL_ICON),
+                1.0,
+            );
             let baseline = text::centered_baseline(48.0, Weight::SemiBold, 44.0);
             text::draw(
                 &mut canvas,
@@ -716,7 +786,7 @@ impl Renderer {
                 i32::from(status_bar::HEIGHT),
                 true,
             )?,
-            library: Layer::new(conn, &mut compositor, w, LIBRARY_H as i32, true)?,
+            library: Layer::new(conn, &mut compositor, w, home::LIBRARY_H as i32, true)?,
             done: Layer::new(
                 conn,
                 &mut compositor,
@@ -1790,7 +1860,7 @@ impl Renderer {
                 let (cx, cy) = rect.center();
                 nodes.push(Node::Image {
                     surface: self.icon_layers[app.index()],
-                    src: RectF::new(0.0, 0.0, ICON_SOURCE_SIZE as f32, ICON_SOURCE_SIZE as f32),
+                    src: RectF::new(0.0, 0.0, LARGE_ICON_SIZE as f32, LARGE_ICON_SIZE as f32),
                     dst: RectF::new(cx - size / 2.0, cy - size / 2.0, size, size),
                     alpha,
                     radius: 0.0,
@@ -2451,7 +2521,7 @@ impl Renderer {
         nodes.push(Self::full(
             self.library.id,
             SCREEN_W,
-            LIBRARY_H,
+            home::LIBRARY_H,
             SCREEN_W - shift,
             0.0,
             if page > 0.0 { 1.0 } else { 0.0 },
@@ -2760,9 +2830,6 @@ fn quantized(alpha: f32) -> f32 {
     (alpha.clamp(0.0, 1.0) * 255.0).round() / 255.0
 }
 
-/// The App Library's height (its search field and rows).
-const LIBRARY_H: f32 = 1200.0;
-
 /// An app's icon in the App Library, on its page.
 fn library_icon(app: AppId) -> RectF {
     let index = home::library_apps()
@@ -2920,7 +2987,7 @@ fn draw_library(canvas: &mut Canvas, icons: &[AppIcon; AppId::COUNT], badges: &B
     for (index, app) in apps.iter().enumerate() {
         let row = home::library_row(index);
         let icon = home::library_icon_rect(index);
-        canvas.draw_image_scaled(&icons[app.index()].large, icon, 1.0);
+        canvas.draw_image_in(icons[app.index()].sized(icon.w), icon, 1.0);
         let count = badges.get(*app);
         if count > 0 {
             let (bx, by) = badges::anchor(icon, 0.0);

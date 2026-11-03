@@ -104,33 +104,110 @@ impl Image {
         })
     }
 
-    /// Area-averaged resample to `size`x`size`, clipped to a rounded square
-    /// with an anti-aliased edge. This is how Moon gives every app icon the
-    /// same continuous-corner silhouette regardless of the supplied artwork.
-    pub fn icon_mask(&self, size: i32, radius: f32) -> Self {
-        let mut pixels = vec![0_u32; (size * size) as usize];
-        let sx = self.width as f32 / size as f32;
-        let sy = self.height as f32 / size as f32;
-        let half = size as f32 / 2.0;
-        for y in 0..size {
-            for x in 0..size {
-                let x0 = x as f32 * sx;
-                let y0 = y as f32 * sy;
-                let (mut r, mut g, mut b, mut n) = (0_u32, 0_u32, 0_u32, 0_u32);
-                let mut yy = y0 as i32;
-                while (yy as f32) < y0 + sy && yy < self.height {
-                    let mut xx = x0 as i32;
-                    while (xx as f32) < x0 + sx && xx < self.width {
-                        let p = self.pixels[(yy * self.width + xx) as usize];
-                        r += p >> 16 & 0xff;
-                        g += p >> 8 & 0xff;
-                        b += p & 0xff;
-                        n += 1;
-                        xx += 1;
-                    }
-                    yy += 1;
+    /// Resamples to `width`x`height`, every destination pixel the exact
+    /// area-weighted mean of the source pixels it covers (partly covered ones
+    /// count for the part they cover). Reducing artwork drawn at a multiple
+    /// of the size is then exactly supersampling: edges stay as crisp as if
+    /// drawn at that size.
+    pub fn resample(&self, width: i32, height: i32) -> Self {
+        if (width, height) == (self.width, self.height) {
+            return self.clone();
+        }
+        let columns = AreaTaps::new(self.width, width);
+        let rows = AreaTaps::new(self.height, height);
+        let (w, sw) = (width as usize, self.width as usize);
+        // Rows first, then columns (the filter is separable), in fixed
+        // point: weights in 1/2^14, the rows' sums kept to 8.8 bits.
+        let mut wide = vec![[0_u16; 4]; w * self.height as usize];
+        // Two channels a word (red and blue, alpha and green), each in 32
+        // bits: two multiplies a source pixel instead of four.
+        let mut pairs = vec![(0_u64, 0_u64); sw];
+        for (source, out) in self.pixels.chunks_exact(sw).zip(wide.chunks_exact_mut(w)) {
+            for (&pixel, pair) in source.iter().zip(&mut pairs) {
+                let pixel = u64::from(pixel);
+                *pair = (
+                    (pixel & 0x00ff_0000) << 16 | pixel & 0xff,
+                    (pixel & 0xff00_0000) << 8 | pixel >> 8 & 0xff,
+                );
+            }
+            for (x, out) in out.iter_mut().enumerate() {
+                let (first, weights) = columns.of(x);
+                let (mut red_blue, mut alpha_green) = (0_u64, 0_u64);
+                for (pair, &weight) in pairs[first..first + weights.len()].iter().zip(weights) {
+                    red_blue += pair.0 * u64::from(weight);
+                    alpha_green += pair.1 * u64::from(weight);
                 }
-                let n = n.max(1);
+                let round = |sum: u64| ((sum + (1 << 5)) >> 6) as u16;
+                *out = [
+                    round(alpha_green >> 32),
+                    round(red_blue >> 32),
+                    round(alpha_green & 0xffff_ffff),
+                    round(red_blue & 0xffff_ffff),
+                ];
+            }
+        }
+        let mut pixels = Vec::with_capacity(w * height as usize);
+        let mut line = vec![[0_u32; 4]; w];
+        for y in 0..height as usize {
+            let (first, weights) = rows.of(y);
+            line.fill([0; 4]);
+            for (row, &weight) in wide[first * w..].chunks_exact(w).zip(weights) {
+                for (sum, value) in line.iter_mut().zip(row) {
+                    for (sum, &value) in sum.iter_mut().zip(value) {
+                        *sum += u32::from(value) * weight;
+                    }
+                }
+            }
+            pixels.extend(line.iter().map(|sum| {
+                let [alpha, red, green, blue] = sum.map(|sum| ((sum + (1 << 21)) >> 22).min(255));
+                // Premultiplied: no channel above alpha.
+                alpha << 24 | red.min(alpha) << 16 | green.min(alpha) << 8 | blue.min(alpha)
+            }));
+        }
+        Self {
+            width,
+            height,
+            pixels,
+        }
+    }
+
+    /// Half the size (each side rounded down), every pixel the mean of the
+    /// 2x2 block it covers: `resample` to half, in a fraction of the time.
+    pub fn halve(&self) -> Self {
+        let (width, height) = (self.width / 2, self.height / 2);
+        let stride = self.width as usize;
+        let mut pixels = Vec::with_capacity((width * height) as usize);
+        for rows in self.pixels.chunks_exact(2 * stride) {
+            let (top, bottom) = rows.split_at(stride);
+            for (top, bottom) in top.chunks_exact(2).zip(bottom.chunks_exact(2)) {
+                let block = [top[0], top[1], bottom[0], bottom[1]];
+                // Two channels a word, each lane wide enough for 4 x 255.
+                let mean = |shift: u32| {
+                    let sum: u32 = block.iter().map(|p| p >> shift & 0x00ff_00ff).sum();
+                    ((sum + 0x0002_0002) >> 2 & 0x00ff_00ff) << shift
+                };
+                pixels.push(mean(8) | mean(0));
+            }
+        }
+        Self {
+            width,
+            height,
+            pixels,
+        }
+    }
+
+    /// Resampled to `size`x`size` (see `resample`) and clipped to a rounded
+    /// square with an anti-aliased edge. This is how Moon gives every app
+    /// icon the same continuous-corner silhouette regardless of the supplied
+    /// artwork.
+    pub fn icon_mask(&self, size: i32, radius: f32) -> Self {
+        let mut icon = self.resample(size, size);
+        let half = size as f32 / 2.0;
+        // Only the corners are cut: a pixel along a straight edge is whole.
+        let corner = (radius.ceil() as i32 + 1).min(half.ceil() as i32);
+        let near = |at: i32| at < corner || at >= size - corner;
+        for y in (0..size).filter(|&y| near(y)) {
+            for x in (0..size).filter(|&x| near(x)) {
                 let coverage = coverage(sd_rrect(
                     x as f32 + 0.5,
                     y as f32 + 0.5,
@@ -140,17 +217,68 @@ impl Image {
                     half,
                     radius,
                 ));
-                let a = (coverage * 255.0 + 0.5) as u32;
-                let premultiply = |c: u32| (c / n * a + 127) / 255;
-                pixels[(y * size + x) as usize] =
-                    a << 24 | premultiply(r) << 16 | premultiply(g) << 8 | premultiply(b);
+                if coverage < 1.0 {
+                    let pixel = &mut icon.pixels[(y * size + x) as usize];
+                    let a = (coverage * 256.0 + 0.5) as u32;
+                    let scale = |c: u32| (c * a + 128) >> 8;
+                    let p = *pixel;
+                    *pixel = scale(p >> 24) << 24
+                        | scale(p >> 16 & 0xff) << 16
+                        | scale(p >> 8 & 0xff) << 8
+                        | scale(p & 0xff);
+                }
+            }
+        }
+        icon
+    }
+}
+
+/// For each of `to` destination pixels along an axis of `from` source
+/// pixels: the first source pixel it covers and each covered pixel's share
+/// of it in 1/2^14 (summing to exactly 2^14), as many for every pixel (some
+/// of them 0).
+struct AreaTaps {
+    count: usize,
+    first: Vec<usize>,
+    weights: Vec<u32>,
+}
+
+impl AreaTaps {
+    fn new(from: i32, to: i32) -> Self {
+        const ONE: f32 = (1 << 14) as f32;
+        let scale = from as f32 / to as f32;
+        let count = (scale.ceil() as usize + 1).min(from as usize);
+        let mut first = Vec::with_capacity(to as usize);
+        let mut weights = Vec::with_capacity(to as usize * count);
+        for index in 0..to {
+            let (start, end) = (index as f32 * scale, (index + 1) as f32 * scale);
+            let pixel = (start.floor() as usize).min(from as usize - count);
+            first.push(pixel);
+            let at = weights.len();
+            weights.extend((pixel..pixel + count).map(|pixel| {
+                let covered = ((pixel + 1) as f32).min(end) - (pixel as f32).max(start);
+                (covered.max(0.0) / scale * ONE).round() as u32
+            }));
+            // Rounding's remainder to the largest share, so a flat colour
+            // stays exactly itself.
+            let shares = &mut weights[at..];
+            let total: u32 = shares.iter().sum();
+            if let Some(largest) = shares.iter_mut().max() {
+                *largest = (*largest + (1 << 14)).saturating_sub(total);
             }
         }
         Self {
-            width: size,
-            height: size,
-            pixels,
+            count,
+            first,
+            weights,
         }
+    }
+
+    fn of(&self, index: usize) -> (usize, &[u32]) {
+        (
+            self.first[index],
+            &self.weights[index * self.count..][..self.count],
+        )
     }
 }
 
@@ -453,6 +581,17 @@ impl Canvas {
         }
     }
 
+    /// Composites `image` into `dst`: pixel for pixel (at the nearest whole
+    /// pixel) when it is that size already, as icons made for their sizes
+    /// are, else scaled.
+    pub fn draw_image_in(&mut self, image: &Image, dst: RectF, alpha: f32) {
+        if (image.width, image.height) == (dst.w.round() as i32, dst.h.round() as i32) {
+            self.draw_image(image, dst.x.round() as i32, dst.y.round() as i32, alpha);
+        } else {
+            self.draw_image_scaled(image, dst, alpha);
+        }
+    }
+
     /// Composites a premultiplied image scaled into `dst` with bilinear
     /// filtering (used by launch/close zoom animations).
     pub fn draw_image_scaled(&mut self, image: &Image, dst: RectF, alpha: f32) {
@@ -667,6 +806,26 @@ impl Path {
         for step in 0..=steps {
             let angle = from + (to - from) * step as f32 / steps as f32;
             self.line_to(cx + r * angle.cos(), cy + r * angle.sin());
+        }
+    }
+
+    /// Appends a cubic Bezier curve from the current point to `to`, in
+    /// segments of about 2 px.
+    pub fn cubic_to(&mut self, c1: (f32, f32), c2: (f32, f32), to: (f32, f32)) {
+        let Some(from) = self.current else {
+            return self.line_to(to.0, to.1);
+        };
+        let length = |a: (f32, f32), b: (f32, f32)| (b.0 - a.0).hypot(b.1 - a.1);
+        let hull = length(from, c1) + length(c1, c2) + length(c2, to);
+        let steps = (hull / 2.0).ceil().clamp(2.0, 256.0) as usize;
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            let u = 1.0 - t;
+            let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+            self.line_to(
+                a * from.0 + b * c1.0 + c * c2.0 + d * to.0,
+                a * from.1 + b * c1.1 + c * c2.1 + d * to.1,
+            );
         }
     }
 
@@ -954,6 +1113,89 @@ mod tests {
         let icon = image.icon_mask(40, 10.0);
         assert_eq!(icon.pixels[0] >> 24, 0);
         assert_eq!(icon.pixels[20 * 40 + 20], 0xffff_ffff);
+    }
+
+    #[test]
+    fn resample_is_the_exact_area_mean() {
+        // A 4:1 reduction averages each 4x4 block exactly: a one-pixel
+        // white line in black makes a quarter-grey column, nothing beside it.
+        let mut pixels = vec![0xff00_0000; 16 * 16];
+        for y in 0..16 {
+            pixels[y * 16 + 5] = 0xffff_ffff;
+        }
+        let image = Image {
+            width: 16,
+            height: 16,
+            pixels,
+        };
+        let small = image.resample(4, 4);
+        for y in 0..4 {
+            assert_eq!(small.pixels[y * 4], 0xff00_0000);
+            assert_eq!(small.pixels[y * 4 + 1], 0xff40_4040);
+            assert_eq!(small.pixels[y * 4 + 2], 0xff00_0000);
+        }
+        // A fractional ratio weighs partly covered pixels by their share
+        // (3 -> 2: the middle pixel is half in each), not equally.
+        let row = Image {
+            width: 3,
+            height: 1,
+            pixels: vec![0xffff_ffff, 0xff00_0000, 0xff00_0000],
+        };
+        let reduced = row.resample(2, 1);
+        assert_eq!(reduced.pixels, vec![0xffaa_aaaa, 0xff00_0000]);
+        // Transparency stays premultiplied.
+        let clear = Image {
+            width: 2,
+            height: 1,
+            pixels: vec![0xffff_0000, 0],
+        };
+        assert_eq!(clear.resample(1, 1).pixels, vec![0x8080_0000]);
+    }
+
+    #[test]
+    fn icon_mask_cuts_only_the_corners() {
+        let image = Image::from_bgrx(4, 4, &[255; 64]).unwrap();
+        let icon = image.icon_mask(60, 14.0);
+        for y in 0..60 {
+            for x in 0..60 {
+                let distance =
+                    sd_rrect(x as f32 + 0.5, y as f32 + 0.5, 30.0, 30.0, 30.0, 30.0, 14.0);
+                let expected = (coverage(distance) * 256.0 + 0.5) as u32;
+                let expected = (255 * expected + 128) >> 8;
+                assert_eq!(icon.pixels[y * 60 + x] >> 24, expected, "({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn halving_is_resampling_to_half() {
+        let pixels: Vec<u32> = (0..6 * 4_u32)
+            .map(|n| {
+                let a = 0x40 + n * 7 % 0xc0;
+                a << 24 | (n * 37 % a) << 16 | (n * 11 % a) << 8 | (n * 5 % a)
+            })
+            .collect();
+        let image = Image {
+            width: 6,
+            height: 4,
+            pixels,
+        };
+        assert_eq!(image.halve().pixels, image.resample(3, 2).pixels);
+    }
+
+    #[test]
+    fn cubic_curves_reach_their_end_through_their_controls_pull() {
+        let mut path = Path::new();
+        path.move_to(0.0, 0.0);
+        path.cubic_to((0.0, 40.0), (40.0, 40.0), (40.0, 0.0));
+        path.close();
+        let (x, y, w, h, mask) = path.rasterize().unwrap();
+        assert_eq!((x, y), (0, 0));
+        // The curve's lowest point is 3/4 of the controls' depth.
+        assert!((30..=32).contains(&h), "{h}");
+        assert_eq!(mask[(20 * w + 20) as usize], 255);
+        assert!(mask[(29 * w + 20) as usize] > 240);
+        assert_eq!(mask[(30 * w + 20) as usize], 0);
     }
 
     #[test]

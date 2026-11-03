@@ -62,6 +62,9 @@ const LIBRARY_TOP: f32 = 300.0;
 pub const LIBRARY_ROW: f32 = 168.0;
 pub const LIBRARY_ICON: f32 = 120.0;
 pub const LIBRARY_ICON_X: f32 = 72.0;
+/// The App Library page's height: its search field and every app's row
+/// (its layer is this tall, so a row below it would be cut off).
+pub const LIBRARY_H: f32 = LIBRARY_TOP + AppId::COUNT as f32 * LIBRARY_ROW;
 
 /// The status bar's glyphs (its time, Wi-Fi and battery) end here.
 pub const STATUS_GLYPHS_BOTTOM: f32 = 84.0;
@@ -2868,6 +2871,17 @@ mod tests {
         home.touch_begin(&layout, 540.0, 1400.0, t);
         home.touch_move(&mut layout, 545.0, 1200.0, at(start, 4050));
         assert_eq!(home.page(at(start, 4050)), 0.0);
+    }
+
+    #[test]
+    fn every_app_library_row_is_on_its_page() {
+        // The page's layer is LIBRARY_H tall: every row drawn whole within
+        // it, and all of them above the home gesture's edge (the list does
+        // not scroll).
+        let last = library_row(AppId::COUNT - 1);
+        assert!(last.y + last.h <= LIBRARY_H);
+        assert!(library_icon_rect(AppId::COUNT - 1).y + LIBRARY_ICON <= LIBRARY_H);
+        const { assert!(LIBRARY_H <= SCREEN_H - EDGE_ZONE) };
     }
 
     #[test]

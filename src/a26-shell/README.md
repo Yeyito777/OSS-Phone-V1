@@ -56,6 +56,12 @@ The standalone Browser app is vimbrowser. Its A26 installation provides
 `/opt/vimbrowser-a26/share/browser-app.bgrx`; the shell only owns the launcher
 tile and process lifecycle.
 
+An app's icon artwork is square BGRX (four bytes a pixel: blue, green, red,
+unused), any size from 64 to 1024 px a side; 336 px, twice the 168 px home
+icon, is best. Moon rounds its corners and reduces it by exact area averaging
+to each size it draws (home screen, App Library, notifications), so icons stay
+crisp at all of them.
+
 Moon keeps a lifecycle-aware registry for each app (`stopped`, `launching`,
 `foreground`, or `background`). Swiping up unmaps the app's windows and returns
 to the launcher without terminating its process. Reopening the app remaps the
