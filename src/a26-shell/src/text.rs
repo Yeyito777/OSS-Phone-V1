@@ -7,11 +7,20 @@
 //! it), memory-mapped the first time a character needs them, so they cost
 //! nothing until then. A character no font has draws as an empty box.
 //! Glyphs are rasterized once per weight/size/character and cached for the
-//! life of the process.
+//! life of the process. An emoji's bitmap (a PNG in the font, decoded and
+//! scaled) is made on an emoji thread from the moment its glyph is first
+//! wanted, so text measured before it is drawn draws it ready; drawn before
+//! that thread made it, it is made in place, as before (the event loop
+//! never waits on that thread). Decoded PNGs are kept a while
+//! (`STRIKE_PIXELS`), so an emoji at another size is only scaled. The same
+//! emoji in another weight shares its bitmap. Ported from a26-system's copy
+//! (db38e0e1); the pixels are the same as before to the bit.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 
 use fontdue::{Font, FontSettings};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, RasterImageFormat};
@@ -73,8 +82,84 @@ const FALLBACK_FILES: [&str; 6] = [
 enum Shape {
     /// Coverage, drawn in the text's colour.
     Mask(Vec<u8>),
-    /// Premultiplied ARGB (emoji), drawn as is.
-    Color(Image),
+    /// An emoji: its bitmap (premultiplied ARGB, drawn as is) is made on
+    /// the emoji thread once the glyph is first wanted (a layout measures
+    /// text before it draws it), or here if it is drawn before that.
+    Emoji(Rc<RefCell<Bitmap>>),
+}
+
+enum Bitmap {
+    Asked(Arc<Job>),
+    Made(Option<Made>),
+}
+
+/// An emoji's bitmap and where it goes from the pen (x) and baseline (y).
+struct Made {
+    x: i32,
+    y: i32,
+    image: Image,
+}
+
+/// An emoji bitmap asked of the emoji thread.
+struct Job {
+    size: f32,
+    ids: Vec<GlyphId>,
+    asked: std::time::Instant,
+    state: Mutex<JobState>,
+}
+
+enum JobState {
+    Waiting,
+    Making,
+    Done(Option<Made>),
+    /// Taken (or made by the thread that draws it).
+    Gone,
+}
+
+/// Emoji bitmaps asked of the emoji thread and not yet made, at most;
+/// past it they are made when drawn.
+const JOBS: usize = 64;
+/// How long the emoji thread leaves a bitmap after it was asked for: one
+/// drawn in the frame that measured it is made there, once, not twice.
+const JOB_AFTER: std::time::Duration = std::time::Duration::from_millis(12);
+static WAITING: AtomicUsize = AtomicUsize::new(0);
+static EMOJI_THREAD: OnceLock<Option<mpsc::Sender<Arc<Job>>>> = OnceLock::new();
+
+/// The emoji thread, started the first time an emoji is wanted: it makes
+/// the bitmaps asked of it with a face of its own on the same font data.
+fn emoji_thread(data: &'static [u8]) -> Option<&'static mpsc::Sender<Arc<Job>>> {
+    EMOJI_THREAD
+        .get_or_init(|| {
+            let (sender, jobs) = mpsc::channel::<Arc<Job>>();
+            std::thread::Builder::new()
+                .name("emoji".into())
+                .spawn(move || {
+                    let face = Face::parse(data, 0).ok();
+                    let mut strikes = Vec::new();
+                    for job in jobs {
+                        WAITING.fetch_sub(1, Ordering::Relaxed);
+                        let Some(face) = &face else { continue };
+                        if let Some(left) = JOB_AFTER.checked_sub(job.asked.elapsed()) {
+                            std::thread::sleep(left);
+                        }
+                        {
+                            let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+                            if !matches!(*state, JobState::Waiting) {
+                                continue;
+                            }
+                            *state = JobState::Making;
+                        }
+                        let made = make_emoji(face, job.size, &job.ids, &mut strikes);
+                        let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+                        if matches!(*state, JobState::Making) {
+                            *state = JobState::Done(made);
+                        }
+                    }
+                })
+                .ok()?;
+            Some(sender)
+        })
+        .as_ref()
 }
 
 struct Glyph {
@@ -117,7 +202,32 @@ struct Typefaces {
     fallbacks: Vec<Fallback>,
     glyphs: HashMap<(Weight, u16, Cluster), Rc<Glyph>>,
     gamma: [u8; 256],
+    /// Emoji bitmaps as decoded from the font, the most recently used
+    /// first, up to `STRIKE_PIXELS`: an emoji wanted at another size is
+    /// only scaled again.
+    strikes: Vec<(GlyphId, Rc<Strike>)>,
+    /// The emoji font's bytes, for the emoji thread.
+    emoji_data: Option<&'static [u8]>,
+    /// Emoji bitmaps by size and glyphs: the same emoji in another weight
+    /// is the same bitmap. Up to `EMOJI_SHARED`.
+    emoji: HashMap<(u16, Vec<GlyphId>), Rc<RefCell<Bitmap>>>,
 }
+
+/// Emoji bitmaps shared between weights, at most (past it the sharing
+/// starts again; the glyphs keep theirs).
+const EMOJI_SHARED: usize = 1024;
+
+/// An emoji's bitmap at the font's strike size, premultiplied ARGB.
+struct Strike {
+    width: u32,
+    height: u32,
+    pixels: Vec<u32>,
+}
+
+/// What the decoded emoji bitmaps may hold, in pixels, on each thread that
+/// makes them (the UI's and the emoji thread): Noto's are 136 by 128, so
+/// about thirty emoji, 2 MB.
+const STRIKE_PIXELS: usize = 1 << 19;
 
 thread_local! {
     static TYPEFACES: RefCell<Typefaces> = RefCell::new(Typefaces::load());
@@ -358,8 +468,28 @@ fn ligate(face: &Face, mut glyphs: Vec<GlyphId>) -> Vec<GlyphId> {
     glyphs
 }
 
-/// Decodes a PNG strike glyph into premultiplied ARGB.
+/// Decodes a PNG strike glyph into premultiplied ARGB. A palette image
+/// (every Noto emoji) has its palette premultiplied once and each pixel
+/// looked up; the rest go through the png crate's expansion, a pixel of
+/// full or no cover kept or cleared as the arithmetic would leave it.
 pub(crate) fn decode_png(data: &[u8]) -> Option<(u32, u32, Vec<u32>)> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
+    decoder.set_transformations(png::Transformations::IDENTITY);
+    let mut reader = decoder.read_info().ok()?;
+    let info = reader.info();
+    if info.color_type == png::ColorType::Indexed
+        && info.bit_depth == png::BitDepth::Eight
+        && let Some(palette) = info.palette.as_deref()
+    {
+        let table = premultiplied_palette(palette, info.trns.as_deref().unwrap_or(&[]));
+        let mut buffer = vec![0; reader.output_buffer_size()];
+        let frame = reader.next_frame(&mut buffer).ok()?;
+        let pixels = buffer[..frame.buffer_size()]
+            .iter()
+            .map(|&index| table[usize::from(index)])
+            .collect();
+        return Some((frame.width, frame.height, pixels));
+    }
     let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().ok()?;
@@ -368,59 +498,192 @@ pub(crate) fn decode_png(data: &[u8]) -> Option<(u32, u32, Vec<u32>)> {
     let channels = info.color_type.samples();
     let pixels = buffer[..info.buffer_size()]
         .chunks_exact(channels)
-        .map(|p| {
-            let (r, g, b, a) = match channels {
-                4 => (p[0], p[1], p[2], p[3]),
-                3 => (p[0], p[1], p[2], 255),
-                2 => (p[0], p[0], p[0], p[1]),
-                _ => (p[0], p[0], p[0], 255),
-            };
-            let a32 = u32::from(a);
-            let pre = |c: u8| (u32::from(c) * a32 + 127) / 255;
-            a32 << 24 | pre(r) << 16 | pre(g) << 8 | pre(b)
+        .map(|p| match channels {
+            4 => premultiply(p[0], p[1], p[2], p[3]),
+            3 => premultiply(p[0], p[1], p[2], 255),
+            2 => premultiply(p[0], p[0], p[0], p[1]),
+            _ => premultiply(p[0], p[0], p[0], 255),
         })
         .collect();
     Some((info.width, info.height, pixels))
 }
 
-/// Area-averaged downscale of premultiplied pixels (bitmap emoji are drawn
-/// well below their strike size).
-fn resample(width: u32, height: u32, pixels: &[u32], to_w: u32, to_h: u32) -> Vec<u32> {
-    let (sx, sy) = (width as f32 / to_w as f32, height as f32 / to_h as f32);
-    let mut out = vec![0; (to_w * to_h) as usize];
-    for y in 0..to_h {
-        let (y0, y1) = (y as f32 * sy, (y + 1) as f32 * sy);
-        for x in 0..to_w {
-            let (x0, x1) = (x as f32 * sx, (x + 1) as f32 * sx);
-            let mut sum = [0.0_f32; 4];
-            let mut total = 0.0;
-            let mut yy = y0.floor() as u32;
-            while (yy as f32) < y1 && yy < height {
-                let wy = ((yy + 1) as f32).min(y1) - (yy as f32).max(y0);
-                let mut xx = x0.floor() as u32;
-                while (xx as f32) < x1 && xx < width {
-                    let wx = ((xx + 1) as f32).min(x1) - (xx as f32).max(x0);
-                    let w = wx * wy;
-                    let p = pixels[(yy * width + xx) as usize];
-                    for (channel, value) in sum.iter_mut().enumerate() {
-                        *value += (p >> (24 - 8 * channel) & 0xff) as f32 * w;
-                    }
-                    total += w;
-                    xx += 1;
-                }
-                yy += 1;
-            }
-            let total = total.max(1e-6);
-            out[(y * to_w + x) as usize] = sum
-                .iter()
-                .enumerate()
-                .map(|(channel, value)| {
-                    ((value / total + 0.5) as u32).min(255) << (24 - 8 * channel)
-                })
-                .fold(0, |pixel, part| pixel | part);
+/// A pixel premultiplied: each colour times its cover, rounded. Full cover
+/// keeps the colour and none clears it, as the arithmetic gives.
+#[inline]
+fn premultiply(r: u8, g: u8, b: u8, a: u8) -> u32 {
+    match a {
+        255 => 0xff00_0000 | u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b),
+        0 => 0,
+        _ => {
+            let a32 = u32::from(a);
+            let pre = |c: u8| (u32::from(c) * a32 + 127) / 255;
+            a32 << 24 | pre(r) << 16 | pre(g) << 8 | pre(b)
         }
     }
+}
+
+/// A PNG palette and its tRNS covers as the png crate expands them,
+/// premultiplied: entries past the tRNS opaque, a tRNS longer than the
+/// palette ignored, indices past the palette opaque black.
+fn premultiplied_palette(palette: &[u8], trns: &[u8]) -> [u32; 256] {
+    let entries = palette.len() / 3;
+    let trns = if trns.len() <= entries { trns } else { &[] };
+    let mut table = [premultiply(0, 0, 0, 255); 256];
+    for (index, entry) in table.iter_mut().enumerate().take(entries) {
+        let rgb = &palette[index * 3..index * 3 + 3];
+        *entry = premultiply(
+            rgb[0],
+            rgb[1],
+            rgb[2],
+            trns.get(index).copied().unwrap_or(255),
+        );
+    }
+    table
+}
+
+/// Area-averaged downscale of premultiplied pixels (bitmap emoji are drawn
+/// well below their strike size). Each output pixel sums the source pixels
+/// it covers, row by row, each times the part of it covered. It is the same
+/// to the bit as working that out pixel by pixel (the test keeps that
+/// version): the columns' and rows' parts are worked out once, with the
+/// same f32 arithmetic; the four channels are summed side by side, each a
+/// multiply then an add as before (never fused).
+fn resample(width: u32, height: u32, pixels: &[u32], to_w: u32, to_h: u32) -> Vec<u32> {
+    let (sx, sy) = (width as f32 / to_w as f32, height as f32 / to_h as f32);
+    let columns = Spans::new(to_w, width, sx);
+    let rows = Spans::new(to_h, height, sy);
+    let stride = width as usize;
+    // The source's bytes as f32 (exact), in memory order: blue, green, red,
+    // alpha. Into a buffer kept between emoji: a strike's (278 kB) is past
+    // what the allocator keeps, so a fresh one would be mapped, faulted in
+    // page by page and unmapped every time.
+    let mut source = SOURCE.with(|cell| cell.take());
+    source.clear();
+    source.extend(pixels.iter().map(|p| p.to_le_bytes().map(f32::from)));
+    let mut out = vec![0; (to_w * to_h) as usize];
+    for y in 0..to_h as usize {
+        let (first_row, wys) = rows.get(y);
+        for x in 0..to_w as usize {
+            let (first_column, wxs) = columns.get(x);
+            let mut sum = Lanes::ZERO;
+            let mut total = 0.0_f32;
+            for (row, &wy) in wys.iter().enumerate() {
+                let at = (first_row + row) * stride + first_column;
+                for (&wx, p) in wxs.iter().zip(&source[at..at + wxs.len()]) {
+                    let w = wx * wy;
+                    sum = sum.add_scaled(p, w);
+                    total += w;
+                }
+            }
+            let [b, g, r, a] = sum.get();
+            let total = total.max(1e-6);
+            let channel = |value: f32| ((value / total + 0.5) as u32).min(255);
+            out[y * to_w as usize + x] =
+                channel(a) << 24 | channel(r) << 16 | channel(g) << 8 | channel(b);
+        }
+    }
+    // Kept for the next, unless an unusually large source made it big.
+    if source.capacity() <= SOURCE_KEPT {
+        SOURCE.with(|cell| cell.replace(source));
+    }
     out
+}
+
+thread_local! {
+    /// The scaling's f32 copy of its source, kept between calls.
+    static SOURCE: RefCell<Vec<[f32; 4]>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The most source pixels that copy is kept for (Noto's strikes are 136 by
+/// 128): 1 MB on each thread that scales emoji.
+const SOURCE_KEPT: usize = 1 << 16;
+
+/// Four f32 channels summed side by side: `add_scaled` is `sum[i] += p[i] *
+/// w` for each, a multiply and an add per lane exactly as the scalar code
+/// (vector multiplies and adds round like scalar ones; nothing is fused).
+#[derive(Clone, Copy)]
+struct Lanes(Inner);
+
+#[cfg(target_arch = "aarch64")]
+type Inner = std::arch::aarch64::float32x4_t;
+#[cfg(target_arch = "x86_64")]
+type Inner = std::arch::x86_64::__m128;
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+type Inner = [f32; 4];
+
+impl Lanes {
+    const ZERO: Self = Self(
+        // SAFETY: four zero f32s and the 128-bit vector have the same size,
+        // and every bit pattern of either is valid.
+        unsafe { std::mem::transmute::<[f32; 4], Inner>([0.0; 4]) },
+    );
+
+    /// `self + p * w`, lane by lane.
+    #[inline(always)]
+    fn add_scaled(self, p: &[f32; 4], w: f32) -> Self {
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: NEON is part of every aarch64 target; the load reads the
+        // four f32s `p` points to.
+        unsafe {
+            use std::arch::aarch64::*;
+            Self(vaddq_f32(self.0, vmulq_n_f32(vld1q_f32(p.as_ptr()), w)))
+        }
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: SSE is part of every x86_64 target; the load reads the
+        // four f32s `p` points to (unaligned).
+        unsafe {
+            use std::arch::x86_64::*;
+            Self(_mm_add_ps(
+                self.0,
+                _mm_mul_ps(_mm_loadu_ps(p.as_ptr()), _mm_set1_ps(w)),
+            ))
+        }
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+        {
+            let mut sum = self.0;
+            for (value, channel) in sum.iter_mut().zip(p) {
+                *value += channel * w;
+            }
+            Self(sum)
+        }
+    }
+
+    fn get(self) -> [f32; 4] {
+        // SAFETY: as for ZERO, the other way round.
+        unsafe { std::mem::transmute::<Inner, [f32; 4]>(self.0) }
+    }
+}
+
+/// For each output column (or row) of a downscale, the source columns it
+/// covers: the first, and how much of each.
+struct Spans {
+    spans: Vec<(usize, usize, usize)>,
+    weights: Vec<f32>,
+}
+
+impl Spans {
+    fn new(count: u32, source: u32, scale: f32) -> Self {
+        let mut spans = Vec::with_capacity(count as usize);
+        let mut weights = Vec::new();
+        for x in 0..count {
+            let (x0, x1) = (x as f32 * scale, (x + 1) as f32 * scale);
+            let first = x0.floor() as u32;
+            let start = weights.len();
+            let mut xx = first;
+            while (xx as f32) < x1 && xx < source {
+                weights.push(((xx + 1) as f32).min(x1) - (xx as f32).max(x0));
+                xx += 1;
+            }
+            spans.push((first as usize, start, weights.len()));
+        }
+        Self { spans, weights }
+    }
+
+    fn get(&self, index: usize) -> (usize, &[f32]) {
+        let (first, start, end) = self.spans[index];
+        (first, &self.weights[start..end])
+    }
 }
 
 impl Typefaces {
@@ -443,14 +706,20 @@ impl Typefaces {
             fallbacks: FALLBACK_FILES.iter().map(|_| Fallback::Unloaded).collect(),
             glyphs: HashMap::new(),
             gamma,
+            strikes: Vec::new(),
+            emoji_data: None,
+            emoji: HashMap::new(),
         }
     }
 
     fn fallback(&mut self, index: usize) -> Option<&Face<'static>> {
         if let Fallback::Unloaded = self.fallbacks[index] {
             let path = font_dir().join(FALLBACK_FILES[index]);
-            self.fallbacks[index] = match map_file(&path).and_then(|data| Face::parse(data, 0).ok())
-            {
+            let data = map_file(&path);
+            if index == EMOJI {
+                self.emoji_data = data;
+            }
+            self.fallbacks[index] = match data.and_then(|data| Face::parse(data, 0).ok()) {
                 Some(face) => Fallback::Loaded(Box::new(face)),
                 None => {
                     eprintln!("font fallback unavailable: {}", path.display());
@@ -469,6 +738,14 @@ impl Typefaces {
         if let Some(glyph) = self.glyphs.get(&key) {
             return glyph.clone();
         }
+        self.new_glyph(key)
+    }
+
+    /// A glyph not made yet (out of line: text measured and drawn again
+    /// finds its glyphs made).
+    #[inline(never)]
+    fn new_glyph(&mut self, key: (Weight, u16, Cluster)) -> Rc<Glyph> {
+        let (weight, cluster) = (key.0, &key.2);
         let size = f32::from(key.1) / 2.0;
         let glyph = Rc::new(match cluster {
             Cluster::Char(character) => self.char_glyph(weight, size, *character),
@@ -581,61 +858,91 @@ impl Typefaces {
     }
 
     /// Emoji glyphs side by side (a sequence the font has no single
-    /// ligature for), scaled from the bitmap strike to `size`.
+    /// ligature for), scaled from the bitmap strike to `size`: their
+    /// advance now, their bitmap asked of the emoji thread.
     fn color_glyph(&mut self, size: f32, ids: &[GlyphId]) -> Option<Glyph> {
         let face = self.fallback(EMOJI)?;
         let upem = f32::from(face.units_per_em());
         let strike = face.glyph_raster_image(ids[0], u16::MAX)?.pixels_per_em;
-        let scale = size / f32::from(strike);
-        let mut parts = Vec::new();
         let mut pen = 0.0;
+        let mut any = false;
         for id in ids {
-            let advance = f32::from(face.glyph_hor_advance(*id).unwrap_or(0)) * size / upem;
-            if let Some(image) = face.glyph_raster_image(*id, strike)
-                && image.format == RasterImageFormat::PNG
-                && let Some((w, h, pixels)) = decode_png(image.data)
-            {
-                let to_w = ((w as f32 * scale).round() as u32).max(1);
-                let to_h = ((h as f32 * scale).round() as u32).max(1);
-                let left = (pen + f32::from(image.x) * scale).round() as i32;
-                let top = -((f32::from(image.y) + f32::from(image.height)) * scale).round() as i32;
-                parts.push((left, top, to_w, to_h, resample(w, h, &pixels, to_w, to_h)));
-            }
-            pen += advance;
+            pen += f32::from(face.glyph_hor_advance(*id).unwrap_or(0)) * size / upem;
+            any |= face
+                .glyph_raster_image(*id, strike)
+                .is_some_and(|image| image.format == RasterImageFormat::PNG);
         }
-        if parts.is_empty() {
+        // (A PNG that then fails to decode draws nothing, where text drew
+        // its parts before; the font's all decode.)
+        if !any {
             return None;
         }
-        // One image covering every part.
-        let x0 = parts.iter().map(|p| p.0).min()?;
-        let y0 = parts.iter().map(|p| p.1).min()?;
-        let x1 = parts.iter().map(|p| p.0 + p.2 as i32).max()?;
-        let y1 = parts.iter().map(|p| p.1 + p.3 as i32).max()?;
-        let (width, height) = (x1 - x0, y1 - y0);
-        let mut pixels = vec![0_u32; (width * height) as usize];
-        for (left, top, w, h, part) in parts {
-            for row in 0..h as i32 {
-                for column in 0..w as i32 {
-                    let source = part[(row * w as i32 + column) as usize];
-                    let index = ((top - y0 + row) * width + left - x0 + column) as usize;
-                    if source >> 24 > pixels[index] >> 24 {
-                        pixels[index] = source;
-                    }
-                }
+        let key = ((size * 2.0).round() as u16, ids.to_vec());
+        if let Some(bitmap) = self.emoji.get(&key) {
+            return Some(Glyph {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                advance: pen,
+                shape: Shape::Emoji(bitmap.clone()),
+            });
+        }
+        let job = Arc::new(Job {
+            size,
+            ids: ids.to_vec(),
+            asked: std::time::Instant::now(),
+            state: Mutex::new(JobState::Waiting),
+        });
+        if WAITING.load(Ordering::Relaxed) < JOBS
+            && let Some(thread) = self.emoji_data.and_then(emoji_thread)
+        {
+            WAITING.fetch_add(1, Ordering::Relaxed);
+            if thread.send(job.clone()).is_err() {
+                WAITING.fetch_sub(1, Ordering::Relaxed);
             }
         }
+        let bitmap = Rc::new(RefCell::new(Bitmap::Asked(job)));
+        if self.emoji.len() >= EMOJI_SHARED {
+            self.emoji.clear();
+        }
+        self.emoji.insert(key, bitmap.clone());
         Some(Glyph {
-            x: x0,
-            y: y0,
-            width,
-            height,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
             advance: pen,
-            shape: Shape::Color(Image {
-                width,
-                height,
-                pixels,
-            }),
+            shape: Shape::Emoji(bitmap),
         })
+    }
+
+    /// An emoji's bitmap, to draw it: the emoji thread's if it is made,
+    /// else made here (the UI thread does not wait for one that may run
+    /// on a slower core).
+    fn made(&mut self, bitmap: &RefCell<Bitmap>) {
+        let job = match &*bitmap.borrow() {
+            Bitmap::Made(_) => return,
+            Bitmap::Asked(job) => job.clone(),
+        };
+        let done = {
+            let mut state = job.state.lock().unwrap_or_else(|e| e.into_inner());
+            match std::mem::replace(&mut *state, JobState::Gone) {
+                JobState::Done(made) => Some(made),
+                _ => None,
+            }
+        };
+        let made = match done {
+            Some(made) => made,
+            None => {
+                let Fallback::Loaded(face) = &self.fallbacks[EMOJI] else {
+                    *bitmap.borrow_mut() = Bitmap::Made(None);
+                    return;
+                };
+                make_emoji(face, job.size, &job.ids, &mut self.strikes)
+            }
+        };
+        *bitmap.borrow_mut() = Bitmap::Made(made);
     }
 
     /// An empty box: a character no font has.
@@ -662,6 +969,180 @@ impl Typefaces {
             shape: Shape::Mask(mask),
         }
     }
+}
+
+/// The bitmap of emoji glyphs `ids` side by side at `size`: each scaled
+/// from the font's strike, one image covering them all.
+fn make_emoji(
+    face: &Face,
+    size: f32,
+    ids: &[GlyphId],
+    strikes: &mut Vec<(GlyphId, Rc<Strike>)>,
+) -> Option<Made> {
+    let upem = f32::from(face.units_per_em());
+    let strike = face.glyph_raster_image(ids[0], u16::MAX)?.pixels_per_em;
+    let scale = size / f32::from(strike);
+    let mut parts = Vec::new();
+    let mut pen = 0.0;
+    for id in ids {
+        let advance = f32::from(face.glyph_hor_advance(*id).unwrap_or(0)) * size / upem;
+        if let Some(image) = face.glyph_raster_image(*id, strike)
+            && image.format == RasterImageFormat::PNG
+            && let Some(decoded) = decoded_strike(strikes, *id, image.data)
+        {
+            let (w, h) = (decoded.width, decoded.height);
+            let to_w = ((w as f32 * scale).round() as u32).max(1);
+            let to_h = ((h as f32 * scale).round() as u32).max(1);
+            let left = (pen + f32::from(image.x) * scale).round() as i32;
+            let top = -((f32::from(image.y) + f32::from(image.height)) * scale).round() as i32;
+            parts.push((
+                left,
+                top,
+                to_w,
+                to_h,
+                resample(w, h, &decoded.pixels, to_w, to_h),
+            ));
+        }
+        pen += advance;
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    // One part is the image (composing it on clear pixels would copy it: a
+    // part's pixel of no cover is all zero, its colours being sums no
+    // greater than its cover's).
+    if let [(left, top, w, h, _)] = parts[..] {
+        let pixels = parts.pop()?.4;
+        return Some(Made {
+            x: left,
+            y: top,
+            image: Image {
+                width: w as i32,
+                height: h as i32,
+                pixels,
+            },
+        });
+    }
+    // One image covering every part.
+    let x0 = parts.iter().map(|p| p.0).min()?;
+    let y0 = parts.iter().map(|p| p.1).min()?;
+    let x1 = parts.iter().map(|p| p.0 + p.2 as i32).max()?;
+    let y1 = parts.iter().map(|p| p.1 + p.3 as i32).max()?;
+    let (width, height) = (x1 - x0, y1 - y0);
+    let mut pixels = vec![0_u32; (width * height) as usize];
+    for (left, top, w, h, part) in parts {
+        for row in 0..h as i32 {
+            for column in 0..w as i32 {
+                let source = part[(row * w as i32 + column) as usize];
+                let index = ((top - y0 + row) * width + left - x0 + column) as usize;
+                if source >> 24 > pixels[index] >> 24 {
+                    pixels[index] = source;
+                }
+            }
+        }
+    }
+    Some(Made {
+        x: x0,
+        y: y0,
+        image: Image {
+            width,
+            height,
+            pixels,
+        },
+    })
+}
+
+/// Draws an emoji with the pen at (`pen`, `baseline`), its bitmap made
+/// first if need be (out of line: text is mostly not emoji).
+#[inline(never)]
+fn draw_emoji(
+    faces: &mut Typefaces,
+    canvas: &mut Canvas,
+    bitmap: &RefCell<Bitmap>,
+    pen: f32,
+    baseline: f32,
+    alpha: f32,
+) {
+    faces.made(bitmap);
+    if let Bitmap::Made(Some(made)) = &*bitmap.borrow() {
+        let (x, y) = (
+            pen.round() as i32 + made.x,
+            baseline.round() as i32 + made.y,
+        );
+        if alpha >= 1.0 {
+            blit(canvas, &made.image, x, y);
+        } else {
+            canvas.draw_image(&made.image, x, y, alpha);
+        }
+    }
+}
+
+/// Draws `image` (premultiplied) as Canvas::draw_image does at full alpha,
+/// pixel for pixel, within the clip only: a pixel of full cover replaces
+/// what is there, one of none leaves it, the rest are blended as it blends.
+fn blit(canvas: &mut Canvas, image: &Image, x: i32, y: i32) {
+    let (cx0, cy0, cx1, cy1) = canvas.clip();
+    let (x0, x1) = (
+        x.max(cx0).max(0),
+        (x + image.width).min(cx1).min(canvas.width),
+    );
+    let (y0, y1) = (
+        y.max(cy0).max(0),
+        (y + image.height).min(cy1).min(canvas.height),
+    );
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    let (from, n) = ((x0 - x) as usize, (x1 - x0) as usize);
+    let (stride, source) = (canvas.width as usize, image.width as usize);
+    for ty in y0..y1 {
+        let at = (ty - y) as usize * source + from;
+        let src = &image.pixels[at..at + n];
+        let at = ty as usize * stride + x0 as usize;
+        for (d, &s) in canvas.pixels[at..at + n].iter_mut().zip(src) {
+            match s >> 24 {
+                0 => {}
+                255 => *d = s,
+                sa => {
+                    let inverse = 256 - (sa + (sa >> 7));
+                    let scale = |shift: u32| {
+                        let channel = s >> shift & 0xff;
+                        let under = *d >> shift & 0xff;
+                        (channel + ((under * inverse) >> 8)).min(255) << shift
+                    };
+                    *d = scale(24) | scale(16) | scale(8) | scale(0);
+                }
+            }
+        }
+    }
+}
+
+/// Glyph `id`'s bitmap `data` decoded, from the cache when it was
+/// decoded lately.
+fn decoded_strike(
+    strikes: &mut Vec<(GlyphId, Rc<Strike>)>,
+    id: GlyphId,
+    data: &[u8],
+) -> Option<Rc<Strike>> {
+    if let Some(at) = strikes.iter().position(|(cached, _)| *cached == id) {
+        let entry = strikes.remove(at);
+        let strike = entry.1.clone();
+        strikes.insert(0, entry);
+        return Some(strike);
+    }
+    let (width, height, pixels) = decode_png(data)?;
+    let strike = Rc::new(Strike {
+        width,
+        height,
+        pixels,
+    });
+    strikes.insert(0, (id, strike.clone()));
+    let mut held = 0;
+    strikes.retain(|(_, kept)| {
+        held += kept.pixels.len();
+        held <= STRIKE_PIXELS
+    });
+    Some(strike)
 }
 
 /// Typographic advance width of `text`, including `tracking` between glyphs.
@@ -700,7 +1181,9 @@ pub fn draw_tracked(
         let mut pen = x;
         for cluster in clusters(text) {
             let glyph = faces.glyph(weight, size, &cluster);
-            if glyph.width > 0 && glyph.height > 0 {
+            if let Shape::Emoji(bitmap) = &glyph.shape {
+                draw_emoji(&mut faces, canvas, bitmap, pen, baseline, alpha);
+            } else if glyph.width > 0 && glyph.height > 0 {
                 let (gx, gy) = (
                     pen.round() as i32 + glyph.x,
                     baseline.round() as i32 + glyph.y,
@@ -709,7 +1192,7 @@ pub fn draw_tracked(
                     Shape::Mask(mask) => {
                         canvas.draw_mask(gx, gy, glyph.width, glyph.height, mask, color, alpha);
                     }
-                    Shape::Color(image) => canvas.draw_image(image, gx, gy, alpha),
+                    Shape::Emoji(_) => {}
                 }
             }
             pen += glyph.advance + tracking;
@@ -877,6 +1360,446 @@ mod tests {
         assert_eq!(parts[7], Cluster::Char('b'));
         // Digits stay text unless they are keycaps.
         assert_eq!(clusters("12"), vec![Cluster::Char('1'), Cluster::Char('2')]);
+    }
+
+    /// The downscale as e3add0d did it, pixel by pixel, to compare with.
+    fn reference_resample(
+        width: u32,
+        height: u32,
+        pixels: &[u32],
+        to_w: u32,
+        to_h: u32,
+    ) -> Vec<u32> {
+        let (sx, sy) = (width as f32 / to_w as f32, height as f32 / to_h as f32);
+        let mut out = vec![0; (to_w * to_h) as usize];
+        for y in 0..to_h {
+            let (y0, y1) = (y as f32 * sy, (y + 1) as f32 * sy);
+            for x in 0..to_w {
+                let (x0, x1) = (x as f32 * sx, (x + 1) as f32 * sx);
+                let mut sum = [0.0_f32; 4];
+                let mut total = 0.0;
+                let mut yy = y0.floor() as u32;
+                while (yy as f32) < y1 && yy < height {
+                    let wy = ((yy + 1) as f32).min(y1) - (yy as f32).max(y0);
+                    let mut xx = x0.floor() as u32;
+                    while (xx as f32) < x1 && xx < width {
+                        let wx = ((xx + 1) as f32).min(x1) - (xx as f32).max(x0);
+                        let w = wx * wy;
+                        let p = pixels[(yy * width + xx) as usize];
+                        for (channel, value) in sum.iter_mut().enumerate() {
+                            *value += (p >> (24 - 8 * channel) & 0xff) as f32 * w;
+                        }
+                        total += w;
+                        xx += 1;
+                    }
+                    yy += 1;
+                }
+                let total = total.max(1e-6);
+                out[(y * to_w + x) as usize] = sum
+                    .iter()
+                    .enumerate()
+                    .map(|(channel, value)| {
+                        ((value / total + 0.5) as u32).min(255) << (24 - 8 * channel)
+                    })
+                    .fold(0, |pixel, part| pixel | part);
+            }
+        }
+        out
+    }
+
+    /// The PNG decoding of e3add0d, to compare with.
+    fn reference_decode_png(data: &[u8]) -> Option<(u32, u32, Vec<u32>)> {
+        let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
+        decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+        let mut reader = decoder.read_info().ok()?;
+        let mut buffer = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buffer).ok()?;
+        let channels = info.color_type.samples();
+        let pixels = buffer[..info.buffer_size()]
+            .chunks_exact(channels)
+            .map(|p| {
+                let (r, g, b, a) = match channels {
+                    4 => (p[0], p[1], p[2], p[3]),
+                    3 => (p[0], p[1], p[2], 255),
+                    2 => (p[0], p[0], p[0], p[1]),
+                    _ => (p[0], p[0], p[0], 255),
+                };
+                let a32 = u32::from(a);
+                let pre = |c: u8| (u32::from(c) * a32 + 127) / 255;
+                a32 << 24 | pre(r) << 16 | pre(g) << 8 | pre(b)
+            })
+            .collect();
+        Some((info.width, info.height, pixels))
+    }
+
+    /// PNGs decode as they did: palette images with and without covers, a
+    /// short and an over-long tRNS, indices past the palette, 4-bit
+    /// palettes, and RGBA, RGB, grey with and without alpha, 16-bit.
+    #[test]
+    fn png_decodes_as_it_did() {
+        let mut seed = 0x9e37_79b9_u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let (width, height) = (37_u32, 23_u32);
+        let encode = |color: png::ColorType,
+                      depth: png::BitDepth,
+                      palette: Option<Vec<u8>>,
+                      trns: Option<Vec<u8>>,
+                      data: Vec<u8>| {
+            let mut out = Vec::new();
+            {
+                let mut encoder = png::Encoder::new(&mut out, width, height);
+                encoder.set_color(color);
+                encoder.set_depth(depth);
+                if let Some(palette) = palette {
+                    encoder.set_palette(palette);
+                }
+                if let Some(trns) = trns {
+                    encoder.set_trns(trns);
+                }
+                let mut writer = encoder.write_header().unwrap();
+                writer.write_image_data(&data).unwrap();
+            }
+            out
+        };
+        let mut cases = Vec::new();
+        let palette: Vec<u8> = (0..200 * 3).map(|_| next() as u8).collect();
+        let covers: Vec<u8> = (0..200)
+            .map(|i| match i % 4 {
+                0 => 0,
+                1 => 255,
+                _ => next() as u8,
+            })
+            .collect();
+        // Indices up to 255, past the palette's 200 entries.
+        let indices: Vec<u8> = (0..width * height).map(|_| next() as u8).collect();
+        for trns in [
+            None,
+            Some(covers.clone()),
+            Some(covers[..50].to_vec()),
+            Some(vec![7; 210]),
+        ] {
+            cases.push(encode(
+                png::ColorType::Indexed,
+                png::BitDepth::Eight,
+                Some(palette.clone()),
+                trns,
+                indices.clone(),
+            ));
+        }
+        let packed: Vec<u8> = (0..(width as usize).div_ceil(2) * height as usize)
+            .map(|_| next() as u8)
+            .collect();
+        cases.push(encode(
+            png::ColorType::Indexed,
+            png::BitDepth::Four,
+            Some(palette[..48].to_vec()),
+            Some(covers[..10].to_vec()),
+            packed,
+        ));
+        for (color, channels) in [
+            (png::ColorType::Rgba, 4),
+            (png::ColorType::Rgb, 3),
+            (png::ColorType::GrayscaleAlpha, 2),
+            (png::ColorType::Grayscale, 1),
+        ] {
+            let data: Vec<u8> = (0..width * height * channels)
+                .map(|i| {
+                    if channels % 2 == 0 && i % channels == channels - 1 {
+                        [0, 255, next() as u8][(next() % 3) as usize]
+                    } else {
+                        next() as u8
+                    }
+                })
+                .collect();
+            cases.push(encode(color, png::BitDepth::Eight, None, None, data));
+            let wide: Vec<u8> = (0..width * height * channels * 2)
+                .map(|_| next() as u8)
+                .collect();
+            cases.push(encode(color, png::BitDepth::Sixteen, None, None, wide));
+        }
+        for (n, data) in cases.iter().enumerate() {
+            assert_eq!(decode_png(data), reference_decode_png(data), "case {n}");
+        }
+        // And the emoji font's own, where it is installed.
+        TYPEFACES.with(|cell| {
+            let mut faces = cell.borrow_mut();
+            let Some(face) = faces.fallback(EMOJI) else {
+                return;
+            };
+            let mut checked = 0;
+            for id in (0..face.number_of_glyphs()).step_by(7) {
+                if let Some(image) = face.glyph_raster_image(GlyphId(id), u16::MAX)
+                    && image.format == RasterImageFormat::PNG
+                {
+                    assert_eq!(
+                        decode_png(image.data),
+                        reference_decode_png(image.data),
+                        "glyph {id}"
+                    );
+                    checked += 1;
+                }
+            }
+            eprintln!("png_decodes_as_it_did: {checked} of the emoji font's PNGs compared");
+        });
+    }
+
+    /// The downscale gives what it gave pixel by pixel, to the bit: every
+    /// size from 1 to 160 px of Noto's 136 by 128 strikes and of odd ones,
+    /// with transparent, opaque and half-covered pixels.
+    #[test]
+    fn resample_is_the_same_to_the_bit() {
+        let mut seed = 0x2545_f491_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        for (width, height) in [(136, 128), (136, 136), (97, 61), (3, 200), (200, 1)] {
+            let pixels: Vec<u32> = (0..width * height)
+                .map(|i| {
+                    let r = next();
+                    // Areas of nothing, of full cover, and edges between.
+                    let a = match (i / 7 + r % 5) % 4 {
+                        0 => 0,
+                        1 => 255,
+                        _ => r >> 24,
+                    };
+                    let c = |v: u32| ((v & 0xff) * a) / 255;
+                    a << 24 | c(r) << 16 | c(r >> 8) << 8 | c(r >> 16)
+                })
+                .collect();
+            for to_w in (1..=80).chain((81..=160).step_by(7)) {
+                let to_h = ((height as f32 * to_w as f32 / width as f32).round() as u32).max(1);
+                assert_eq!(
+                    resample(width, height, &pixels, to_w, to_h),
+                    reference_resample(width, height, &pixels, to_w, to_h),
+                    "{width}x{height} to {to_w}x{to_h}"
+                );
+            }
+        }
+    }
+
+    /// Emoji as e3add0d drew them, to compare with: the glyphs' ids as
+    /// `char_glyph` and `emoji_glyph` found them, each part decoded and
+    /// scaled on the spot. (x, y, image, advance)
+    fn reference_emoji(
+        face: &Face,
+        size: f32,
+        cluster: &Cluster,
+    ) -> Option<(i32, i32, Image, f32)> {
+        let ids = match cluster {
+            Cluster::Char(character) => vec![face.glyph_index(*character)?],
+            Cluster::Emoji(sequence) => {
+                let mut ids = vec![face.glyph_index(sequence[0])?];
+                ids.extend(sequence[1..].iter().filter_map(|c| face.glyph_index(*c)));
+                ligate(face, ids)
+            }
+        };
+        let upem = f32::from(face.units_per_em());
+        let strike = face.glyph_raster_image(ids[0], u16::MAX)?.pixels_per_em;
+        let scale = size / f32::from(strike);
+        let mut parts = Vec::new();
+        let mut pen = 0.0;
+        for id in &ids {
+            let advance = f32::from(face.glyph_hor_advance(*id).unwrap_or(0)) * size / upem;
+            if let Some(image) = face.glyph_raster_image(*id, strike)
+                && image.format == RasterImageFormat::PNG
+                && let Some((w, h, pixels)) = decode_png(image.data)
+            {
+                let to_w = ((w as f32 * scale).round() as u32).max(1);
+                let to_h = ((h as f32 * scale).round() as u32).max(1);
+                let left = (pen + f32::from(image.x) * scale).round() as i32;
+                let top = -((f32::from(image.y) + f32::from(image.height)) * scale).round() as i32;
+                parts.push((left, top, to_w, to_h, resample(w, h, &pixels, to_w, to_h)));
+            }
+            pen += advance;
+        }
+        if parts.is_empty() {
+            return None;
+        }
+        let x0 = parts.iter().map(|p| p.0).min()?;
+        let y0 = parts.iter().map(|p| p.1).min()?;
+        let x1 = parts.iter().map(|p| p.0 + p.2 as i32).max()?;
+        let y1 = parts.iter().map(|p| p.1 + p.3 as i32).max()?;
+        let (width, height) = (x1 - x0, y1 - y0);
+        let mut pixels = vec![0_u32; (width * height) as usize];
+        for (left, top, w, h, part) in parts {
+            for row in 0..h as i32 {
+                for column in 0..w as i32 {
+                    let source = part[(row * w as i32 + column) as usize];
+                    let index = ((top - y0 + row) * width + left - x0 + column) as usize;
+                    if source >> 24 > pixels[index] >> 24 {
+                        pixels[index] = source;
+                    }
+                }
+            }
+        }
+        Some((
+            x0,
+            y0,
+            Image {
+                width,
+                height,
+                pixels,
+            },
+            pen,
+        ))
+    }
+
+    /// Emoji draw as they did before the port: at Moon's sizes, in four of
+    /// its weights (the same emoji in another weight shares its bitmap), at
+    /// whole and fractional positions, clipped or not, faded or not,
+    /// measured first or drawn straight away, and drawn again.
+    /// Needs the emoji font (MOON_FONTS or the phone's); without it there
+    /// is nothing to compare.
+    #[test]
+    fn emoji_draw_as_they_did() {
+        // (A lone pictograph without U+FE0F is text: Noto Sans Symbols 2.)
+        let emoji = [
+            "\u{1f44d}\u{fe0f}",
+            "\u{1f602}\u{fe0f}",
+            "\u{1f389}\u{fe0f}",
+            "\u{1f525}\u{fe0f}",
+            "\u{2764}\u{fe0f}",
+            "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}",
+            "\u{1f1e8}\u{1f1e6}",
+            "\u{1f44d}\u{1f3fd}",
+            "1\u{fe0f}\u{20e3}",
+            "\u{1f3f3}\u{fe0f}\u{200d}\u{1f308}",
+            // No ligature: two bitmaps side by side.
+            "\u{1f44d}\u{200d}\u{1f525}",
+        ];
+        // Moon's sizes: notifications (title 44, body 42, time 36), the
+        // lock screen and Control Centre (32-40, 52, 62, 74, 84), home
+        // labels (33), and very small and very large.
+        let sizes = [
+            44.0, 42.0, 36.0, 32.0, 33.0, 34.0, 37.0, 38.0, 40.0, 52.0, 62.0, 74.0, 84.0, 44.0,
+            13.0, 128.0,
+        ];
+        let places = [
+            (10.0, 60.0),
+            (10.3, 60.5),
+            (10.5, 61.4),
+            (10.75, 120.0),
+            (-20.0, 5.0),
+        ];
+        let present = TYPEFACES.with(|cell| cell.borrow_mut().fallback(EMOJI).is_some());
+        if !present {
+            eprintln!(
+                "emoji_draw_as_they_did: no emoji font in {}, nothing compared",
+                font_dir().display()
+            );
+            return;
+        }
+        let mut compared = 0;
+        let mut made_there = 0;
+        for (round, &size) in sizes.iter().enumerate() {
+            for (n, text) in emoji.iter().enumerate() {
+                let cluster = clusters(text).remove(0);
+                let size = (size * 2.0_f32).round() / 2.0;
+                // The same emoji in each weight shares its bitmap.
+                let weight = [
+                    Weight::Regular,
+                    Weight::SemiBold,
+                    Weight::Bold,
+                    Weight::DisplaySemiBold,
+                ][(round + n) % 4];
+                let Some((gx, gy, image, advance)) = TYPEFACES.with(|cell| {
+                    let mut faces = cell.borrow_mut();
+                    reference_emoji(faces.fallback(EMOJI).unwrap(), size, &cluster)
+                }) else {
+                    panic!("{text}: no bitmap");
+                };
+                // Some measured before they are drawn (as a layout does).
+                if (round + n) % 2 == 0 {
+                    measure(&format!("a{text}b"), weight, size);
+                    // And drawn once the emoji thread made it.
+                    let start = std::time::Instant::now();
+                    while start.elapsed().as_secs() < 5 {
+                        let done = TYPEFACES.with(|cell| {
+                            let glyph = cell.borrow_mut().glyph(weight, size, &cluster);
+                            match &glyph.shape {
+                                Shape::Emoji(bitmap) => match &*bitmap.borrow() {
+                                    Bitmap::Asked(job) => {
+                                        matches!(*job.state.lock().unwrap(), JobState::Done(_))
+                                    }
+                                    Bitmap::Made(_) => true,
+                                },
+                                Shape::Mask(_) => panic!("{text}: not an emoji"),
+                            }
+                        });
+                        if done {
+                            made_there += 1;
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                }
+                for again in 0..2 {
+                    for (p, &(x, baseline)) in places.iter().enumerate() {
+                        let alpha = if p % 2 == 0 { 1.0 } else { 0.6 };
+                        let mut drawn = Canvas::new(500, 300);
+                        for (i, pixel) in drawn.pixels.iter_mut().enumerate() {
+                            *pixel = (i as u32).wrapping_mul(2654435761) & 0x00ff_ffff;
+                        }
+                        let mut expected = Canvas::new(500, 300);
+                        expected.pixels.copy_from_slice(&drawn.pixels);
+                        let line = format!("a{text}b");
+                        let width = draw(
+                            &mut drawn, &line, x, baseline, weight, size, 0xe0e0e0, alpha,
+                        );
+                        let mut pen = x + draw(
+                            &mut expected,
+                            "a",
+                            x,
+                            baseline,
+                            weight,
+                            size,
+                            0xe0e0e0,
+                            alpha,
+                        );
+                        let before = expected.pixels.clone();
+                        expected.draw_image(
+                            &image,
+                            pen.round() as i32 + gx,
+                            baseline.round() as i32 + gy,
+                            alpha,
+                        );
+                        assert!(
+                            expected.pixels != before || x < 0.0,
+                            "{text} at {size}: nothing drawn"
+                        );
+                        pen += advance;
+                        pen += draw(
+                            &mut expected,
+                            "b",
+                            pen,
+                            baseline,
+                            weight,
+                            size,
+                            0xe0e0e0,
+                            alpha,
+                        );
+                        assert_eq!(width, pen - x, "{text} at {size}: advance");
+                        assert!(
+                            drawn.pixels == expected.pixels,
+                            "{text} at {size}, ({x}, {baseline}), alpha {alpha}, drawn {again}"
+                        );
+                        compared += 1;
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "emoji_draw_as_they_did: {compared} drawings compared, {made_there} emoji made on the emoji thread"
+        );
+        assert!(made_there > 0);
     }
 
     #[test]
